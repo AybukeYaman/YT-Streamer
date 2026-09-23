@@ -1,0 +1,12 @@
+experiments/out-*.flv
+experiments/*.log
+experiments/assets/
+
+raw/*
+!raw/.gitkeep
+music/*
+!music/.gitkeep
+assets/
+
+.env
+runtime/

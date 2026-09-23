@@ -1,0 +1,14 @@
+{
+  "name": "yt-stream-system",
+  "version": "0.1.0",
+  "private": true,
+  "description": "24/7 YouTube müzik livestream — ffmpeg sarmalayıcı",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=20.12"
+  }
+}

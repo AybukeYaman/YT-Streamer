@@ -1,0 +1,16 @@
+{
+  "paths": {
+    "music": "./music",
+    "background": "./assets/background.mp4",
+    "runtime": "./runtime"
+  },
+  "profile": {
+    "width": 1280, "height": 720, "fps": 24,
+    "videoBitrate": "2500k", "audioBitrate": "160k",
+    "preset": "veryfast"
+  },
+  "output": {
+    "mode": "local",
+    "localPath": "./runtime/out.flv"
+  }
+}
