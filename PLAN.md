@@ -11,7 +11,7 @@
 |---|---|---|
 | 0 | Hazırlık | Kısmen tamam — YouTube erişimi beklemede |
 | 1 | Ham ffmpeg testi | Bekliyor (YouTube erişimi açılınca, R2 doğrulaması dahil) |
-| 2 | Node.js sarmalayıcı | Başlamadı |
+| 2 | Node.js sarmalayıcı | Tamamlandı |
 | 2.5 | Ses normalizasyonu | **Şimdi yapılabilir** |
 | 3 | Kuyruk ve kesintisiz geçiş | 3.1 tamam (karar: B) — 3.2-3.5 başlamadı |
 | 4 | Now playing overlay | Başlamadı |
@@ -164,6 +164,12 @@ Kopyalamak için değil, ffmpeg parametrelerini ve çökme yönetimini nasıl
 
 `.gitignore`: `.env`, `runtime/`, `music/`, `assets/`
 
+### Git durumu
+
+Repo proje kökünde (`YT Stream System\`) — önceden boş bir `YT-Streamer\` alt
+klasöründeydi, köke taşındı. GitHub'a bağlı: `AybukeYaman/YT-Streamer`
+(`main` branch). İki commit push edildi (Faz 0-2 + Faz 3.1 deney script'leri).
+
 ### Config şeması
 
 ```json
@@ -223,10 +229,20 @@ Alt adımlar:
   boşluklu Windows yollarında tek güvenli yol)
 - 2.4 Temiz kapanış: SIGINT → ffmpeg'e `q` → 5 sn bekle → `kill`.
   **Task Manager'dan zombi process kalmadığını doğrula**
-- 2.5 Logger
+- 2.6 Logger (2.5 numarası atlandı — Faz 2.5 ses normalizasyonuyla
+  karışmasın diye)
 
 **Kapanış:** `node index.js` yayını başlatıyor, Ctrl+C temiz kapatıyor,
 zombi process yok
+
+**Kapanış notu (24 Eylül) — TAMAMLANDI:**
+- 46 test geçti
+- 60 sn uçtan uca doğrulandı, Faz 1 sonuçlarıyla birebir tutarlı: 720p,
+  2518 kbps, GOP 2 sn, `speed` 1.01x
+- Mimari kural testleri eklendi: domain hiçbir modül import edemiyor,
+  application `child_process`/infrastructure import edemiyor — testle korunuyor
+- **Ele alınmayanlar:** `-shortest` (Faz 3.4'te eklenecek), pencere kapatma
+  olayı (Faz 5)
 
 ### Faz 3 — Kuyruk
 
