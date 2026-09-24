@@ -9,6 +9,7 @@ const { loadConfig, ConfigError } = require('../../src/config/load-config');
 const BASE = {
   paths: { music: './music', background: './assets/background.mp4', runtime: './runtime' },
   profile: { width: 1280, height: 720, fps: 24, videoBitrate: '2500k', audioBitrate: '160k', preset: 'veryfast' },
+  queue: { mode: 'shuffle', batchSize: 50 },
   output: { mode: 'local', localPath: './runtime/out.flv' },
 };
 const clone = () => JSON.parse(JSON.stringify(BASE));
@@ -41,6 +42,7 @@ test('local mod: yollar kök dizine göre mutlak olur', () => {
   assert.equal(result.paths.background, path.join(dir, 'assets', 'background.mp4'));
   assert.deepEqual(result.output, { mode: 'local', localPath: path.join(dir, 'runtime', 'out.flv') });
   assert.deepEqual(result.profile, BASE.profile);
+  assert.deepEqual(result.queue, BASE.queue);
 });
 
 test('rtmp: .env yoksa ya da anahtar boşsa açık hata', () => {
@@ -92,6 +94,19 @@ test('eksik alan ve yanlış tip birlikte listelenir', () => {
   assert.deepEqual(problemsOf({ config }), [
     '"paths.background" eksik ya da geçersiz',
     '"profile.fps" eksik ya da geçersiz',
+  ]);
+});
+
+test('queue bölümü eksikse ya da alanlar yanlış tipteyse listelenir', () => {
+  const config = clone();
+  delete config.queue;
+  assert.match(problemsOf({ config }).join(), /"queue" bölümü eksik/);
+  const c2 = clone();
+  c2.queue.batchSize = '50';
+  c2.queue.mode = '';
+  assert.deepEqual(problemsOf({ config: c2 }), [
+    '"queue.mode" eksik ya da geçersiz',
+    '"queue.batchSize" eksik ya da geçersiz',
   ]);
 });
 

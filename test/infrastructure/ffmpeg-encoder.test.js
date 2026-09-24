@@ -48,6 +48,34 @@ test('argümanlar Faz 1 doğrulanmış komutla birebir aynı (local)', () => {
   ]);
 });
 
+test('playlist modu: -re -f concat -safe 0 -i <playlist> ve -shortest; geri kalan birebir aynı', () => {
+  const PL = 'C:/Users/Aybuke Yeni/Desktop/Youtube/YT Stream System/runtime/playlist.txt';
+  const single = buildFfmpegArgs({ profile, backgroundPath: BG, audioPath: AUDIO, output: LOCAL });
+  const pl = buildFfmpegArgs({ profile, backgroundPath: BG, playlistPath: PL, output: LOCAL });
+  assert.deepEqual(pl.slice(4, 11), ['-i', BG, '-re', '-f', 'concat', '-safe', '0']);
+  assert.equal(pl[pl.indexOf('concat') + 4], PL);
+  assert.deepEqual(pl.slice(-4), ['-shortest', '-f', 'flv', LOCAL.localPath]);
+  // Encode parametreleri iki modda aynı
+  const encodePart = (a) => a.slice(a.indexOf('-map'), a.indexOf('-f', a.indexOf('-map')));
+  assert.deepEqual(encodePart(pl).filter((x) => x !== '-shortest'), encodePart(single));
+});
+
+test('tek parça modunda -shortest yok (PLAN.md Faz 1 notu)', () => {
+  assert.ok(!buildFfmpegArgs({ profile, backgroundPath: BG, audioPath: AUDIO, output: LOCAL }).includes('-shortest'));
+});
+
+test('ses girişi olarak tam olarak biri verilmeli', () => {
+  assert.throws(() => buildFfmpegArgs({ profile, backgroundPath: BG, output: LOCAL }), /tam olarak biri/);
+  assert.throws(() => buildFfmpegArgs({ profile, backgroundPath: BG, audioPath: AUDIO, playlistPath: 'p', output: LOCAL }), /tam olarak biri/);
+});
+
+test('runNumber verilirse local çıktı tura göre ayrı dosya; rtmp hedefi değişmez', () => {
+  const args = buildFfmpegArgs({ profile, backgroundPath: BG, playlistPath: 'p', runNumber: 3, output: LOCAL });
+  assert.equal(args.at(-1), 'C:/Users/Aybuke Yeni/Desktop/Youtube/YT Stream System/runtime/out-3.flv');
+  const rtmp = buildFfmpegArgs({ profile, backgroundPath: BG, playlistPath: 'p', runNumber: 3, output: { mode: 'rtmp', streamKey: 'k' } });
+  assert.equal(rtmp.at(-1), 'rtmps://a.rtmps.youtube.com/live2/k');
+});
+
 test('boşluklu yollar tek argüman olarak kalır', () => {
   const args = buildFfmpegArgs({ profile, backgroundPath: BG, audioPath: AUDIO, output: LOCAL });
   assert.ok(args.includes(BG));

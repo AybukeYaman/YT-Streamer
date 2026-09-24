@@ -13,7 +13,7 @@
 | 1 | Ham ffmpeg testi | Bekliyor (YouTube erişimi açılınca, R2 doğrulaması dahil) |
 | 2 | Node.js sarmalayıcı | Tamamlandı |
 | 2.5 | Ses normalizasyonu | **Şimdi yapılabilir** |
-| 3 | Kuyruk ve kesintisiz geçiş | 3.1 tamam (karar: B) — 3.2-3.5 başlamadı |
+| 3 | Kuyruk ve kesintisiz geçiş | Tamamlandı |
 | 4 | Now playing overlay | Başlamadı |
 | 5 | Dayanıklılık | Başlamadı |
 | 6 | Kontrol arayüzü (opsiyonel) | Başlamadı |
@@ -168,7 +168,7 @@ Kopyalamak için değil, ffmpeg parametrelerini ve çökme yönetimini nasıl
 
 Repo proje kökünde (`YT Stream System\`) — önceden boş bir `YT-Streamer\` alt
 klasöründeydi, köke taşındı. GitHub'a bağlı: `AybukeYaman/YT-Streamer`
-(`main` branch). İki commit push edildi (Faz 0-2 + Faz 3.1 deney script'leri).
+(`main` branch). Kod ve plan dosyaları GitHub'a push edilmiş durumda.
 
 ### Config şeması
 
@@ -262,6 +262,19 @@ buna göre şekillendi.
 
 **Kapanış:** 5+ parça arka arkaya, geçişte ses kesilmiyor, YouTube'da uyarı
 yok, planlı restart temiz çalışıyor (code=0)
+
+**Kapanış notu (24 Eylül) — TAMAMLANDI:**
+- 77 test geçti
+- Gerçek `music/` (30 parça) ile `batchSize=3` testi: 2 restart geçti —
+  çıkış kodu her ikisinde 0, kuyruk kaldığı yerden devam etti (9 parça,
+  tekrar yok), çıktı dosyalarında ses/video kesintisi yok (en büyük paket
+  aralığı ses 0.022 sn, video 0.042 sn)
+- Restart boşluğu ~1.1 sn (1127 / 1143 ms): spawn ~225 ms + ffmpeg açılış
+  süresi (ilk frame'e kadar). RTMP reconnect Faz 1'de ayrıca ölçülecek (R2)
+- `code !== 0` durumunda restart denenmiyor, sadece loglanıyor — Faz 5
+- `batchSize` üretimde 50
+- Bilinen sınırlama: `TrackRepository` önbelleği restart'ta yenilenmiyor
+  (→ `KARARLAR.md`)
 
 ### Faz 4 — Overlay
 

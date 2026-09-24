@@ -6,20 +6,41 @@ const { Encoder } = require('../application/encoder');
 const YOUTUBE_RTMPS_BASE = 'rtmps://a.rtmps.youtube.com/live2/';
 const DEFAULT_STOP_TIMEOUT_MS = 5000;
 
-function outputTarget(output) {
-  if (output.mode === 'local') return output.localPath;
+// runNumber verilirse (playlist modu) local çıktı her çalıştırmada ayrı dosyaya gider:
+// out.flv → out-1.flv, out-2.flv … — her restart gerçek yayında yeni bir RTMP oturumu,
+// local'de ise yeni bir dosya; aynı dosyanın üzerine yazılıp önceki tur kaybolmaz.
+function outputTarget(output, runNumber) {
+  if (output.mode === 'local') {
+    if (runNumber === undefined) return output.localPath;
+    const dot = output.localPath.lastIndexOf('.');
+    return `${output.localPath.slice(0, dot)}-${runNumber}${output.localPath.slice(dot)}`;
+  }
   if (output.mode === 'rtmp') return YOUTUBE_RTMPS_BASE + output.streamKey;
   throw new Error(`bilinmeyen output.mode: ${output.mode}`);
 }
 
+// Ses girişi iki moddan biri:
+//   tek parça: -re -i <dosya>                             (Faz 2)
+//   playlist:  -re -f concat -safe 0 -i <playlist.txt>    (Faz 3.1 B yaklaşımı) + -shortest
+// -shortest sadece playlist modunda: video sonsuz döngüde olduğu için playlist bitince
+// ffmpeg'in kapanmasını (code=0) sağlar. Tek parça modunda kullanılmaz (PLAN.md Faz 1 notu).
+function audioInputArgs({ audioPath, playlistPath }) {
+  if (Boolean(audioPath) === Boolean(playlistPath)) {
+    throw new Error('ses girişi olarak audioPath ya da playlistPath\'ten tam olarak biri verilmeli');
+  }
+  return playlistPath
+    ? ['-re', '-f', 'concat', '-safe', '0', '-i', playlistPath]
+    : ['-re', '-i', audioPath];
+}
+
 // Argümanlar dizi olarak kurulur — boşluklu Windows yolları tek eleman kalır, kaçış gerekmez.
 // Sıra ve değerler Faz 1 yerel testinde doğrulanan komutla aynı.
-function buildFfmpegArgs({ profile, backgroundPath, audioPath, output }) {
+function buildFfmpegArgs({ profile, backgroundPath, audioPath, playlistPath, runNumber, output }) {
   return [
     '-hide_banner',
-    '-y', // local modda runtime/out.flv'nin üzerine yaz; yoksa ffmpeg stdin'den onay bekler
+    '-y', // local modda çıktının üzerine yaz; yoksa ffmpeg stdin'den onay bekler
     '-stream_loop', '-1', '-i', backgroundPath,
-    '-re', '-i', audioPath,
+    ...audioInputArgs({ audioPath, playlistPath }),
     '-map', '0:v', '-map', '1:a',
     '-vf', `scale=${profile.width}:${profile.height}`,
     '-c:v', profile.videoCodec, '-preset', profile.preset, '-pix_fmt', profile.pixelFormat,
@@ -28,7 +49,8 @@ function buildFfmpegArgs({ profile, backgroundPath, audioPath, output }) {
     '-b:v', profile.videoBitrate, '-maxrate', profile.maxRate, '-bufsize', profile.bufferSize,
     '-c:a', profile.audioCodec, '-b:a', profile.audioBitrate,
     '-ar', String(profile.audioSampleRate), '-ac', String(profile.audioChannels),
-    '-f', 'flv', outputTarget(output),
+    ...(playlistPath ? ['-shortest'] : []),
+    '-f', 'flv', outputTarget(output, runNumber),
   ];
 }
 
@@ -77,10 +99,11 @@ class FfmpegEncoder extends Encoder {
     return this.child !== null;
   }
 
-  start({ audioPath }) {
+  // options: { audioPath } (tek parça) ya da { playlistPath, runNumber } (playlist modu)
+  start({ audioPath, playlistPath, runNumber }) {
     if (this.running) throw new Error('FfmpegEncoder zaten çalışıyor');
     const args = buildFfmpegArgs({
-      profile: this.profile, backgroundPath: this.backgroundPath, audioPath, output: this.output,
+      profile: this.profile, backgroundPath: this.backgroundPath, audioPath, playlistPath, runNumber, output: this.output,
     });
     this.emit('log', { kind: 'command', args: args.map((a) => maskSecret(a, this.output)) });
 

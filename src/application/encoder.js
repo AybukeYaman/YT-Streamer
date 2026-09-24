@@ -7,7 +7,10 @@
 const { EventEmitter } = require('events');
 
 class Encoder extends EventEmitter {
-  // options: { audioPath } — çalınacak ses girişi. Zaten çalışıyorsa hata fırlatır.
+  // options — ses girişi, iki moddan biri. Zaten çalışıyorsa hata fırlatır.
+  //   { audioPath }               tek parça
+  //   { playlistPath, runNumber } playlist (bitince code=0 ile kapanır); runNumber kaçıncı tur
+  //                               olduğunu belirtir (local çıktı dosyasını ayırmak için)
   start(options) {
     throw new Error(`${this.constructor.name}.start() implement edilmemiş`);
   }

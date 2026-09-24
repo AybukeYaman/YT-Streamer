@@ -9,6 +9,7 @@
     "videoBitrate": "2500k", "audioBitrate": "160k",
     "preset": "veryfast"
   },
+  "queue": { "mode": "shuffle", "batchSize": 50 },
   "output": {
     "mode": "local",
     "localPath": "./runtime/out.flv"

@@ -78,3 +78,18 @@ bedeli sadece birkaç dosyada zaten var olan tepe noktalarının kırpılması.
 **Etki:** `normalize.js`'in normalize mantığı loudnorm linear yerine
 ölçüm + sabit kazanç + `alimiter` zincirine göre yazılacak. Bitrate 192k'de
 bırakıldı (değiştirilmedi).
+
+---
+
+## [Faz 3] TrackRepository önbelleği restart'ta yenilenmiyor — 24 Eylül 2026
+
+**Soru:** Yayın sürerken `music/`'e eklenen parça kuyruğa girmeli mi?
+
+**Karar:** Şimdilik hayır — bilinen sınırlama olarak bırakıldı.
+
+**Gerekçe:** `TrackRepository.list()` sadece başlangıçta çağrılıyor, planlı
+restart'ta yenilenmiyor. Yayın sürerken eklenen parça, süreç yeniden
+başlatılana kadar kuyruğa girmiyor. Düzeltmek kuyruğun yeniden kurulmasını
+gerektiriyor — şu aşamada gereksiz komplekslik.
+
+**Etki:** Faz 6 (kontrol arayüzü) ile birlikte ele alınabilir.

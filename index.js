@@ -1,21 +1,15 @@
 // Giriş noktası (composition root): config'i yükler, somut bağımlılıkları kurar ve
 // birbirine bağlar, Ctrl+C'de temiz kapanışı başlatır. Uygulama mantığı burada değil.
-const fs = require('fs');
 const path = require('path');
 const { loadConfig } = require('./src/config/load-config');
 const { StreamProfile } = require('./src/domain/stream-profile');
 const { StreamOrchestrator } = require('./src/application/stream-orchestrator');
 const { FfmpegEncoder } = require('./src/infrastructure/ffmpeg-encoder');
+const { TrackRepository } = require('./src/infrastructure/track-repository');
+const { writeFileAtomic } = require('./src/infrastructure/atomic-file');
 const { Logger } = require('./src/infrastructure/logger');
 
-// Geçici: kuyruk yokken music/'teki ilk parça (Faz 3'te TrackRepository + Queue devralacak).
-function firstTrack(musicDir) {
-  const file = fs.readdirSync(musicDir).filter((f) => f.toLowerCase().endsWith('.m4a')).sort()[0];
-  if (!file) throw new Error(`${musicDir} içinde .m4a dosyası yok`);
-  return path.join(musicDir, file);
-}
-
-function main() {
+async function main() {
   const config = loadConfig();
   const logger = new Logger({ dir: path.join(config.paths.runtime, 'logs') });
   const log = logger.child('main');
@@ -28,10 +22,13 @@ function main() {
   const orchestrator = new StreamOrchestrator({
     encoder,
     log: logger.child('orchestrator'),
-    trackPath: firstTrack(config.paths.music),
+    trackRepository: new TrackRepository({ dir: config.paths.music, log: logger.child('tracks') }),
+    queue: config.queue,
+    playlistPath: path.join(config.paths.runtime, 'playlist.txt'),
+    writeFile: writeFileAtomic,
   });
 
-  // Kapanış istenmeden çıktıysa (çökme, parça bitti) hata koduyla çık.
+  // Kapanış istenmeden durduysa (çökme) hata koduyla çık.
   orchestrator.on('exit', ({ expected, code }) => {
     if (!expected) process.exitCode = code === 0 ? 0 : 1;
   });
@@ -47,13 +44,11 @@ function main() {
   });
 
   log.info(`çıkış: ${config.output.mode === 'local' ? config.output.localPath : 'rtmp'}`);
-  orchestrator.start();
+  await orchestrator.start();
 }
 
-try {
-  main();
-} catch (err) {
-  // Logger kurulmadan (örn. config hatası) düşebilir — konsola yaz.
+main().catch((err) => {
+  // Logger kurulmadan (örn. config hatası) ya da başlangıçta (örn. music/ boş) düşebilir.
   console.error(`[main] başlatılamadı: ${err.message}`);
   process.exitCode = 1;
-}
+});

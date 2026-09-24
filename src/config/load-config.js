@@ -80,6 +80,12 @@ function loadConfig({
     preset: isNonEmptyString,
   }, problems);
 
+  // Değer kontrolü (geçerli mod, batchSize ≥ 1) Queue ve PlaylistWriter'ın işi.
+  requireFields(raw.queue, 'queue', {
+    mode: isNonEmptyString,
+    batchSize: isNumber,
+  }, problems);
+
   const output = raw.output || {};
   let streamKey;
   if (!OUTPUT_MODES.includes(output.mode)) {
@@ -104,6 +110,7 @@ function loadConfig({
       runtime: abs(raw.paths.runtime),
     },
     profile: { ...raw.profile },
+    queue: { mode: raw.queue.mode, batchSize: raw.queue.batchSize },
     output: output.mode === 'local'
       ? { mode: 'local', localPath: abs(output.localPath) }
       : { mode: 'rtmp', streamKey: streamKey.trim() },
