@@ -14,7 +14,7 @@
 | 2 | Node.js sarmalayıcı | Tamamlandı |
 | 2.5 | Ses normalizasyonu | **Şimdi yapılabilir** |
 | 3 | Kuyruk ve kesintisiz geçiş | Tamamlandı |
-| 4 | Now playing overlay | Başlamadı |
+| 4 | Now playing overlay | Tamamlandı |
 | 5 | Dayanıklılık | Başlamadı |
 | 6 | Kontrol arayüzü (opsiyonel) | Başlamadı |
 | 7 | VPS'e taşıma | Başlamadı |
@@ -290,12 +290,29 @@ Parça adları İngilizce (kanal geneli sabit).
 **Kapanış:** Parça değişiminde yazı birkaç saniyede güncelleniyor, uzun
 başlıklar taşmıyor
 
+**Kapanış notu (25 Eylül) — TAMAMLANDI:**
+- 103 test geçti
+- **Yöntem değişti — yukarıdaki `textfile`+`reload=1` örneği artık geçersiz:**
+  parça başına ayrı `drawtext` + `enable='gte(t,başlangıç)*lt(t,bitiş)'`, her
+  başlık kendi dosyasında (`runtime/overlay/track-NNN.txt`), `expansion=none`.
+  Zamanlama ffmpeg'in video zaman damgasında. Eski yöntemde (Node'un `frame/24`
+  hesabıyla `nowplaying.txt`'yi güncellemesi) yazı sesten **~12 sn geç**
+  değişiyordu — ffmpeg videoyu kuyrukta önden işliyor (→ `KARARLAR.md`)
+- Sesle **<0.2 sn senkron**: gerçek parçada geçiş 180.608 sn, yazı 180.5–180.7
+  sn arasında değişti (tek kare); 3 restart'ta ilk karede doğru başlık
+- 50 drawtext'in CPU etkisi ölçüm gürültüsü içinde (gerçek zamanlı +%5,
+  `-re`'siz −%2), hız 1.00x, bellek +3 MiB
+- 40 karakter üstü başlık `…` ile kısaltılıyor; tek tırnak, `%`, `\`, `,`, `;`
+  içeren başlıklar ve yollar gerçek ffmpeg ile doğrulandı (iki seviyeli filtre
+  yolu kaçışı)
+
 ### Faz 5 — Dayanıklılık
 
 - 5.1 Üstel geri çekilme (3s → 6s → 12s → … → 60s tavan)
 - 5.2 Crash loop koruması (5 dakikada 5 çökme → dur, alarm)
 - 5.3 Log rotasyonu (50 MB → döndür, 5 dosya sakla) — **disk alanı sınırlı,
-  gerçek risk**
+  gerçek risk**. Not (Faz 4): loglanan tek ffmpeg komut satırı artık ~15 KB
+  (50 drawtext yüzünden, her restart'ta bir kez) — rotasyon eşiğini etkileyebilir
 - 5.4 `speed` < 0.95 → uyarı (encode yetişemiyor). **`speed` > 1.1 → uyarı**
   (Faz 3.1'de bulunan sessiz arıza: ses girişi tükenip video girişinde `-re`
   olmadığında ffmpeg kapanmadan hız sınırsız artıyor, anlamsız/sessiz video
@@ -312,6 +329,10 @@ başlıklar taşmıyor
 Ön koşul: Faz 5 tamam.
 
 - 2 vCPU minimum (1 vCPU'da 720p x264 zorlanır), 2 GB RAM
+  - **Yeniden değerlendir (Faz 4 ölçümü):** gerçek arkaplan videosuyla
+    (`assets/background.mp4`) CPU kullanımı Faz 1'deki test videosunun ~2.6
+    katı (overlay'siz 2.0 çekirdek vs 0.76 — `background.mp4` daha ağır).
+    "2 vCPU minimum" tahmini bu yeni veriyle yeniden değerlendirilmeli
 - `Dockerfile`: Node + ffmpeg; `music/`, `assets/`, `runtime/` volume
 - `docker-compose.yml`: `restart: unless-stopped`
 - VPS profili: 720p, `veryfast`/`ultrafast`, bitrate düşür

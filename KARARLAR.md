@@ -93,3 +93,40 @@ başlatılana kadar kuyruğa girmiyor. Düzeltmek kuyruğun yeniden kurulmasın�
 gerektiriyor — şu aşamada gereksiz komplekslik.
 
 **Etki:** Faz 6 (kontrol arayüzü) ile birlikte ele alınabilir.
+
+---
+
+## [Faz 4] Overlay zamanlaması ffmpeg'de: parça başına drawtext + enable — 25 Eylül 2026
+
+**Soru:** "Şu an çalan" yazısı nasıl sesle senkron değişecek?
+
+**İlk tasarım (prompt):** Tek `drawtext` + `textfile=nowplaying.txt:reload=1`; Node,
+ffmpeg'in `frame=` sayısından geçen süreyi (`frame/24`) hesaplayıp parça değişince
+dosyayı günceller.
+
+**Neden terk edildi:** 4.4 uçtan uca testinde (gerçek parça, çıktı videosu kare kare
+incelendi) yazı sesten **~12 sn geç** değişti — ses 178.2 sn'de geçti, `nowplaying.txt`
+178.6 sn'de doğru güncellendi, ama ekranda yazı 190.1 sn'de değişti. ffmpeg arka plan
+videosunu (`-re` yok) kuyrukta ~12 sn önden işliyor; `frame=` çıktı tarafının sayısı.
+Denenen ve elenenler: atomik rename değil (yerinde yazmayla aynı); video girişine `-re`
+gecikmeyi düzeltmiyor ve her başlangıçta ~12 sn takılma ekliyor (PLAN.md Faz 1'deki
+"video girişinde `-re` kullanma" kuralı doğrulandı).
+
+**Karar:** Her parçanın başlığı ayrı dosyada; parça başına bir `drawtext`,
+`enable='gte(t,başlangıç)*lt(t,bitiş)'` (son parça `gte` ile açık uçlu). `t` videonun
+kendi zaman damgası — zamanlama tamamen ffmpeg'de, Node'da frame takibi yok. `reload`
+yok (dosyalar açılışta bir kez okunur → Windows'ta rename/EPERM riski de kalmadı).
+`expansion=none`: başlıktaki `%` yorumlanmaz.
+
+**Doğrulama:** Gerçek parçada geçiş 180.608 sn, yazı 180.5–180.7 arasında değişti
+(tek kare). 3 restart'ta yeni playlist'in ilk karesinde doğru başlık.
+
+**Performans (batchSize=50, 120 sn, `-benchmark`):** Gerçek zamanlı (`-re`, Faz 1
+koşulu) overlay'siz 2.007 çekirdek → 50 drawtext 2.110 çekirdek (+%5); `-re`'siz
+ölçümde fark −%2 — gürültü aralığında. Hız 1.00x, bellek +3 MiB. `sendcmd` yedeğine
+gerek kalmadı.
+
+**Not:** Overlay'siz CPU bile Faz 1'in (0.76 çekirdek, `experiments/faz1-gercek720b.log`)
+~2.6 katı. Overlay ile ilgisi yok; arka plan videosu Faz 1'dekinden farklı
+(`assets/background.mp4`). VPS boyutlandırması (Faz 7, "2 vCPU minimum") için
+yeniden değerlendirilmeli.

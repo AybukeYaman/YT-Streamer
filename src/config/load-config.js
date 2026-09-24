@@ -42,6 +42,7 @@ function readEnvFile(file) {
 
 const isNonEmptyString = (v) => typeof v === 'string' && v.trim() !== '';
 const isNumber = (v) => typeof v === 'number' && Number.isFinite(v);
+const isBoolean = (v) => typeof v === 'boolean';
 
 function requireFields(obj, section, spec, problems) {
   if (obj === null || typeof obj !== 'object') {
@@ -86,6 +87,14 @@ function loadConfig({
     batchSize: isNumber,
   }, problems);
 
+  // position değer kontrolü (desteklenen konumlar) drawtext'i kuran encoder'ın işi.
+  requireFields(raw.overlay, 'overlay', {
+    enabled: isBoolean,
+    fontFile: isNonEmptyString,
+    fontSize: isNumber,
+    position: isNonEmptyString,
+  }, problems);
+
   const output = raw.output || {};
   let streamKey;
   if (!OUTPUT_MODES.includes(output.mode)) {
@@ -111,6 +120,8 @@ function loadConfig({
     },
     profile: { ...raw.profile },
     queue: { mode: raw.queue.mode, batchSize: raw.queue.batchSize },
+    // fontFile mutlak bir sistem yolu (C:/Windows/Fonts/...) — kök dizine göre çözülmez.
+    overlay: { ...raw.overlay },
     output: output.mode === 'local'
       ? { mode: 'local', localPath: abs(output.localPath) }
       : { mode: 'rtmp', streamKey: streamKey.trim() },

@@ -4,6 +4,7 @@ const path = require('path');
 const { loadConfig } = require('./src/config/load-config');
 const { StreamProfile } = require('./src/domain/stream-profile');
 const { StreamOrchestrator } = require('./src/application/stream-orchestrator');
+const { NowPlayingWriter } = require('./src/application/now-playing-writer');
 const { FfmpegEncoder } = require('./src/infrastructure/ffmpeg-encoder');
 const { TrackRepository } = require('./src/infrastructure/track-repository');
 const { writeFileAtomic } = require('./src/infrastructure/atomic-file');
@@ -14,10 +15,14 @@ async function main() {
   const logger = new Logger({ dir: path.join(config.paths.runtime, 'logs') });
   const log = logger.child('main');
 
+  const profile = new StreamProfile(config.profile);
+  // Overlay kapalıysa ne drawtext ne başlık dosyaları: ikisi de null.
+  const { enabled: overlayEnabled, ...overlayStyle } = config.overlay;
   const encoder = new FfmpegEncoder({
-    profile: new StreamProfile(config.profile),
+    profile,
     backgroundPath: config.paths.background,
     output: config.output,
+    overlay: overlayEnabled ? overlayStyle : null,
   });
   const orchestrator = new StreamOrchestrator({
     encoder,
@@ -26,6 +31,9 @@ async function main() {
     queue: config.queue,
     playlistPath: path.join(config.paths.runtime, 'playlist.txt'),
     writeFile: writeFileAtomic,
+    nowPlayingWriter: overlayEnabled
+      ? new NowPlayingWriter({ dir: path.join(config.paths.runtime, 'overlay'), writeFile: writeFileAtomic })
+      : null,
   });
 
   // Kapanış istenmeden durduysa (çökme) hata koduyla çık.

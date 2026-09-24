@@ -10,6 +10,7 @@ const BASE = {
   paths: { music: './music', background: './assets/background.mp4', runtime: './runtime' },
   profile: { width: 1280, height: 720, fps: 24, videoBitrate: '2500k', audioBitrate: '160k', preset: 'veryfast' },
   queue: { mode: 'shuffle', batchSize: 50 },
+  overlay: { enabled: true, fontFile: 'C:/Windows/Fonts/arial.ttf', fontSize: 28, position: 'bottom-left' },
   output: { mode: 'local', localPath: './runtime/out.flv' },
 };
 const clone = () => JSON.parse(JSON.stringify(BASE));
@@ -43,6 +44,7 @@ test('local mod: yollar kök dizine göre mutlak olur', () => {
   assert.deepEqual(result.output, { mode: 'local', localPath: path.join(dir, 'runtime', 'out.flv') });
   assert.deepEqual(result.profile, BASE.profile);
   assert.deepEqual(result.queue, BASE.queue);
+  assert.deepEqual(result.overlay, BASE.overlay); // fontFile kök dizine göre çözülmez
 });
 
 test('rtmp: .env yoksa ya da anahtar boşsa açık hata', () => {
@@ -116,4 +118,18 @@ test('bozuk JSON ve eksik dosya ConfigError verir', () => {
     () => loadConfig({ rootDir: os.tmpdir(), configFile: 'yok-boyle-bir-config-7f3a.json' }),
     (err) => err instanceof ConfigError && /dosya okunamadı: ENOENT/.test(err.message),
   );
+});
+
+test('overlay bölümü eksikse ya da alanlar yanlış tipteyse listelenir', () => {
+  const missing = clone();
+  delete missing.overlay;
+  assert.deepEqual(problemsOf({ config: missing }), ['"overlay" bölümü eksik']);
+
+  const wrong = clone();
+  wrong.overlay = { enabled: 'evet', fontFile: '', fontSize: '28', position: 'bottom-left' };
+  assert.deepEqual(problemsOf({ config: wrong }), [
+    '"overlay.enabled" eksik ya da geçersiz',
+    '"overlay.fontFile" eksik ya da geçersiz',
+    '"overlay.fontSize" eksik ya da geçersiz',
+  ]);
 });

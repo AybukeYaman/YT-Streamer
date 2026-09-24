@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
 
-const { FfmpegEncoder, buildFfmpegArgs, parseProgressLine } = require('../../src/infrastructure/ffmpeg-encoder');
+const { FfmpegEncoder, buildFfmpegArgs, parseProgressLine, escapeFilterPath } = require('../../src/infrastructure/ffmpeg-encoder');
 const { Encoder } = require('../../src/application/encoder');
 const { StreamProfile } = require('../../src/domain/stream-profile');
 
@@ -58,6 +58,77 @@ test('playlist modu: -re -f concat -safe 0 -i <playlist> ve -shortest; geri kala
   // Encode parametreleri iki modda aynı
   const encodePart = (a) => a.slice(a.indexOf('-map'), a.indexOf('-f', a.indexOf('-map')));
   assert.deepEqual(encodePart(pl).filter((x) => x !== '-shortest'), encodePart(single));
+});
+
+const OVERLAY = { fontFile: 'C:/Windows/Fonts/arial.ttf', fontSize: 28, position: 'bottom-left' };
+const RT = 'C:\\Users\\Aybuke Yeni\\Desktop\\Youtube\\YT Stream System\\runtime\\overlay';
+const TEXTS = [
+  { textFile: `${RT}\\track-001.txt`, start: 0, end: 179.349 },
+  { textFile: `${RT}\\track-002.txt`, start: 179.349, end: 359.7861 },
+  { textFile: `${RT}\\track-003.txt`, start: 359.7861, end: null },
+];
+const vf = (args) => args[args.indexOf('-vf') + 1];
+const withOverlay = (extra = {}) => buildFfmpegArgs({ profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL, overlay: OVERLAY, overlayTexts: TEXTS, ...extra });
+
+test('escapeFilterPath: sürücü iki noktası kaçışlı, düz bölü, tek tırnak içinde', () => {
+  assert.equal(escapeFilterPath('C:/Windows/Fonts/arial.ttf'), "'C\\:/Windows/Fonts/arial.ttf'");
+  assert.equal(escapeFilterPath('C:\\Windows\\Fonts\\arial.ttf'), "'C\\:/Windows/Fonts/arial.ttf'");
+  assert.equal(escapeFilterPath('C:/Users/Aybuke Yeni/x.txt'), "'C\\:/Users/Aybuke Yeni/x.txt'"); // boşluk korunur
+});
+
+test('escapeFilterPath: yoldaki tek tırnak iki seviyede kaçışlanır (seçenek \\\', zincir \'\\\'\')', () => {
+  // Beklenen ham metin: 'C\:/m/Don\'\''t.txt' — gerçek ffmpeg ile doğrulanan biçim
+  assert.equal(escapeFilterPath("C:/m/Don't.txt"), "'C\\:/m/Don\\'\\''t.txt'");
+});
+
+test('overlay: parça başına bir drawtext, scale\'e virgülle zincirli, -vf tek kez', () => {
+  const args = withOverlay();
+  assert.equal(args.filter((a) => a === '-vf').length, 1);
+  const parts = vf(args).split(',drawtext=');
+  assert.equal(parts[0], 'scale=1280:720');
+  assert.equal(parts.length, 1 + TEXTS.length);
+});
+
+test('overlay: drawtext tam biçimi — stil, mutlak düz bölü textfile, yarı açık enable aralığı', () => {
+  const style = "fontfile='C\\:/Windows/Fonts/arial.ttf':fontsize=28:fontcolor=white:x=40:y=h-80:shadowcolor=black@0.6:shadowx=2:shadowy=2";
+  const file = (n) => `textfile='C\\:/Users/Aybuke Yeni/Desktop/Youtube/YT Stream System/runtime/overlay/track-00${n}.txt'`;
+  assert.equal(vf(withOverlay()), [
+    'scale=1280:720',
+    `drawtext=${style}:expansion=none:${file(1)}:enable='gte(t\\,0.000)*lt(t\\,179.349)'`,
+    `drawtext=${style}:expansion=none:${file(2)}:enable='gte(t\\,179.349)*lt(t\\,359.786)'`,
+    `drawtext=${style}:expansion=none:${file(3)}:enable='gte(t\\,359.786)'`, // son parça açık uçlu
+  ].join(','));
+});
+
+test('overlay: reload yok — dosyalar açılışta bir kez okunur', () => {
+  assert.doesNotMatch(vf(withOverlay()), /reload/);
+});
+
+test('overlay yoksa (enabled: false) ya da parça listesi verilmezse sadece scale kalır', () => {
+  assert.equal(vf(withOverlay({ overlay: null })), 'scale=1280:720');
+  assert.equal(vf(withOverlay({ overlayTexts: undefined })), 'scale=1280:720');
+  assert.equal(vf(withOverlay({ overlayTexts: [] })), 'scale=1280:720');
+});
+
+test('overlay konumları: sağ taraf metin genişliğine göre hizalanır', () => {
+  const at = (position) => vf(withOverlay({ overlay: { ...OVERLAY, position } }));
+  assert.match(at('bottom-right'), /:x=w-tw-40:y=h-80:/);
+  assert.match(at('top-left'), /:x=40:y=40:/);
+  assert.match(at('top-right'), /:x=w-tw-40:y=40:/);
+});
+
+test('desteklenmeyen konum FfmpegEncoder kurulurken reddedilir', () => {
+  assert.throws(
+    () => new FfmpegEncoder({ profile, backgroundPath: BG, output: LOCAL, overlay: { ...OVERLAY, position: 'center' } }),
+    /desteklenmeyen overlay.position "center"/,
+  );
+});
+
+test('FfmpegEncoder start\'taki overlayTexts\'i argümanlara geçirir', () => {
+  const { spawnFn, calls } = fakeSpawn();
+  new FfmpegEncoder({ profile, backgroundPath: BG, output: LOCAL, overlay: OVERLAY, spawnFn })
+    .start({ playlistPath: 'p', runNumber: 1, overlayTexts: TEXTS });
+  assert.equal(vf(calls[0].args).split(',drawtext=').length, 1 + TEXTS.length);
 });
 
 test('tek parça modunda -shortest yok (PLAN.md Faz 1 notu)', () => {

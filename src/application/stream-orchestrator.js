@@ -13,6 +13,7 @@
 //   'exit' ({ expected, code, signal }) — yayın durdu; expected=false ise stop() istenmeden
 const { EventEmitter } = require('events');
 const { Queue } = require('../domain/queue');
+const { PlaybackTimeline } = require('../domain/playback-timeline');
 const { PlaylistWriter } = require('./playlist-writer');
 
 const PROGRESS_LOG_INTERVAL_MS = 5000;
@@ -23,8 +24,11 @@ class StreamOrchestrator extends EventEmitter {
   // encoder: Encoder sözleşmesi; log: { debug, info, warn, error }
   // trackRepository: { list(): Promise<Track[]> }
   // queue: { mode, batchSize }; playlistPath: mutlak yol; writeFile: atomik yazma
+  // nowPlayingWriter: { writeAll(titles): string[] } — verilirse (overlay açık) her playlist'te
+  // parça başlıkları yazılır ve encoder'a parça başına zaman aralığıyla verilir
   constructor({
     encoder, log, trackRepository, queue, playlistPath, writeFile,
+    nowPlayingWriter = null,
     now = () => Date.now(), random = Math.random,
   }) {
     super();
@@ -34,6 +38,7 @@ class StreamOrchestrator extends EventEmitter {
     this.queueOptions = queue;
     this.playlistPath = playlistPath;
     this.writeFile = writeFile;
+    this.nowPlayingWriter = nowPlayingWriter;
     this.now = now;
     this.random = random;
 
@@ -81,7 +86,16 @@ class StreamOrchestrator extends EventEmitter {
       `playlist #${this.runNumber}: ${playlist.tracks.length} parça, ${minutes(playlist.totalDurationSeconds)} — ` +
       playlist.tracks.map((t) => t.title).join(' | '),
     );
-    this.encoder.start({ playlistPath: playlist.path, runNumber: this.runNumber });
+    const overlayTexts = this.nowPlayingWriter ? this.#writeOverlayTexts(playlist.tracks) : undefined;
+    this.encoder.start({ playlistPath: playlist.path, runNumber: this.runNumber, ...(overlayTexts && { overlayTexts }) });
+  }
+
+  // Başlık dosyalarını yazar, her birini parçanın zaman aralığıyla eşler. Zamanlama ffmpeg'de
+  // (drawtext enable, video zaman damgası t) — Node tarafında frame takibi yok.
+  #writeOverlayTexts(tracks) {
+    const segments = new PlaybackTimeline(tracks).segments();
+    const files = this.nowPlayingWriter.writeAll(tracks.map((t) => t.title));
+    return segments.map(({ start, end }, i) => ({ textFile: files[i], start, end }));
   }
 
   // ffmpeg'in ham stderr'i sadece dosyaya (debug); ilerleme ~2/sn geldiği için 5 sn'de bir.

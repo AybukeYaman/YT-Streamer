@@ -32,7 +32,7 @@ const track = (name) => new Track({ path: `C:/music/${name}.m4a`, durationSecond
 const TRACKS = ['a', 'b', 'c', 'd', 'e'].map(track);
 
 // Playlist yazımlarını bellekte tutar; her yazılan içerikten parça başlıklarını çıkarır.
-function setup({ tracks = TRACKS, batchSize = 2, now } = {}) {
+function setup({ tracks = TRACKS, batchSize = 2, now, nowPlayingWriter } = {}) {
   const encoder = new FakeEncoder();
   const { log, lines } = fakeLog();
   const playlists = [];
@@ -44,6 +44,7 @@ function setup({ tracks = TRACKS, batchSize = 2, now } = {}) {
     playlistPath: 'C:/runtime/playlist.txt',
     writeFile: (p, content) => playlists.push(content.trim().split('\n').map((l) => l.match(/\/(\w+)\.m4a'$/)[1]).join('')),
     ...(now ? { now } : {}),
+    nowPlayingWriter,
   });
   return { encoder, orch, lines, playlists };
 }
@@ -140,6 +141,54 @@ test('encoder logları düzeylere dağıtılır, ilerleme 5 sn\'de bir', async (
   assert.ok(lines.some((l) => l.level === 'debug' && l.m === 'Stream mapping:'));
   assert.ok(lines.some((l) => l.level === 'error' && l.m === 'olmadı'));
   assert.ok(lines.some((l) => l.level === 'info' && l.m === 'ffmpeg başlatılıyor: -i x'));
+});
+
+// Overlay: TRACKS 60'ar sn. Başlık dosyaları playlist başında yazılır, encoder'a parça başına
+// zaman aralığıyla verilir — zamanlama ffmpeg'de, Node tarafında frame takibi yok.
+function setupOverlay(opts) {
+  const batches = [];
+  const nowPlayingWriter = {
+    writeAll: (titles) => { batches.push(titles); return titles.map((t) => `C:/rt/overlay/${t}.txt`); },
+  };
+  return { ...setup({ ...opts, nowPlayingWriter }), batches };
+}
+
+test('overlay: başlıklar playlist başında yazılır, encoder\'a parça başına aralıkla verilir', async () => {
+  const { encoder, orch, batches } = setupOverlay({ batchSize: 3 });
+  await orch.start();
+  assert.deepEqual(batches, [['a', 'b', 'c']]);
+  assert.deepEqual(encoder.starts[0].overlayTexts, [
+    { textFile: 'C:/rt/overlay/a.txt', start: 0, end: 60 },
+    { textFile: 'C:/rt/overlay/b.txt', start: 60, end: 120 },
+    { textFile: 'C:/rt/overlay/c.txt', start: 120, end: null }, // son parça açık uçlu
+  ]);
+});
+
+test('overlay: her restart\'ta yeni playlist\'in başlıkları yazılır, zaman 0\'dan başlar', async () => {
+  const { encoder, orch, batches } = setupOverlay({ batchSize: 2 });
+  await orch.start();
+  encoder.emit('exit', 0, null);
+  assert.deepEqual(batches, [['a', 'b'], ['c', 'd']]);
+  assert.deepEqual(encoder.starts[1].overlayTexts.map((o) => [o.start, o.end]), [[0, 60], [60, null]]);
+});
+
+test('overlay: writer verilmezse (overlay kapalı) encoder\'a overlayTexts geçmez', async () => {
+  const { encoder, orch } = setup();
+  await orch.start();
+  assert.deepEqual(encoder.starts[0], { playlistPath: 'C:/runtime/playlist.txt', runNumber: 1 });
+});
+
+test('overlay: restart\'ta başlıklar yazılamazsa hata loglanır, beklenmeyen çıkış bildirilir', async () => {
+  let fail = false;
+  const nowPlayingWriter = { writeAll: (titles) => { if (fail) throw new Error('EACCES'); return titles; } };
+  const { encoder, orch, lines } = setup({ nowPlayingWriter });
+  const exits = [];
+  orch.on('exit', (e) => exits.push(e));
+  await orch.start();
+  fail = true;
+  encoder.emit('exit', 0, null);
+  assert.ok(lines.some((l) => l.level === 'error' && /yeniden başlatılamadı: EACCES/.test(l.m)));
+  assert.deepEqual(exits, [{ expected: false, code: 0, signal: null }]);
 });
 
 test('application katmanı child_process, fs ya da infrastructure import etmez', () => {

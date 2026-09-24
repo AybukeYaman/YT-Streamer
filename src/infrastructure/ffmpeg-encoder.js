@@ -33,16 +33,72 @@ function audioInputArgs({ audioPath, playlistPath }) {
     : ['-re', '-i', audioPath];
 }
 
+// Filtre içindeki yol: düz bölü, sürücü iki noktası kaçışlı (C: → C\:), tek tırnak içinde.
+// Filtre sözdiziminde : seçenek ayırıcı olduğu için kaçışsız C: filtreyi bozar — PLAN.md'nin
+// "en sık takılınan yer" dediği kısım. Argümanlar dizi olarak geçtiği için kabuk kaçışı yok.
+//
+// ffmpeg filtre metnini İKİ kez ayrıştırır (gerçek ffmpeg ile doğrulandı, Faz 4.3):
+//   1. seçenek seviyesi (drawtext): : ve ' önüne \ → C\:  Don\'t
+//   2. filtre zinciri seviyesi: tek tırnak içine al; tırnak içinde ' yazılamaz, bu yüzden
+//      kapat + \' + yeniden aç ('\'') — 1. seviyenin \'si tırnak içinde olduğu gibi kalır.
+// Tek seviye kaçışla yoldaki ' ikinci ayrıştırmada yeni bir alıntı açıp filtrenin kalanını yutuyor.
+function escapeFilterPath(filePath) {
+  const optionLevel = filePath.replace(/\\/g, '/').replace(/[:']/g, '\\$&');
+  return `'${optionLevel.replace(/'/g, "'\\''")}'`;
+}
+
+// y=h-80 PLAN.md Faz 4'teki doğrulanmış değer (fontsize 28 için); diğerleri aynı kenar payıyla.
+const OVERLAY_POSITIONS = {
+  'bottom-left': { x: '40', y: 'h-80' },
+  'bottom-right': { x: 'w-tw-40', y: 'h-80' },
+  'top-left': { x: '40', y: '40' },
+  'top-right': { x: 'w-tw-40', y: '40' },
+};
+
+function overlayPosition(position) {
+  const pos = OVERLAY_POSITIONS[position];
+  if (!pos) throw new Error(`desteklenmeyen overlay.position "${position}" — ${Object.keys(OVERLAY_POSITIONS).join(', ')}`);
+  return pos;
+}
+
+// Saniye → enable ifadesi, yarı açık aralık start ≤ t < end (end null: sona kadar).
+// Virgüller filtre zinciri seviyesinde ayırıcı olduğu için \, — ifade tek tırnak içinde.
+function enableExpr(start, end) {
+  const s = start.toFixed(3);
+  return end === null ? `'gte(t\\,${s})'` : `'gte(t\\,${s})*lt(t\\,${end.toFixed(3)})'`;
+}
+
+// overlay: { fontFile, fontSize, position } ya da null (overlay kapalı → sadece scale).
+// overlayTexts: [{ textFile, start, end }] — parça başına bir drawtext, sadece kendi zaman
+// aralığında görünür. Zamanlama ffmpeg'in video zaman damgasına (t) bağlı: sesle senkron.
+// (textfile + reload=1 ile dosyayı Node'dan güncellemek ~12 sn geç kalıyordu — KARARLAR.md.)
+function videoFilter(profile, overlay, overlayTexts = []) {
+  const scale = `scale=${profile.width}:${profile.height}`;
+  if (!overlay || overlayTexts.length === 0) return scale;
+  const pos = overlayPosition(overlay.position);
+  const style = [
+    `fontfile=${escapeFilterPath(overlay.fontFile)}`,
+    `fontsize=${overlay.fontSize}`,
+    'fontcolor=white',
+    `x=${pos.x}`, `y=${pos.y}`,
+    'shadowcolor=black@0.6', 'shadowx=2', 'shadowy=2',
+  ].join(':');
+  // expansion=none: başlık düz metin — "100% Love" gibi başlıklarda % dizisi yorumlanmasın.
+  const drawtexts = overlayTexts.map(({ textFile, start, end }) =>
+    `drawtext=${style}:expansion=none:textfile=${escapeFilterPath(textFile)}:enable=${enableExpr(start, end)}`);
+  return [scale, ...drawtexts].join(',');
+}
+
 // Argümanlar dizi olarak kurulur — boşluklu Windows yolları tek eleman kalır, kaçış gerekmez.
 // Sıra ve değerler Faz 1 yerel testinde doğrulanan komutla aynı.
-function buildFfmpegArgs({ profile, backgroundPath, audioPath, playlistPath, runNumber, output }) {
+function buildFfmpegArgs({ profile, backgroundPath, audioPath, playlistPath, runNumber, output, overlay = null, overlayTexts }) {
   return [
     '-hide_banner',
     '-y', // local modda çıktının üzerine yaz; yoksa ffmpeg stdin'den onay bekler
     '-stream_loop', '-1', '-i', backgroundPath,
     ...audioInputArgs({ audioPath, playlistPath }),
     '-map', '0:v', '-map', '1:a',
-    '-vf', `scale=${profile.width}:${profile.height}`,
+    '-vf', videoFilter(profile, overlay, overlayTexts),
     '-c:v', profile.videoCodec, '-preset', profile.preset, '-pix_fmt', profile.pixelFormat,
     '-profile:v', profile.h264Profile, '-r', String(profile.fps),
     '-g', String(profile.gopSize), '-keyint_min', String(profile.gopSize), '-sc_threshold', '0',
@@ -81,6 +137,7 @@ function parseProgressLine(line) {
 class FfmpegEncoder extends Encoder {
   constructor({
     profile, backgroundPath, output,
+    overlay = null, // { fontFile, fontSize, position } — null ise drawtext yok
     ffmpegPath = 'ffmpeg',
     stopTimeoutMs = DEFAULT_STOP_TIMEOUT_MS,
     spawnFn = spawn, // testlerde sahte süreç vermek için
@@ -89,6 +146,9 @@ class FfmpegEncoder extends Encoder {
     this.profile = profile;
     this.backgroundPath = backgroundPath;
     this.output = output;
+    this.overlay = overlay;
+    // Geçersiz konum yayın başlamadan, kurulumda yakalansın.
+    if (overlay) overlayPosition(overlay.position);
     this.ffmpegPath = ffmpegPath;
     this.stopTimeoutMs = stopTimeoutMs;
     this.spawnFn = spawnFn;
@@ -99,11 +159,12 @@ class FfmpegEncoder extends Encoder {
     return this.child !== null;
   }
 
-  // options: { audioPath } (tek parça) ya da { playlistPath, runNumber } (playlist modu)
-  start({ audioPath, playlistPath, runNumber }) {
+  // options: { audioPath } (tek parça) ya da { playlistPath, runNumber, overlayTexts } (playlist modu)
+  start({ audioPath, playlistPath, runNumber, overlayTexts }) {
     if (this.running) throw new Error('FfmpegEncoder zaten çalışıyor');
     const args = buildFfmpegArgs({
-      profile: this.profile, backgroundPath: this.backgroundPath, audioPath, playlistPath, runNumber, output: this.output,
+      profile: this.profile, backgroundPath: this.backgroundPath, audioPath, playlistPath, runNumber,
+      output: this.output, overlay: this.overlay, overlayTexts,
     });
     this.emit('log', { kind: 'command', args: args.map((a) => maskSecret(a, this.output)) });
 
@@ -160,4 +221,4 @@ class FfmpegEncoder extends Encoder {
   }
 }
 
-module.exports = { FfmpegEncoder, buildFfmpegArgs, parseProgressLine };
+module.exports = { FfmpegEncoder, buildFfmpegArgs, parseProgressLine, escapeFilterPath };

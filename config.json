@@ -10,6 +10,12 @@
     "preset": "veryfast"
   },
   "queue": { "mode": "shuffle", "batchSize": 50 },
+  "overlay": {
+    "enabled": true,
+    "fontFile": "C:/Windows/Fonts/arial.ttf",
+    "fontSize": 28,
+    "position": "bottom-left"
+  },
   "output": {
     "mode": "local",
     "localPath": "./runtime/out.flv"

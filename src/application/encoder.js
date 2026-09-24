@@ -11,6 +11,8 @@ class Encoder extends EventEmitter {
   //   { audioPath }               tek parça
   //   { playlistPath, runNumber } playlist (bitince code=0 ile kapanır); runNumber kaçıncı tur
   //                               olduğunu belirtir (local çıktı dosyasını ayırmak için)
+  //   overlayTexts (opsiyonel)    [{ textFile, start, end }] — parça başına ekran yazısı;
+  //                               start ≤ t < end saniyelerinde görünür, end null ise sona kadar
   start(options) {
     throw new Error(`${this.constructor.name}.start() implement edilmemiş`);
   }
