@@ -188,3 +188,30 @@ yayında ani yavaşlama ortalamayı neredeyse hiç oynatmaz (birim testi: 3 saat
   düzeyinde geçici açlık (CPU zamanlama / disk G/Ç) gibi. Nedeni kanıtlanamadı. Yerel
   dosyaya çıktıda zararsız; gerçek RTMP'de ~25 sn'lik duraksama izleyicide tamponlama
   demek — Faz 1'de YouTube ile izlenmeli, tekrarlanırsa çevre (disk/AV/arka plan) ölçülmeli.
+
+---
+
+## [Faz 1] Ağ kopması testi ve crash loop'un bilinen sınırlaması — 26 Eylül 2026
+
+**Soru:** 5.5 testi — supervisor gerçek ağ kesintisinde nasıl davranıyor?
+
+**Bulgu:** 30+ sn'lik gerçek Wi-Fi kesintisinde ffmpeg her seferinde net hata verip
+(WSAECONNRESET, DNS çözümleme hatası) birkaç saniye içinde çıktı, askıda kalmadı.
+Supervisor doğru geri çekilmeyle (3sn, 6sn, 12sn) toparlandı, YouTube yayını
+sonlandırmadı (Mükemmel durumu ve sayaç kesintisiz devam etti).
+(Log: 01:09:25 ve 01:10:02'de TLS `IO error -10054`, 01:10:09'da
+`a.rtmps.youtube.com` DNS'te çözülemedi; 01:10:22'de RTMPS'e yeniden bağlandı,
+kaldığı parçadan devam. Crash loop sayacı 3/5'e çıktı.)
+
+**Bilinen risk:** Crash loop koruması (5 dk'da 5 çökme → dur) ağ kesintisinin
+süresinden bağımsız çalışıyor. 48-60 sn'den uzun süren bir ağ kesintisi (modem
+resetlenmesi gibi) crash loop'u tetikleyip yayını kalıcı olarak durdurabilir — ağ
+geri gelse bile otomatik toparlanmaz. (Ağ yokken her yeniden bağlanma denemesi 0.1 sn'de
+düşüp ayrı bir çökme sayılıyor; 3+6+12+24 sn geri çekilmeyle 5 hak ~45 sn'de biter.)
+
+**Karar:** Şimdilik düzeltilmedi, kabul edilen risk olarak kaydedildi. İleride ele
+alınabilir: ağ hatalarını (ECONNRESET, DNS hatası) diğer çökme türlerinden ayırıp
+onlara daha toleranslı bir eşik/pencere uygulamak.
+
+**Etki:** Üretimde (VPS'te) izlenmesi gereken bir nokta; uzun bir kesinti sonrası
+yayının kendiliğinden dönmediği fark edilirse elle restart gerekecek.

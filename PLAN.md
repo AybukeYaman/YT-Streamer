@@ -10,7 +10,7 @@
 | Faz | Konu | Durum |
 |---|---|---|
 | 0 | Hazırlık | Kısmen tamam — YouTube erişimi beklemede |
-| 1 | Ham ffmpeg testi | Bekliyor (YouTube erişimi açılınca, R2 doğrulaması dahil) |
+| 1 | Ham ffmpeg testi | Tamamlandı (gerçek RTMP, R2 doğrulandı) |
 | 2 | Node.js sarmalayıcı | Tamamlandı |
 | 2.5 | Ses normalizasyonu | **Şimdi yapılabilir** |
 | 3 | Kuyruk ve kesintisiz geçiş | Tamamlandı |
@@ -215,6 +215,24 @@ bir olay tamponlamaya yol açabilir. Test sırasında böyle bir duraksama
 görülürse YouTube tarafındaki etkisini (izleyici tamponlaması, stream
 health uyarısı) kaydet.
 5.5 (ağ kopması testi, Faz 5'te ertelenmişti) de burada gerçek RTMP ile yapılacak.
+
+**Kapanış notu (26 Eylül) — TAMAMLANDI:**
+- Gerçek RTMPS yayını 00:50:14–01:12:54 (~22.5 dk), `node index.js` (Faz 5 kodu, overlay
+  açık, `batchSize=3` geçici test config'i), upload 30.94 Mbps, bağlantı Wi-Fi (Intel AX201)
+- **10 dk kriteri geçti:** ilk kesintiye kadar 19 dk kesintisiz, Studio "Mükemmel";
+  25 fps, ~2.7 Mbps, hız penceresi medyan 1.000 (206 ölçüm, 0.945–1.041)
+- **R2 kesinleşti — B yaklaşımı doğrulandı, C'ye (named pipe) gerek yok:** 2/2 planlı
+  restart (00:58:56, 01:07:02, `code=0`), boşluk 1910 / 1716 ms (yerelde ~1.2 sn; fark
+  büyük olasılıkla RTMPS/TLS el sıkışması). YouTube'da sayaç kesintisiz aktı, gözle
+  görülür donma yok, yayın sonlanmadı
+- **5.5 ağ kopması geçti:** 30+ sn Wi-Fi kesintisinde ffmpeg net hatayla çıktı
+  (`-10054` WSAECONNRESET, DNS çözümleme hatası), askıda kalmadı; supervisor 3/6/12 sn
+  geri çekilmeyle toparladı, kaldığı parçadan devam etti; YouTube yayını sonlandırmadı.
+  **Bilinen risk:** ~45–60 sn'den uzun kesintide crash loop yayını kalıcı durdurur
+  (→ `KARARLAR.md`, kabul edilen risk)
+- Faz 5'teki gibi açıklanamayan hız duraksaması görülmedi; tek `< 0.95` uyarısı ağ
+  kopmasının hemen öncesindeydi (nedeni belli)
+- Stream key hiçbir log/çıktıda geçmedi (sayıyla doğrulandı); `config.json`'a dokunulmadı
 
 **Parametre gerekçeleri:**
 - `-stream_loop -1` — arkaplanı sonsuz döndürür
