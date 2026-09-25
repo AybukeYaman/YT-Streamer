@@ -3,8 +3,10 @@
 const path = require('path');
 const { loadConfig } = require('./src/config/load-config');
 const { StreamProfile } = require('./src/domain/stream-profile');
+const { SpeedWindow } = require('./src/domain/speed-window');
 const { StreamOrchestrator } = require('./src/application/stream-orchestrator');
 const { NowPlayingWriter } = require('./src/application/now-playing-writer');
+const { Supervisor } = require('./src/application/supervisor');
 const { FfmpegEncoder } = require('./src/infrastructure/ffmpeg-encoder');
 const { TrackRepository } = require('./src/infrastructure/track-repository');
 const { writeFileAtomic } = require('./src/infrastructure/atomic-file');
@@ -34,25 +36,30 @@ async function main() {
     nowPlayingWriter: overlayEnabled
       ? new NowPlayingWriter({ dir: path.join(config.paths.runtime, 'overlay'), writeFile: writeFileAtomic })
       : null,
+    speedWindow: new SpeedWindow({ fps: profile.fps }),
   });
 
-  // Kapanış istenmeden durduysa (çökme) hata koduyla çık.
-  orchestrator.on('exit', ({ expected, code }) => {
-    if (!expected) process.exitCode = code === 0 ? 0 : 1;
-  });
+  // Çökmede yeniden başlatma kararı supervisor'da; crash loop'ta vazgeçerse hata koduyla çık.
+  const supervisor = new Supervisor({ orchestrator, log: logger.child('supervisor') });
+  supervisor.on('gave-up', () => { process.exitCode = 1; });
 
   let shuttingDown = false;
-  process.on('SIGINT', async () => {
+  const shutdown = async (reason) => {
     if (shuttingDown) return; // ikinci Ctrl+C: kapanış zaten sürüyor, encoder'ın 5 sn sınırı geçerli
     shuttingDown = true;
-    log.info('SIGINT alındı');
-    await orchestrator.stop();
+    log.info(`${reason} alındı`);
+    await supervisor.stop(); // geri çekilme beklerken de: bekleyen yeniden başlatma iptal
     log.info('temiz kapanış tamamlandı');
     process.exitCode = 0;
-  });
+    if (process.connected) process.disconnect(); // IPC kanalı açıkken süreç kapanmaz
+  };
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  // Başka bir Node süreci tarafından (fork, IPC) yönetiliyorsa: Windows'ta alt sürece SIGINT
+  // gönderilemiyor (kill doğrudan sonlandırır), temiz kapanış için 'stop' mesajı.
+  process.on('message', (m) => { if (m === 'stop') shutdown('stop mesajı'); });
 
   log.info(`çıkış: ${config.output.mode === 'local' ? config.output.localPath : 'rtmp'}`);
-  await orchestrator.start();
+  await supervisor.start();
 }
 
 main().catch((err) => {

@@ -15,6 +15,13 @@ class PlaybackTimeline {
     this.boundaries = tracks.map((t) => (total += t.durationSeconds)); // kümülatif: [d1, d1+d2, ...]
   }
 
+  // Geçen saniyede çalan parçanın indeksi; son sınırdan sonrası son parça.
+  // Supervisor çökmeden sonra kaldığı parçadan devam etmek için kullanır.
+  indexAt(elapsedSeconds) {
+    const i = this.boundaries.findIndex((end) => elapsedSeconds < end);
+    return i === -1 ? this.tracks.length - 1 : i;
+  }
+
   // [{ track, start, end }] — aralık yarı açık [start, end): sınır anı bir sonraki parçaya ait,
   // tam sınıra denk gelen karede iki başlık üst üste binmez.
   // Son parçanın bitişi null: -shortest'in video kuyruğunda (~1.7 sn) da yazı kalsın.

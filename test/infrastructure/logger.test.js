@@ -73,6 +73,62 @@ test('log dizini yoksa oluşturulur', withTempDir((dir) => {
   assert.equal(fs.readdirSync(nested).length, 1);
 }));
 
+// "2026-09-24 10:00:00.000 [INFO] [main] " = 38 bayt önek; mesaj + \n ile satır uzunluğu ayarlanır.
+const lineOf = (n) => 'x'.repeat(n - 39);
+const sizes = (dir) => Object.fromEntries(fs.readdirSync(dir).sort().map((f) => [f, fs.statSync(path.join(dir, f)).size]));
+
+test('rotasyon: eşiği aşacak satırda dosya .1\'e döner, yeni satır boş dosyaya gider', withTempDir((dir) => {
+  const { out } = fakeConsole();
+  const log = new Logger({ dir, out, now: fixedNow('2026-09-24T10:00:00'), maxBytes: 250 });
+  log.info(lineOf(100));
+  log.info(lineOf(100)); // 200 ≤ 250
+  log.info(lineOf(100)); // 300 > 250 → döndür
+  assert.deepEqual(sizes(dir), { 'stream-2026-09-24.1.log': 200, 'stream-2026-09-24.log': 100 });
+}));
+
+test('rotasyon: eski numaralar kayar (.1 → .2), en yeni içerik ana dosyada', withTempDir((dir) => {
+  const { out } = fakeConsole();
+  const log = new Logger({ dir, out, now: fixedNow('2026-09-24T10:00:00'), maxBytes: 150 });
+  for (const tag of ['a', 'b', 'c']) log.info(`${tag}${lineOf(99)}`);
+  const first = (f) => fs.readFileSync(path.join(dir, f), 'utf8').split('] ')[2][0];
+  assert.deepEqual(['stream-2026-09-24.log', 'stream-2026-09-24.1.log', 'stream-2026-09-24.2.log'].map(first), ['c', 'b', 'a']);
+}));
+
+test('saklama: en fazla maxFiles dosya — en eski numaralı dosya silinir', withTempDir((dir) => {
+  const { out } = fakeConsole();
+  const log = new Logger({ dir, out, now: fixedNow('2026-09-24T10:00:00'), maxBytes: 150, maxFiles: 3 });
+  for (let i = 0; i < 6; i++) log.info(lineOf(100));
+  assert.deepEqual(Object.keys(sizes(dir)), ['stream-2026-09-24.1.log', 'stream-2026-09-24.2.log', 'stream-2026-09-24.log']);
+}));
+
+test('saklama: günlük dosyalar da sayılır, yeni gün başlarken en eski günler silinir', withTempDir((dir) => {
+  const { out } = fakeConsole();
+  for (const d of ['2026-09-20', '2026-09-21', '2026-09-22', '2026-09-23']) fs.writeFileSync(path.join(dir, `stream-${d}.log`), 'eski\n');
+  fs.writeFileSync(path.join(dir, 'stream-2026-09-22.1.log'), 'eski\n');
+  fs.writeFileSync(path.join(dir, 'baska.txt'), 'dokunma\n');
+  new Logger({ dir, out, now: fixedNow('2026-09-24T10:00:00'), maxFiles: 3 }).info('yeni gün');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['baska.txt', 'stream-2026-09-22.log', 'stream-2026-09-23.log', 'stream-2026-09-24.log']);
+}));
+
+test('rotasyon: önceki çalıştırmadan kalan dosyanın boyutu hesaba katılır', withTempDir((dir) => {
+  const { out } = fakeConsole();
+  fs.writeFileSync(path.join(dir, 'stream-2026-09-24.log'), 'x'.repeat(200));
+  new Logger({ dir, out, now: fixedNow('2026-09-24T10:00:00'), maxBytes: 250 }).info(lineOf(100));
+  assert.deepEqual(sizes(dir), { 'stream-2026-09-24.1.log': 200, 'stream-2026-09-24.log': 100 });
+}));
+
+test('rotasyon: eşikten büyük tek satır boş dosyaya yine de yazılır (sonsuz döndürme yok)', withTempDir((dir) => {
+  const { out } = fakeConsole();
+  new Logger({ dir, out, now: fixedNow('2026-09-24T10:00:00'), maxBytes: 50 }).info(lineOf(100));
+  assert.deepEqual(sizes(dir), { 'stream-2026-09-24.log': 100 });
+}));
+
+test('varsayılan eşikler 50 MB ve 5 dosya', withTempDir((dir) => {
+  const log = new Logger({ dir, out: fakeConsole().out });
+  assert.equal(log.sink.maxBytes, 50 * 1024 * 1024);
+  assert.equal(log.sink.maxFiles, 5);
+}));
+
 test('dosya yazılamazsa bir kez uyarır, konsola devam eder, child da paylaşır', withTempDir((dir) => {
   const { out, lines } = fakeConsole();
   const log = new Logger({ dir, out, now: fixedNow('2026-09-24T10:00:00') });

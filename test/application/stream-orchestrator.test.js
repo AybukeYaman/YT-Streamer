@@ -73,7 +73,7 @@ test('code=0 (playlist bitti): kuyruğun kaldığı yerden yeni playlist yazıp 
   assert.ok(!lines.some((l) => l.level === 'error'));
 });
 
-test('code!==0: loglanır, restart denenmez, beklenmeyen çıkış bildirilir', async () => {
+test('code!==0: loglanır, kendisi restart etmez, beklenmeyen çıkış bildirilir (karar supervisor\'da)', async () => {
   const { encoder, orch, lines } = setup();
   const exits = [];
   orch.on('exit', (e) => exits.push(e));
@@ -82,7 +82,38 @@ test('code!==0: loglanır, restart denenmez, beklenmeyen çıkış bildirilir', 
   assert.equal(encoder.starts.length, 1);
   assert.deepEqual(exits, [{ expected: false, code: 1, signal: null }]);
   assert.equal(orch.running, false);
-  assert.ok(lines.some((l) => l.level === 'error' && /restart denenmiyor/.test(l.m)));
+  assert.ok(lines.some((l) => l.level === 'error' && /beklenmeyen kapanış/.test(l.m)));
+});
+
+test('resume: çöken playlist o an çalan parçadan devam eder, kuyruk korunur', async () => {
+  let t = 0;
+  const { encoder, orch, playlists, lines } = setup({ batchSize: 4, now: () => t });
+  await orch.start(); // abcd, 60'ar sn
+  t = 1000;
+  encoder.emit('log', { kind: 'progress', frame: 5, fps: 24, bitrateKbps: 2500, speed: 1 }); // ilk kare
+  t = 1000 + 130 * 1000; // 130. sn → c çalıyor
+  encoder.emit('exit', 1, null);
+  await orch.resume();
+  assert.deepEqual(playlists, ['abcd', 'cd']); // c baştan, d; a-b atlanmaz ama tekrar da edilmez
+  assert.equal(orch.running, true);
+  assert.ok(lines.some((l) => /playlist #2 \(kaldığı parçadan devam\): 2 parça/.test(l.m)));
+  encoder.emit('exit', 0, null); // kalan bitti → kuyruk kaldığı yerden
+  assert.deepEqual(playlists, ['abcd', 'cd', 'eabc']);
+});
+
+test('resume: hiç kare gelmeden çöktüyse aynı playlist baştan', async () => {
+  const { encoder, orch, playlists } = setup({ batchSize: 2 });
+  await orch.start();
+  encoder.emit('exit', 1, null);
+  await orch.resume();
+  assert.deepEqual(playlists, ['ab', 'ab']);
+});
+
+test('resume: hiç başlamamışsa start gibi davranır; çalışırken hata verir', async () => {
+  const { orch, playlists } = setup({ batchSize: 2 });
+  await orch.resume();
+  assert.deepEqual(playlists, ['ab']);
+  await assert.rejects(orch.resume(), /zaten çalışıyor/);
 });
 
 test('stop: kapanış beklenen olarak bildirilir, restart yapılmaz', async () => {
@@ -189,6 +220,37 @@ test('overlay: restart\'ta başlıklar yazılamazsa hata loglanır, beklenmeyen 
   encoder.emit('exit', 0, null);
   assert.ok(lines.some((l) => l.level === 'error' && /yeniden başlatılamadı: EACCES/.test(l.m)));
   assert.deepEqual(exits, [{ expected: false, code: 0, signal: null }]);
+});
+
+test('hız penceresi: uyarı sadece durum değişince (bir kez), normale dönüş bilgi olarak; restart ısınmaya döner', async () => {
+  const { SpeedWindow } = require('../../src/domain/speed-window');
+  let t = 0;
+  const speedWindow = new SpeedWindow({ fps: 24 });
+  const encoder = new FakeEncoder();
+  const { log, lines } = fakeLog();
+  const orch = new StreamOrchestrator({
+    encoder, log, trackRepository: { list: async () => TRACKS }, queue: { mode: 'sequential', batchSize: 2 },
+    playlistPath: 'p', writeFile: () => {}, speedWindow, now: () => t,
+  });
+  await orch.start();
+  let frame = 0;
+  const run = (untilMs, speed) => {
+    for (; t <= untilMs; t += 500) {
+      encoder.emit('log', { kind: 'progress', frame: Math.round(frame), fps: 24, bitrateKbps: 2500, speed: 1 });
+      frame += speed * 12;
+    }
+  };
+  run(70000, 1);
+  run(110000, 0.8); // yavaşlama
+  run(160000, 1); // toparlanma
+  const warns = lines.filter((l) => l.level === 'warn');
+  assert.equal(warns.length, 1);
+  assert.match(warns[0].m, /^encode yetişemiyor: hız\(30sn\)=0\.\d+x < 0.95$/);
+  assert.equal(lines.filter((l) => /^hız normale döndü/.test(l.m)).length, 1);
+  assert.ok(lines.some((l) => /hız\(30sn\)=ısınıyor/.test(l.m)));
+  assert.ok(lines.some((l) => /hız\(30sn\)=1\.0\d\dx|hız\(30sn\)=0\.99\dx/.test(l.m)));
+  encoder.emit('exit', 0, null); // restart: pencere sıfırlanır
+  assert.equal(speedWindow.samples.length, 0);
 });
 
 test('application katmanı child_process, fs ya da infrastructure import etmez', () => {

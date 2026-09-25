@@ -50,6 +50,17 @@ test('batchSize liste uzunluğundan büyükse sonsuz döngüyle doldurulur', () 
   assert.deepEqual(w.writeNext().tracks.map((t) => t.title), ['a', 'b', 'a', 'b', 'a']);
 });
 
+test('write: verilen parçaları yazar, kuyruğa dokunmaz', () => {
+  const q = new Queue({ tracks: [track('a', 100), track('b', 50), track('c')], mode: 'sequential' });
+  const { writeFile, writes } = memoryWriter();
+  const w = new PlaylistWriter({ queue: q, batchSize: 2, playlistPath: 'C:/rt/playlist.txt', writeFile });
+  const r = w.write([track('b', 50), track('c', 70)]);
+  assert.deepEqual(r.tracks.map((t) => t.title), ['b', 'c']);
+  assert.equal(r.totalDurationSeconds, 120);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(w.writeNext().tracks.map((t) => t.title), ['a', 'b']); // kuyruk baştan — tüketilmemiş
+});
+
 test('geçersiz batchSize reddedilir', () => {
   const q = new Queue({ tracks: [track('a')], mode: 'sequential' });
   for (const batchSize of [0, -1, 2.5, '50', undefined]) {

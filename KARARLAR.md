@@ -130,3 +130,61 @@ gerek kalmadı.
 ~2.6 katı. Overlay ile ilgisi yok; arka plan videosu Faz 1'dekinden farklı
 (`assets/background.mp4`). VPS boyutlandırması (Faz 7, "2 vCPU minimum") için
 yeniden değerlendirilmeli.
+
+---
+
+## [Faz 5] Speed penceresi ve 6 saatlik dayanıklılık testi — 25 Eylül 2026
+
+**Soru:** Encode hızı (yavaşlama / sessiz arıza) nasıl izlenecek?
+
+**Karar:** ffmpeg'in `speed=` alanı değil, ardışık iki ilerleme satırından hesaplanan
+anlık hızın 30 sn pencere ortalaması (`SpeedWindow`, domain): toplam medya süresi
+(Δframe/fps) / toplam duvar süresi. Her yeni ffmpeg sürecinin ilk 30 sn'si pencereye
+girmez; pencere ısınma sonrası 30 sn dolunca değer verir. Eşikler: `< 0.95` "encode
+yetişemiyor", `> 1.1` "anormal hız" — uyarı sadece durum değişince, otomatik aksiyon yok.
+
+**Gerekçe:** `speed=` süreç başından beri ortalama. Saatlerce sağlam çalışmış bir
+yayında ani yavaşlama ortalamayı neredeyse hiç oynatmaz (birim testi: 3 saat 1.0x + 40 sn
+0.9x → ham ortalama ~0.999, pencere `slow`). Başta da ilk saniyelerde sıçrar (1.1x).
+
+**Diğer Faz 5 kararları:**
+- Çökme sonrası yayın sıfırdan değil `resume()` ile başlar: kuyruk korunur, yarım kalan
+  playlist o an çalan parçadan yeniden yazılır. Sıfırdan başlasaydı `batchSize=50`'de
+  onlarca parça o turda hiç çalmadan kaybolurdu. Konum duvar saatinden (ilk kareden
+  çökmeye) hesaplanır — speed ≈ 1x olduğu için parça seçmeye yeter.
+- Supervisor geri çekilme sayacı 5 dk çökmeden çalışınca sıfırlanır; crash loop = 5 dk'da 5 çökme.
+- Windows'ta alt sürece SIGINT gönderilemez → `index.js` IPC `stop` mesajını da dinler
+  (sadece başka bir Node süreci fork ederse etkili).
+
+**6 saatlik test (01:19–07:19, gerçek `music/`, `batchSize=50`, overlay açık):**
+- Saatte bir ffmpeg `taskkill /F` ile öldürüldü (5 kez): 5/5 çökme `code=1` algılandı,
+  her seferinde 3 sn sonra yeniden başladı (sayaç 5 dk'yı aştığı için sıfırlanıyordu),
+  hepsi "kaldığı parçadan devam" (ör. 50 → 29 → 9 parça). Crash loop yok.
+- 2 doğal restart (playlist bitişi, `code=0`); restart boşluğu 1234 / 1224 ms — Faz 3/4
+  ölçümleriyle (~1.1-1.15 sn) tutarlı, 50 drawtext'le fark yok.
+- Bellek düz: node 39.8 → 40.3 MB, ffmpeg 756.7 → 765.8 MB (saatlik ortalamalar
+  756–763 MB, eğilim yok). Sızıntı yok.
+- Disk: boş alan 38.47 → 34.34 GB; farkın ~3.6 GB'ı test sonunda duran son iki çıktı
+  dosyası (test sürücüsü biten playlist çıktılarını 3.61 GB sildi — üretimde çıktı RTMP,
+  dosya yok).
+- **Log rotasyonu gerçek testte tetiklenmedi:** 6 saatte log 0.57 MB (~2.3 MB/gün) —
+  50 MB eşiği bu hacimde ~3 haftada bir dolar; rotasyon sadece birim testlerle doğrulandı.
+  Pratikte belirleyici sınır "en fazla 5 dosya" = ~5 günlük günlük dosya geçmişi.
+  50 drawtext'li ~15 KB'lık komut satırı restart başına bir kez yazılıyor, hacmi etkilemedi.
+- **Hız duraksaması (1 kez, test başından 2 sa 49 dk, playlist #4'ün 23. dk'sı):**
+  04:08:31–04:08:58 arası ffmpeg ~0.45x hızla çalıştı (anlık 0.35 / 0.39 / 0.40 / 0.76x;
+  25 sn'de 276 kare), 04:09:01'de 1.03x'e döndü. Pencere 04:08:35.8'de 0.940 → `< 0.95`
+  uyarısı; kayıtlı en düşük 0.553 (04:09:01); 04:09:20.7'de 0.964 → "normale döndü"
+  (uyarı 45 sn aktif, 30 sn pencere hafızası yüzünden). Çıktı gerçek zamanın 13.0 sn
+  gerisine düştü ve 1.03–1.08x hızla ~6 dk'da telafi etti (04:15:02'de geri kalma yok).
+  Telafi sırasında pencere en çok 1.071 → `> 1.1` eşiği 6 saatte hiç tetiklenmedi (yanlış
+  alarm yok). 4088 pencere değerinin 11 aykırısının hepsi bu olaydan.
+  Planlı olaylarla çakışmadı: en yakın öldürme 03:19:04 (−49 dk) ve 04:19:04 (+10 dk),
+  doğal restart 03:45:05 (−23 dk), sürücünün 04:09:05 örneği duraksama bittikten sonra.
+  Parça sınırı (medya 1399.2 sn) başlangıçtan ~7.5 sn önce — ama ~120 sınırın hiçbirinde
+  başka duraksama yok → tesadüf sayıldı. Windows olay günlüğünde anlamlı kayıt yok
+  (04:08:13'te BITS servis başlatma türü değişimi = arka plan aktarımı, zayıf ipucu).
+  16 mantıksal işlemcide ffmpeg ~2 çekirdek (~%12) → kapasite sorunu değil; makine
+  düzeyinde geçici açlık (CPU zamanlama / disk G/Ç) gibi. Nedeni kanıtlanamadı. Yerel
+  dosyaya çıktıda zararsız; gerçek RTMP'de ~25 sn'lik duraksama izleyicide tamponlama
+  demek — Faz 1'de YouTube ile izlenmeli, tekrarlanırsa çevre (disk/AV/arka plan) ölçülmeli.

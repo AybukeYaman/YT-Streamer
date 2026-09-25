@@ -25,6 +25,11 @@ test('segments: tek parçalı playlist baştan sona açık aralık', () => {
   assert.deepEqual(new PlaybackTimeline([A]).segments(), [{ track: A, start: 0, end: null }]);
 });
 
+test('indexAt: geçen saniyenin düştüğü parça; sınır sonrakine ait, son sınırdan sonrası son parça', () => {
+  const tl = new PlaybackTimeline([A, B, C]);
+  assert.deepEqual([0, 99.9, 100, 150.49, 150.5, 999].map((s) => tl.indexAt(s)), [0, 0, 1, 1, 2, 2]);
+});
+
 test('boş playlist reddedilir', () => {
   assert.throws(() => new PlaybackTimeline([]), /en az bir parça/);
 });

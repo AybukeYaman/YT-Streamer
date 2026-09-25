@@ -15,7 +15,7 @@
 | 2.5 | Ses normalizasyonu | **Şimdi yapılabilir** |
 | 3 | Kuyruk ve kesintisiz geçiş | Tamamlandı |
 | 4 | Now playing overlay | Tamamlandı |
-| 5 | Dayanıklılık | Başlamadı |
+| 5 | Dayanıklılık | Tamamlandı (5.5 → Faz 1'e ertelendi) |
 | 6 | Kontrol arayüzü (opsiyonel) | Başlamadı |
 | 7 | VPS'e taşıma | Başlamadı |
 
@@ -312,17 +312,39 @@ başlıklar taşmıyor
 - 5.2 Crash loop koruması (5 dakikada 5 çökme → dur, alarm)
 - 5.3 Log rotasyonu (50 MB → döndür, 5 dosya sakla) — **disk alanı sınırlı,
   gerçek risk**. Not (Faz 4): loglanan tek ffmpeg komut satırı artık ~15 KB
-  (50 drawtext yüzünden, her restart'ta bir kez) — rotasyon eşiğini etkileyebilir
+  (50 drawtext yüzünden, her restart'ta bir kez) — rotasyon eşiğini etkileyebilir.
+  **6 saatlik testte eşik hiç tetiklenmedi** (log 6 saatte 0.57 MB — 50 MB bu hacim
+  için çok yüksek, ~3 haftada bir dolar); rotasyon sadece birim testlerle doğrulandı,
+  gerçek davranışı üretimde haftalar içinde görülecek
 - 5.4 `speed` < 0.95 → uyarı (encode yetişemiyor). **`speed` > 1.1 → uyarı**
   (Faz 3.1'de bulunan sessiz arıza: ses girişi tükenip video girişinde `-re`
   olmadığında ffmpeg kapanmadan hız sınırsız artıyor, anlamsız/sessiz video
   üretmeye devam ediyor — salt process varlığına bakan bir supervisor bunu
   fark edemez, bu yüzden üst sınır kontrolü olmadan alt sınır tek başına
   yetersiz)
-- 5.5 Ağ kopması testi (Wi-Fi 30 sn kapat/aç)
+- 5.5 Ağ kopması testi (Wi-Fi 30 sn kapat/aç) — **Faz 1'e ertelendi**: çıkış şu an
+  yerel dosya, ağ bağımlılığı yok; test ancak gerçek RTMP bağlantısıyla anlamlı
 - 5.6 **6 saat kesintisiz test** + bellek/disk karşılaştırması
 
 **Kapanış:** 6 saat geçti, ağ kopmasından toparlandı, bellek ve disk stabil
+
+**Kapanış notu (25 Eylül) — TAMAMLANDI (5.5 hariç):**
+- 130 test geçti
+- **6 saatlik bağımsız test** (01:19–07:19, gerçek `music/`, `batchSize=50`, overlay
+  açık): 6.00 saat kesintisiz, temiz kapanış. **Sızıntı yok:** ffmpeg 756.7 → 765.8 MB
+  (saatlik ortalamalar 756–763), node 39.8 → 40.3 MB. **2 doğal restart** (`code=0`,
+  boşluk ~1.2 sn) + **5 planlı çökme** (saatte bir `taskkill /F`): 5/5 algılandı,
+  3 sn'de yeniden başladı, kaldığı parçadan devam etti. Crash loop hiç tetiklenmedi.
+- Supervisor: geri çekilme 3→6→12→24→48→60 sn (gerçek testte 3/6/12/24 sn doğrulandı),
+  5 dk'da 5 çökme → vazgeç. Çökme sonrası `resume()` kuyruğu koruyup çalan parçadan
+  devam eder. Speed penceresi: 30 sn pencere ortalaması, ilk 30 sn ısınma (→ `KARARLAR.md`)
+- **Bilinen açık nokta — açıklanamayan hız duraksaması:** testin 2 sa 49. dk'sında
+  (04:08) ~27 sn boyunca hız 0.35x'e kadar düştü (30 sn pencere 0.553), çıktı gerçek
+  zamanın 13 sn gerisine düştü, kendiliğinden toparlayıp ~6 dk'da telafi etti; `< 0.95`
+  uyarısı tasarlandığı gibi tetiklendi. Planlı olaylarla çakışmadı, ffmpeg ölmedi.
+  Sebebi belirlenemedi — muhtemelen makine düzeyinde bir olay (disk G/Ç ya da arka plan
+  servisi). Yerelde zararsız; **gerçek RTMP'de tamponlamaya yol açabilir → Faz 1'de
+  izlenecek, tekrarlarsa araştırılacak** (ayrıntı → `KARARLAR.md`)
 
 ### Faz 7 — VPS
 

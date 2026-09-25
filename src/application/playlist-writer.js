@@ -19,9 +19,14 @@ class PlaylistWriter {
     this.writeFile = writeFile;
   }
 
-  // Yazılan parçaları ve toplam süreyi döndürür (loglama / restart zamanı tahmini için).
+  // Kuyruktan sıradaki batchSize parçayı yazar.
   writeNext() {
-    const tracks = Array.from({ length: this.batchSize }, () => this.queue.next());
+    return this.write(Array.from({ length: this.batchSize }, () => this.queue.next()));
+  }
+
+  // Verilen parçaları yazar — kuyruğa dokunmaz (çökme sonrası yarım kalan playlist'in
+  // kalanını yeniden yazmak için). Yazılan parçaları ve toplam süreyi döndürür.
+  write(tracks) {
     const content = tracks.map((t) => concatLine(t.path)).join('\n') + '\n';
     this.writeFile(this.playlistPath, content);
     return {

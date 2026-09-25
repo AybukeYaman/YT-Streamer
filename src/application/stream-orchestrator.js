@@ -6,8 +6,9 @@
 // başlar; playlist bitince encoder code=0 ile kapanır, orchestrator kuyruğun kaldığı yerden
 // yeni playlist yazıp encoder'ı hemen yeniden başlatır.
 //
-// code !== 0 (gerçek çökme) bu fazın kapsamı dışında: sadece loglanır, restart denenmez.
-// Üstel geri çekilme ve crash loop koruması Faz 5'in işi.
+// code !== 0 (gerçek çökme) burada ele alınmaz: loglanır, 'exit' (expected=false) yayılır.
+// Yeniden başlatma kararı (üstel geri çekilme, crash loop koruması) Supervisor'da; o da
+// resume() ile kaldığı yerden devam ettirir.
 //
 // Olaylar:
 //   'exit' ({ expected, code, signal }) — yayın durdu; expected=false ise stop() istenmeden
@@ -28,10 +29,14 @@ class StreamOrchestrator extends EventEmitter {
   // parça başlıkları yazılır ve encoder'a parça başına zaman aralığıyla verilir
   constructor({
     encoder, log, trackRepository, queue, playlistPath, writeFile,
-    nowPlayingWriter = null,
+    nowPlayingWriter = null, speedWindow = null,
     now = () => Date.now(), random = Math.random,
   }) {
     super();
+    // speedWindow: SpeedWindow — anlık hızın 30 sn pencere ortalaması; eşik dışına çıkınca
+    // uyarı loglanır (sadece görünürlük, otomatik aksiyon yok)
+    this.speedWindow = speedWindow;
+    this.speedState = 'warming';
     this.encoder = encoder;
     this.log = log;
     this.trackRepository = trackRepository;
@@ -49,6 +54,9 @@ class StreamOrchestrator extends EventEmitter {
     this.lastProgressLog = -Infinity;
     this.restartStartedAt = null; // önceki ffmpeg'in kapandığı an; ilk frame gelince boşluk ölçülür
     this.restartGapsMs = [];
+    this.currentTracks = null; // çalan playlist'in parçaları (çökme sonrası kaldığı yer için)
+    this.playStartedAt = null; // bu playlist'in ilk karesinin geldiği an
+    this.crashedAt = null;
 
     this.encoder.on('log', (entry) => this.#onEncoderLog(entry));
     this.encoder.on('exit', (code, signal) => this.#onEncoderExit(code, signal));
@@ -72,6 +80,24 @@ class StreamOrchestrator extends EventEmitter {
     }
   }
 
+  // Çökme sonrası yeniden başlatma (Supervisor çağırır). Kuyruk korunur; yarım kalan
+  // playlist o an çalan parçadan itibaren yeniden yazılır — o parça baştan çalar ama
+  // kalan parçalar atlanmaz (batchSize=50'de onlarca parça kaybolurdu).
+  // Hiç başlamamışsa (start() de düştüyse) sıfırdan start().
+  async resume() {
+    if (this.running) throw new Error('StreamOrchestrator zaten çalışıyor');
+    if (!this.playlistWriter) return this.start();
+    this.running = true;
+    this.stopping = false;
+    try {
+      const remaining = this.#remainingTracks();
+      this.#startNextPlaylist(remaining && this.playlistWriter.write(remaining), remaining ? ' (kaldığı parçadan devam)' : '');
+    } catch (err) {
+      this.running = false;
+      throw err;
+    }
+  }
+
   async stop() {
     if (!this.running) return;
     this.stopping = true;
@@ -79,11 +105,22 @@ class StreamOrchestrator extends EventEmitter {
     await this.encoder.stop();
   }
 
-  #startNextPlaylist() {
+  // Çöken playlist'te çökme anında çalan parça ve sonrası. Konum duvar saatinden (ilk
+  // karenin geldiği andan çökmeye) — speed ≈ 1x olduğu için parça seçmeye yeter.
+  #remainingTracks() {
+    if (!this.currentTracks) return null;
+    const elapsed = this.playStartedAt === null ? 0 : (this.crashedAt - this.playStartedAt) / 1000;
+    return this.currentTracks.slice(new PlaybackTimeline(this.currentTracks).indexAt(elapsed));
+  }
+
+  #startNextPlaylist(playlist = this.playlistWriter.writeNext(), note = '') {
     this.runNumber++;
-    const playlist = this.playlistWriter.writeNext();
+    this.currentTracks = playlist.tracks;
+    this.playStartedAt = null;
+    this.speedWindow?.reset(this.now()); // yeni süreç: ilk 30 sn pencereye girmez
+    this.speedState = 'warming';
     this.log.info(
-      `playlist #${this.runNumber}: ${playlist.tracks.length} parça, ${minutes(playlist.totalDurationSeconds)} — ` +
+      `playlist #${this.runNumber}${note}: ${playlist.tracks.length} parça, ${minutes(playlist.totalDurationSeconds)} — ` +
       playlist.tracks.map((t) => t.title).join(' | '),
     );
     const overlayTexts = this.nowPlayingWriter ? this.#writeOverlayTexts(playlist.tracks) : undefined;
@@ -105,15 +142,19 @@ class StreamOrchestrator extends EventEmitter {
         this.log.info(`ffmpeg başlatılıyor: ${entry.args.join(' ')}`);
         break;
       case 'progress':
+        if (this.playStartedAt === null && entry.frame > 0) this.playStartedAt = this.now();
         if (this.restartStartedAt !== null && entry.frame > 0) {
           const gap = this.now() - this.restartStartedAt;
           this.restartStartedAt = null;
           this.restartGapsMs.push(gap);
           this.log.info(`restart boşluğu: ${gap} ms (önceki ffmpeg'in kapanışından yeni sürecin ilk frame'ine)`);
         }
+        const speed = this.#checkSpeed(entry.frame);
         if (this.now() - this.lastProgressLog < PROGRESS_LOG_INTERVAL_MS) return;
         this.lastProgressLog = this.now();
-        this.log.info(`frame=${entry.frame} fps=${entry.fps} bitrate=${entry.bitrateKbps}kbps speed=${entry.speed}x`);
+        // speed= ffmpeg'in süreç başından ortalaması; hız(30sn) bizim pencere ortalamamız.
+        const windowed = speed?.average == null ? 'ısınıyor' : `${speed.average.toFixed(3)}x`;
+        this.log.info(`frame=${entry.frame} fps=${entry.fps} bitrate=${entry.bitrateKbps}kbps speed=${entry.speed}x hız(30sn)=${windowed}`);
         break;
       case 'stderr':
         this.log.debug(entry.line);
@@ -124,8 +165,26 @@ class StreamOrchestrator extends EventEmitter {
     }
   }
 
+  // Pencereyi günceller; durum değiştiğinde (her satırda değil) uyarı/bilgi loglar.
+  #checkSpeed(frame) {
+    if (!this.speedWindow) return null;
+    const now = this.now();
+    this.speedWindow.add(frame, now);
+    const status = this.speedWindow.status(now);
+    if (status.state !== this.speedState && status.state !== 'warming') {
+      const avg = `${status.average.toFixed(3)}x`;
+      const { low, high } = this.speedWindow;
+      if (status.state === 'slow') this.log.warn(`encode yetişemiyor: hız(30sn)=${avg} < ${low}`);
+      else if (status.state === 'fast') this.log.warn(`anormal hız, sessiz arıza olabilir: hız(30sn)=${avg} > ${high}`);
+      else if (this.speedState !== 'warming') this.log.info(`hız normale döndü: hız(30sn)=${avg}`);
+      this.speedState = status.state;
+    }
+    return status;
+  }
+
   #onEncoderExit(code, signal) {
     const message = `ffmpeg kapandı (code=${code}, signal=${signal})`;
+    this.crashedAt = this.now();
 
     if (this.stopping) {
       this.log.info(message);
@@ -146,7 +205,7 @@ class StreamOrchestrator extends EventEmitter {
       return;
     }
 
-    this.log.error(`${message} — beklenmeyen kapanış; restart denenmiyor (çökme yönetimi Faz 5'in işi)`);
+    this.log.error(`${message} — beklenmeyen kapanış (yeniden başlatma kararı supervisor'da)`);
     this.#finish({ expected: false, code, signal });
   }
 
