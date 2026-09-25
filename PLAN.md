@@ -209,6 +209,12 @@ restart'ı (Faz 3.1'deki B yaklaşımı) gerçek YouTube yayınında tetikleyip
 YouTube'un tepkisini kaydet — kısa bir kopmayla devam mı ediyor, uyarı mı
 veriyor, yoksa yayını sonlandırıyor mu? Sonlandırıyorsa `KARARLAR.md`'de
 kayıtlı olduğu gibi C (named pipe) yaklaşımına dönülecek.
+Ayrıca Faz 5'te gözlemlenen ~27 sn'lik açıklanamayan hız duraksamasını
+(04:08, PLAN.md Faz 5 notuna bkz.) izle — gerçek RTMP yayınında benzer
+bir olay tamponlamaya yol açabilir. Test sırasında böyle bir duraksama
+görülürse YouTube tarafındaki etkisini (izleyici tamponlaması, stream
+health uyarısı) kaydet.
+5.5 (ağ kopması testi, Faz 5'te ertelenmişti) de burada gerçek RTMP ile yapılacak.
 
 **Parametre gerekçeleri:**
 - `-stream_loop -1` — arkaplanı sonsuz döndürür
