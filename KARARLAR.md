@@ -215,3 +215,35 @@ onlara daha toleranslı bir eşik/pencere uygulamak.
 
 **Etki:** Üretimde (VPS'te) izlenmesi gereken bir nokta; uzun bir kesinti sonrası
 yayının kendiliğinden dönmediği fark edilirse elle restart gerekecek.
+
+---
+
+## [Faz 7] Docker `restart: unless-stopped` davranışı (yerel test) — 26 Eylül 2026
+
+**Soru:** Container çökerse Docker gerçekten yeniden başlatıyor mu, bilerek
+durdurulunca başlatmıyor mu?
+
+**Bulgu (Docker Desktop 29.3.1, `init: true`):**
+- **İçeriden `kill -9` node** (tini'nin çocuğu): 3/3 denemede yeniden başladı,
+  ölümden yeni başlangıca 144 / 163 / 217 ms; ffmpeg her seferinde yeniden frame üretti.
+- **`docker kill`:** yeniden başlamadı (exit 137, 30+ sn `exited`). Docker bunu
+  çökme değil **kullanıcının bilerek durdurması** sayıyor — `docker stop` ile aynı.
+  Sonuç: `docker kill` çökme simülasyonu olarak kullanılamaz.
+- **`docker stop`:** SIGTERM → temiz kapanış (exit 0), 45 sn içinde yeniden başlamadı. ✅
+- **Supervisor crash loop'ta pes edince:** node exit 1 ile çıkıyor, Docker ~0.3 sn
+  içinde container'ı yeniden başlatıyor, supervisor sayacı sıfırdan başlıyor
+  (bozuk arkaplan yoluyla ayrı bir deneme container'ında doğrulandı). Container her
+  döngüde ~45 sn yaşadığı için Docker'ın kendi geri çekilmesi (10 sn altı çalışmada
+  katlanır) devreye girmiyor.
+
+**Karar:** Mevcut ayar yeterli, değişiklik yok.
+
+**Etki:** [Faz 1] "ağ kopması / crash loop" notundaki kabul edilen risk Docker'da
+fiilen kapanıyor: 45-60 sn'den uzun ağ kesintisinde yayın kalıcı olarak durmaz,
+ağ gelene kadar ~45 sn'lik döngülerle denemeye devam eder. Bedeli: gerçekten kalıcı
+bir hata (bozuk config, eksik dosya) da sonsuz döngüde yeniden başlar — 7.6
+gözleminde `RestartCount` izlenmeli, artıyorsa log'a bakılmalı.
+
+**Test edilmedi:** Docker daemon'ın / VPS'in yeniden başlaması (çalışan container
+geri gelmeli, `docker stop` edilmiş olan gelmemeli). Yerelde Docker Desktop'ta başka
+projelerin container'ları çalıştığı için yeniden başlatılmadı; VPS'te 7.4 sonrası test edilecek.
