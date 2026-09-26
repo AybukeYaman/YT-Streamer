@@ -13,7 +13,7 @@ REMOTE_DIR="yt-stream-system"   # uzak kullanıcının home'una göre
 
 cd "$(dirname "$0")/.."
 
-SOURCES=(index.js package.json config.json Dockerfile docker-compose.yml .dockerignore src music assets)
+SOURCES=(index.js package.json config.docker.json Dockerfile docker-compose.yml .dockerignore src music assets)
 
 for s in "${SOURCES[@]}"; do
   [ -e "$s" ] || { echo "Eksik: $s (Adım 7.1 tamamlanmadı mı?)"; exit 1; }
