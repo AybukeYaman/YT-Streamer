@@ -1,0 +1,23 @@
+{
+  "paths": {
+    "music": "./music",
+    "background": "./assets/background.mp4",
+    "runtime": "./runtime"
+  },
+  "profile": {
+    "width": 1280, "height": 720, "fps": 24,
+    "videoBitrate": "2500k", "audioBitrate": "160k",
+    "preset": "veryfast"
+  },
+  "queue": { "mode": "shuffle", "batchSize": 50 },
+  "overlay": {
+    "enabled": true,
+    "fontFile": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "fontSize": 28,
+    "position": "bottom-left"
+  },
+  "output": {
+    "mode": "local",
+    "localPath": "./runtime/out.flv"
+  }
+}

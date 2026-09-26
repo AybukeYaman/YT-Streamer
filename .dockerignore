@@ -1,0 +1,14 @@
+node_modules
+runtime/
+music/
+assets/
+raw/
+experiments/
+test/
+deploy/
+PROMPTLAR/
+.git
+.claude
+.env
+.env.*
+*.md

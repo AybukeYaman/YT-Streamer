@@ -54,6 +54,8 @@ async function main() {
     if (process.connected) process.disconnect(); // IPC kanalı açıkken süreç kapanmaz
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
+  // docker stop / compose down SIGTERM gönderir; yakalanmazsa node ffmpeg'i kapatmadan ölür.
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
   // Başka bir Node süreci tarafından (fork, IPC) yönetiliyorsa: Windows'ta alt sürece SIGINT
   // gönderilemiyor (kill doğrudan sonlandırır), temiz kapanış için 'stop' mesajı.
   process.on('message', (m) => { if (m === 'stop') shutdown('stop mesajı'); });

@@ -1,0 +1,2 @@
+# VPS'te çalışan betikler CRLF ile bozulur
+*.sh text eol=lf

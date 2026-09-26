@@ -1,0 +1,27 @@
+services:
+  streamer:
+    build: .
+    image: yt-stream-system
+    container_name: yt-stream-system
+    restart: unless-stopped
+    # tini PID 1: SIGTERM'i node'a iletir, ffmpeg zombilerini toplar
+    init: true
+    # docker stop → SIGTERM → supervisor.stop() → ffmpeg'e 'q' (encoder'ın 5 sn sınırı + pay)
+    stop_grace_period: 15s
+    # Stream key imaja girmez; ortam değişkeni olarak gelir (loadConfig .env dosyasından önce okur).
+    # local modda key gerekmediği için dosya zorunlu değil — rtmp modunda yoksa config hatasıyla düşer.
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./music:/app/music:ro
+      - ./assets:/app/assets:ro
+      - ./runtime:/app/runtime
+      # İmajdaki kopyanın üstüne: profil/mode değişikliği için rebuild gerekmesin (Adım 7.5)
+      - ./config.docker.json:/app/config.json:ro
+    # Uygulama kendi loglarını runtime/logs'a döndürerek yazıyor; Docker'ın stdout kopyası da sınırlı kalsın
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
