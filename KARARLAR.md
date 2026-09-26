@@ -216,6 +216,13 @@ onlara daha toleranslı bir eşik/pencere uygulamak.
 **Etki:** Üretimde (VPS'te) izlenmesi gereken bir nokta; uzun bir kesinti sonrası
 yayının kendiliğinden dönmediği fark edilirse elle restart gerekecek.
 
+**Güncelleme (Faz 7, 26 Eylül 2026):** Bu risk Docker'ın `restart: unless-stopped`
+politikasıyla fiilen azaldı: supervisor pes edince node exit 1 ile çıkıyor, Docker
+container'ı yeniden başlatıyor, ağ gelene kadar ~45 sn'lik döngülerle denemeye devam
+ediliyor. Yeni risk: kalıcı/gerçek hatalarda (bozuk config, eksik dosya) sonsuz restart
+döngüsü — 7.6'daki 24 saatlik gözlemde `RestartCount` izlenecek. Ayrıntı:
+[Faz 7] Docker `restart: unless-stopped` davranışı.
+
 ---
 
 ## [Faz 7] Docker `restart: unless-stopped` davranışı (yerel test) — 26 Eylül 2026
@@ -245,5 +252,6 @@ bir hata (bozuk config, eksik dosya) da sonsuz döngüde yeniden başlar — 7.6
 gözleminde `RestartCount` izlenmeli, artıyorsa log'a bakılmalı.
 
 **Test edilmedi:** Docker daemon'ın / VPS'in yeniden başlaması (çalışan container
-geri gelmeli, `docker stop` edilmiş olan gelmemeli). Yerelde Docker Desktop'ta başka
-projelerin container'ları çalıştığı için yeniden başlatılmadı; VPS'te 7.4 sonrası test edilecek.
+geri gelmeli, `docker stop` edilmiş olan gelmemeli). Yerelde bilerek yapılmadı:
+Docker Desktop'ta başka işlere ait container'lar çalışıyor, onları kesmek gereksiz risk.
+VPS'te 7.4 sonrası gerçek `reboot` ile test edilecek.
