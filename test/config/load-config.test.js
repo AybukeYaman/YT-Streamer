@@ -133,3 +133,16 @@ test('overlay bölümü eksikse ya da alanlar yanlış tipteyse listelenir', () 
     '"overlay.fontSize" eksik ya da geçersiz',
   ]);
 });
+
+test('albüm modu: paths.albums varsa music/background gerekmez, yol mutlak olur', () => {
+  const config = clone();
+  config.paths = { albums: './music-source', runtime: './runtime' };
+  const { dir, result } = load({ config });
+  assert.deepEqual(result.paths, { albums: path.join(dir, 'music-source'), runtime: path.join(dir, 'runtime') });
+});
+
+test('albüm modu: paths.albums boşsa hata', () => {
+  const config = clone();
+  config.paths = { albums: '', runtime: './runtime' };
+  assert.deepEqual(problemsOf({ config }), ['"paths.albums" eksik ya da geçersiz']);
+});

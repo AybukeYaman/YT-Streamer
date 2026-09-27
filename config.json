@@ -1,7 +1,6 @@
 {
   "paths": {
-    "music": "./music",
-    "background": "./assets/background.mp4",
+    "albums": "./music-source",
     "runtime": "./runtime"
   },
   "profile": {

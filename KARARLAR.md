@@ -215,3 +215,72 @@ onlara daha toleranslı bir eşik/pencere uygulamak.
 
 **Etki:** Üretimde (VPS'te) izlenmesi gereken bir nokta; uzun bir kesinti sonrası
 yayının kendiliğinden dönmediği fark edilirse elle restart gerekecek.
+
+---
+
+## [Faz 8] Çoklu albüm düzeni — 27 Eylül 2026
+
+**Soru:** Tek `music/` + tek arkaplan yerine 10 albüm; arkaplan hangi anda değişmeli,
+başlıklar nasıl temizlenmeli, yeni kuyruk hangi katmana ait?
+
+### Arkaplan değişimi albüm sınırında (parça bazında değil)
+
+Arkaplan ffmpeg'e süreç başlarken veriliyor; parça başına değiştirmek her parçada
+yeni bir ffmpeg süreci demek olurdu. Bunun yerine her playlist tek bir albümden
+oluşuyor ve arkaplan bir restart döngüsü boyunca sabit kalıyor — yani değişim zaten
+var olan restart anında oluyor, ek kesinti yok.
+
+**Ölçüm (gerçek test, batchSize 1):** üst üste 2 restart'ta da albüm ve arkaplan
+değişti, restart boşluğu 622 ms ve 665 ms — Faz 3'teki tek albümlü değerlerle
+(608–667 ms) aynı aralıkta. Arkaplanın değişmesi boşluğu büyütmüyor.
+Çökme sonrası `resume()` aynı albümün arkaplanıyla devam ediyor (kuyruk korunuyor).
+
+### Arkaplan crop/aspect: esnetme yok, ortadan kırpma var
+
+Dönüşüm: alttan `cropBottom` piksel kes (üretici logosu) → en-boy oranını koruyarak
+1280×720'yi kaplayacak kadar ölçekle → taşanı ortadan kırp. Düz `scale` ile esnetme
+ve siyah bant ikisi de reddedildi: ilki görüntüyü bozuyor, ikincisi 720p alanı
+küçültüyor. Görsel kaynaklı albümde aynı dönüşüm tek kareye uygulanıp 10 sn'lik
+sabit video üretiliyor — çıktı formatı her albümde aynı.
+
+`project.json`'daki `cropBottom` güvenilir değil: toptan uygulanmış, logosu olmayan
+kliplerde gerçek görüntüyü kesiyordu. Albüm bazında `scripts/background-overrides.json`
+ile eziliyor; 7 albümde `cropBottom: 0` verildi.
+
+### video6 istisnası
+
+Faz başında `video6` "bozuk/boş" sayılıp tarama dışı bırakılmıştı. `prepare-backgrounds.js`
+geçerliliği isme değil içeriğe bakarak belirlediği için (project.json + `audio/`'da ses +
+bulunabilen klip) video6 geçerli çıktı: 15 parça, 3 klip. Dahil edildi.
+Listedeki diğerleri (`vid3`, `video3-tokyoNight`, `video1`) klasör olarak yok,
+`video2-` gerçekten boş — onlar dışarıda kaldı.
+
+### Başlık sürümleri: `_N` → `(II)`, `(III)`
+
+Üretici imzaları (`[usesuno.com]` gibi alan adı içeren köşeli parantezler) siliniyor,
+`(Take 2)` gibi anlamlı etiketler korunuyor. Sondaki `_1`, `_2` sürüm ekleri ham
+dosya adı artığı: aynı taban adın tek sürümü varsa ek düşüyor, birden fazlaysa ek
+sırasına göre ilki düz başlık, sonrakiler `(II)`, `(III)` … oluyor (eksiz olan en önde).
+Sebep: `_1` yayında başlık olarak anlamsız görünüyor. Aynı sürüm numarasının iki kez
+geçtiği ya da temizlik sonrası başlığı boş kalan dosyalar işlenmeden atlanıyor.
+
+### AlbumQueue neden application katmanında
+
+`AlbumQueue` domain'deki `Queue`'ları birleştiriyor (albüm sırası için bir Queue, her
+albümün parçaları için birer Queue). Projede domain dosyaları birbirini import etmiyor,
+bu yüzden domain'e konamadı; I/O'su olmadığı için infrastructure'a da ait değil.
+Application katmanı kaldı.
+
+### Japonca karakterler — bilinen sınırlama
+
+21 parçanın başlığında Japonca karakter var. Overlay `drawtext` ile
+`C:/Windows/Fonts/arial.ttf` kullanıyor; bu font Japonca glifleri içermediği için o
+başlıklar yayında düzgün görünmüyor. Engelleyici sayılmadı ve düzeltilmedi —
+çözümü CJK destekli bir fontla (`overlay.fontFile`) değiştirmek olur, gerekirse
+ileride yapılabilir.
+
+### Sayılar
+
+10 albüm, 353 parça normalize edildi (hata yok). Eski tek `music/` + `background`
+düzeni `SingleAlbumRepository` ile çalışmaya devam ediyor: `config.paths.albums`
+varsa albüm düzeni, yoksa eski düzen.

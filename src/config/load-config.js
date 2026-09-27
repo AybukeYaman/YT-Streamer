@@ -65,11 +65,12 @@ function loadConfig({
   const fileEnv = readEnvFile(path.resolve(rootDir, envFile));
   const problems = [];
 
-  requireFields(raw.paths, 'paths', {
-    music: isNonEmptyString,
-    background: isNonEmptyString,
-    runtime: isNonEmptyString,
-  }, problems);
+  // paths.albums varsa albüm düzeni (Faz 8: music-source/<albüm>/...); yoksa eski tek
+  // music/ + background düzeni — ikisinden biri zorunlu.
+  const albumMode = raw.paths && raw.paths.albums !== undefined;
+  requireFields(raw.paths, 'paths', albumMode
+    ? { albums: isNonEmptyString, runtime: isNonEmptyString }
+    : { music: isNonEmptyString, background: isNonEmptyString, runtime: isNonEmptyString }, problems);
 
   // Değer aralığı kontrolü (örn. fps > 0) StreamProfile'ın işi; burada sadece varlık/tip.
   requireFields(raw.profile, 'profile', {
@@ -113,11 +114,9 @@ function loadConfig({
 
   const abs = (p) => path.resolve(rootDir, p);
   return {
-    paths: {
-      music: abs(raw.paths.music),
-      background: abs(raw.paths.background),
-      runtime: abs(raw.paths.runtime),
-    },
+    paths: albumMode
+      ? { albums: abs(raw.paths.albums), runtime: abs(raw.paths.runtime) }
+      : { music: abs(raw.paths.music), background: abs(raw.paths.background), runtime: abs(raw.paths.runtime) },
     profile: { ...raw.profile },
     queue: { mode: raw.queue.mode, batchSize: raw.queue.batchSize },
     // fontFile mutlak bir sistem yolu (C:/Windows/Fonts/...) — kök dizine göre çözülmez.

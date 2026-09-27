@@ -6,6 +6,7 @@ const path = require('node:path');
 const { StreamOrchestrator } = require('../../src/application/stream-orchestrator');
 const { Encoder } = require('../../src/application/encoder');
 const { Track } = require('../../src/domain/track');
+const { Album } = require('../../src/domain/album');
 
 // Sözleşmeye uyan sahte encoder: çağrıları kaydeder, olayları test tetikler.
 class FakeEncoder extends Encoder {
@@ -30,6 +31,8 @@ function fakeLog() {
 
 const track = (name) => new Track({ path: `C:/music/${name}.m4a`, durationSeconds: 60 });
 const TRACKS = ['a', 'b', 'c', 'd', 'e'].map(track);
+const BG = 'C:/music-source/x/background.mp4';
+const oneAlbum = (tracks) => ({ list: async () => [new Album({ name: 'x', backgroundPath: BG, tracks })] });
 
 // Playlist yazımlarını bellekte tutar; her yazılan içerikten parça başlıklarını çıkarır.
 function setup({ tracks = TRACKS, batchSize = 2, now, nowPlayingWriter } = {}) {
@@ -39,7 +42,7 @@ function setup({ tracks = TRACKS, batchSize = 2, now, nowPlayingWriter } = {}) {
   const orch = new StreamOrchestrator({
     encoder,
     log,
-    trackRepository: { list: async () => tracks },
+    albumRepository: oneAlbum(tracks),
     queue: { mode: 'sequential', batchSize },
     playlistPath: 'C:/runtime/playlist.txt',
     writeFile: (p, content) => playlists.push(content.trim().split('\n').map((l) => l.match(/\/(\w+)\.m4a'$/)[1]).join('')),
@@ -53,7 +56,7 @@ test('start: parçaları yükler, ilk playlist\'i yazar, encoder\'ı playlist mo
   const { encoder, orch, playlists } = setup();
   await orch.start();
   assert.deepEqual(playlists, ['ab']);
-  assert.deepEqual(encoder.starts, [{ playlistPath: 'C:/runtime/playlist.txt', runNumber: 1 }]);
+  assert.deepEqual(encoder.starts, [{ playlistPath: 'C:/runtime/playlist.txt', runNumber: 1, backgroundPath: BG }]);
   assert.equal(orch.running, true);
   await assert.rejects(orch.start(), /zaten çalışıyor/);
 });
@@ -96,7 +99,7 @@ test('resume: çöken playlist o an çalan parçadan devam eder, kuyruk korunur'
   await orch.resume();
   assert.deepEqual(playlists, ['abcd', 'cd']); // c baştan, d; a-b atlanmaz ama tekrar da edilmez
   assert.equal(orch.running, true);
-  assert.ok(lines.some((l) => /playlist #2 \(kaldığı parçadan devam\): 2 parça/.test(l.m)));
+  assert.ok(lines.some((l) => /playlist #2 \(kaldığı parçadan devam\): albüm "x", 2 parça/.test(l.m)));
   encoder.emit('exit', 0, null); // kalan bitti → kuyruk kaldığı yerden
   assert.deepEqual(playlists, ['abcd', 'cd', 'eabc']);
 });
@@ -206,7 +209,7 @@ test('overlay: her restart\'ta yeni playlist\'in başlıkları yazılır, zaman 
 test('overlay: writer verilmezse (overlay kapalı) encoder\'a overlayTexts geçmez', async () => {
   const { encoder, orch } = setup();
   await orch.start();
-  assert.deepEqual(encoder.starts[0], { playlistPath: 'C:/runtime/playlist.txt', runNumber: 1 });
+  assert.deepEqual(encoder.starts[0], { playlistPath: 'C:/runtime/playlist.txt', runNumber: 1, backgroundPath: BG });
 });
 
 test('overlay: restart\'ta başlıklar yazılamazsa hata loglanır, beklenmeyen çıkış bildirilir', async () => {
@@ -229,7 +232,7 @@ test('hız penceresi: uyarı sadece durum değişince (bir kez), normale dönü�
   const encoder = new FakeEncoder();
   const { log, lines } = fakeLog();
   const orch = new StreamOrchestrator({
-    encoder, log, trackRepository: { list: async () => TRACKS }, queue: { mode: 'sequential', batchSize: 2 },
+    encoder, log, albumRepository: oneAlbum(TRACKS), queue: { mode: 'sequential', batchSize: 2 },
     playlistPath: 'p', writeFile: () => {}, speedWindow, now: () => t,
   });
   await orch.start();
@@ -261,4 +264,28 @@ test('application katmanı child_process, fs ya da infrastructure import etmez',
     assert.doesNotMatch(src, /require\(['"](node:)?fs(\/promises)?['"]\)/, `${file} fs import ediyor (dosya I/O infrastructure'ın işi)`);
     assert.doesNotMatch(src, /require\(['"][^'"]*infrastructure/, `${file} infrastructure import ediyor`);
   }
+});
+
+test('albümler: her playlist tek albüm, arkaplan albümle değişir; çökmede aynı albümle devam', async () => {
+  const bg = (n) => `C:/ms/${n}/background.mp4`;
+  const albums = [
+    new Album({ name: 'A', backgroundPath: bg('A'), tracks: ['a1', 'a2', 'a3'].map(track) }),
+    new Album({ name: 'B', backgroundPath: bg('B'), tracks: ['b1'].map(track) }),
+  ];
+  const encoder = new FakeEncoder();
+  const { log } = fakeLog();
+  const playlists = [];
+  const orch = new StreamOrchestrator({
+    encoder, log, albumRepository: { list: async () => albums }, queue: { mode: 'sequential', batchSize: 2 },
+    playlistPath: 'p', writeFile: (p, c) => playlists.push(c.trim().split('\n').map((l) => l.match(/\/(\w+)\.m4a'$/)[1]).join(',')),
+  });
+  await orch.start();
+  encoder.emit('exit', 0, null); // playlist bitti → sıradaki albüm
+  encoder.emit('exit', 0, null);
+  assert.deepEqual(playlists, ['a1,a2', 'b1', 'a3,a1']); // albüm kısa ise batch albüm kadar; A kaldığı yerden
+  assert.deepEqual(encoder.starts.map((s) => s.backgroundPath), [bg('A'), bg('B'), bg('A')]);
+
+  encoder.emit('exit', 1, null); // çökme: aynı albümün arkaplanıyla devam
+  await orch.resume();
+  assert.equal(encoder.starts.at(-1).backgroundPath, bg('A'));
 });

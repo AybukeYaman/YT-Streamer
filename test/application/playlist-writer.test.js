@@ -2,10 +2,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { PlaylistWriter, concatLine } = require('../../src/application/playlist-writer');
-const { Queue } = require('../../src/domain/queue');
+const { AlbumQueue } = require('../../src/application/album-queue');
+const { Album } = require('../../src/domain/album');
 const { Track } = require('../../src/domain/track');
 
 const track = (name, durationSeconds = 100) => new Track({ path: `C:\\Users\\Aybuke Yeni\\music\\${name}.m4a`, durationSeconds });
+
+const albumQueue = (tracks) => new AlbumQueue({ albums: [new Album({ name: 'x', backgroundPath: 'bg', tracks })], mode: 'sequential' });
 
 function memoryWriter() {
   const writes = [];
@@ -24,7 +27,7 @@ test('concat satırı: yoldaki tek tırnak kaçışlanır', () => {
 });
 
 test('batchSize kadar parçayı sırayla yazar, parçaları ve toplam süreyi döndürür', () => {
-  const q = new Queue({ tracks: [track('a', 100), track('b', 150), track('c', 200)], mode: 'sequential' });
+  const q = albumQueue([track('a', 100), track('b', 150), track('c', 200)]);
   const { writeFile, writes } = memoryWriter();
   const w = new PlaylistWriter({ queue: q, batchSize: 2, playlistPath: 'C:/rt/playlist.txt', writeFile });
   const r = w.writeNext();
@@ -38,20 +41,22 @@ test('batchSize kadar parçayı sırayla yazar, parçaları ve toplam süreyi d�
 });
 
 test('ardışık playlist\'ler kuyruğun kaldığı yerden devam eder (baştan başlamaz)', () => {
-  const q = new Queue({ tracks: ['a', 'b', 'c'].map((n) => track(n)), mode: 'sequential' });
+  const q = albumQueue(['a', 'b', 'c'].map((n) => track(n)));
   const w = new PlaylistWriter({ queue: q, batchSize: 2, playlistPath: 'p', writeFile: () => {} });
   const titles = [w.writeNext(), w.writeNext(), w.writeNext()].map((r) => r.tracks.map((t) => t.title).join(''));
   assert.deepEqual(titles, ['ab', 'ca', 'bc']);
 });
 
-test('batchSize liste uzunluğundan büyükse sonsuz döngüyle doldurulur', () => {
-  const q = new Queue({ tracks: [track('a'), track('b')], mode: 'sequential' });
+test('batchSize albümden uzunsa playlist albüm kadar olur (parça tekrarlanmaz), albüm döner', () => {
+  const q = albumQueue([track('a'), track('b')]);
   const w = new PlaylistWriter({ queue: q, batchSize: 5, playlistPath: 'p', writeFile: () => {} });
-  assert.deepEqual(w.writeNext().tracks.map((t) => t.title), ['a', 'b', 'a', 'b', 'a']);
+  const r = w.writeNext();
+  assert.deepEqual(r.tracks.map((t) => t.title), ['a', 'b']);
+  assert.equal(r.album.name, 'x');
 });
 
 test('write: verilen parçaları yazar, kuyruğa dokunmaz', () => {
-  const q = new Queue({ tracks: [track('a', 100), track('b', 50), track('c')], mode: 'sequential' });
+  const q = albumQueue([track('a', 100), track('b', 50), track('c')]);
   const { writeFile, writes } = memoryWriter();
   const w = new PlaylistWriter({ queue: q, batchSize: 2, playlistPath: 'C:/rt/playlist.txt', writeFile });
   const r = w.write([track('b', 50), track('c', 70)]);
@@ -62,7 +67,7 @@ test('write: verilen parçaları yazar, kuyruğa dokunmaz', () => {
 });
 
 test('geçersiz batchSize reddedilir', () => {
-  const q = new Queue({ tracks: [track('a')], mode: 'sequential' });
+  const q = albumQueue([track('a')]);
   for (const batchSize of [0, -1, 2.5, '50', undefined]) {
     assert.throws(() => new PlaylistWriter({ queue: q, batchSize, playlistPath: 'p', writeFile: () => {} }), /batchSize/, String(batchSize));
   }

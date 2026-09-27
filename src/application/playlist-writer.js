@@ -1,4 +1,5 @@
-// Kuyruktan batchSize kadar parça çekip ffmpeg concat demuxer formatında playlist yazar.
+// Albüm kuyruğundan sıradaki albümün en fazla batchSize parçasını çekip ffmpeg concat demuxer
+// formatında playlist yazar (bir playlist = tek albüm, bkz. AlbumQueue).
 // Dosya yazımı dışarıdan verilir (infrastructure: atomik .tmp → rename) — application
 // katmanı fs'e doğrudan dokunmaz.
 
@@ -10,7 +11,7 @@ function concatLine(filePath) {
 }
 
 class PlaylistWriter {
-  // queue: Queue; writeFile: (path, content) => void (atomik); playlistPath: mutlak yol
+  // queue: AlbumQueue; writeFile: (path, content) => void (atomik); playlistPath: mutlak yol
   constructor({ queue, batchSize, playlistPath, writeFile }) {
     if (!Number.isInteger(batchSize) || batchSize < 1) throw new Error(`batchSize pozitif tam sayı olmalı (${batchSize})`);
     this.queue = queue;
@@ -19,19 +20,21 @@ class PlaylistWriter {
     this.writeFile = writeFile;
   }
 
-  // Kuyruktan sıradaki batchSize parçayı yazar.
+  // Kuyruktan sıradaki albümü ve onun en fazla batchSize parçasını yazar.
   writeNext() {
-    return this.write(Array.from({ length: this.batchSize }, () => this.queue.next()));
+    const { album, tracks } = this.queue.nextBatch(this.batchSize);
+    return this.write(tracks, album);
   }
 
   // Verilen parçaları yazar — kuyruğa dokunmaz (çökme sonrası yarım kalan playlist'in
-  // kalanını yeniden yazmak için). Yazılan parçaları ve toplam süreyi döndürür.
-  write(tracks) {
+  // kalanını yeniden yazmak için). Yazılan parçaları, albümü ve toplam süreyi döndürür.
+  write(tracks, album) {
     const content = tracks.map((t) => concatLine(t.path)).join('\n') + '\n';
     this.writeFile(this.playlistPath, content);
     return {
       path: this.playlistPath,
       tracks,
+      album,
       totalDurationSeconds: tracks.reduce((sum, t) => sum + t.durationSeconds, 0),
     };
   }

@@ -13,7 +13,7 @@
 // Olaylar:
 //   'exit' ({ expected, code, signal }) — yayın durdu; expected=false ise stop() istenmeden
 const { EventEmitter } = require('events');
-const { Queue } = require('../domain/queue');
+const { AlbumQueue } = require('./album-queue');
 const { PlaybackTimeline } = require('../domain/playback-timeline');
 const { PlaylistWriter } = require('./playlist-writer');
 
@@ -23,12 +23,12 @@ const minutes = (s) => `${(s / 60).toFixed(1)} dk`;
 
 class StreamOrchestrator extends EventEmitter {
   // encoder: Encoder sözleşmesi; log: { debug, info, warn, error }
-  // trackRepository: { list(): Promise<Track[]> }
+  // albumRepository: { list(): Promise<Album[]> } — her playlist tek albüm; arkaplan albümle değişir
   // queue: { mode, batchSize }; playlistPath: mutlak yol; writeFile: atomik yazma
   // nowPlayingWriter: { writeAll(titles): string[] } — verilirse (overlay açık) her playlist'te
   // parça başlıkları yazılır ve encoder'a parça başına zaman aralığıyla verilir
   constructor({
-    encoder, log, trackRepository, queue, playlistPath, writeFile,
+    encoder, log, albumRepository, queue, playlistPath, writeFile,
     nowPlayingWriter = null, speedWindow = null,
     now = () => Date.now(), random = Math.random,
   }) {
@@ -39,7 +39,7 @@ class StreamOrchestrator extends EventEmitter {
     this.speedState = 'warming';
     this.encoder = encoder;
     this.log = log;
-    this.trackRepository = trackRepository;
+    this.albumRepository = albumRepository;
     this.queueOptions = queue;
     this.playlistPath = playlistPath;
     this.writeFile = writeFile;
@@ -55,6 +55,7 @@ class StreamOrchestrator extends EventEmitter {
     this.restartStartedAt = null; // önceki ffmpeg'in kapandığı an; ilk frame gelince boşluk ölçülür
     this.restartGapsMs = [];
     this.currentTracks = null; // çalan playlist'in parçaları (çökme sonrası kaldığı yer için)
+    this.currentAlbum = null; // çalan playlist'in albümü (çökme sonrası aynı arkaplanla devam)
     this.playStartedAt = null; // bu playlist'in ilk karesinin geldiği an
     this.crashedAt = null;
 
@@ -67,12 +68,14 @@ class StreamOrchestrator extends EventEmitter {
     this.running = true;
     this.stopping = false;
     try {
-      const tracks = await this.trackRepository.list();
-      const queue = new Queue({ tracks, mode: this.queueOptions.mode, random: this.random });
+      const albums = await this.albumRepository.list();
+      const queue = new AlbumQueue({ albums, mode: this.queueOptions.mode, random: this.random });
       this.playlistWriter = new PlaylistWriter({
         queue, batchSize: this.queueOptions.batchSize, playlistPath: this.playlistPath, writeFile: this.writeFile,
       });
-      this.log.info(`yayın başlıyor: ${tracks.length} parça, mod=${queue.mode}, batchSize=${this.queueOptions.batchSize}`);
+      const trackCount = albums.reduce((n, a) => n + a.tracks.length, 0);
+      this.log.info(`yayın başlıyor: ${albums.length} albüm, ${trackCount} parça, mod=${queue.mode}, ` +
+        `batchSize=${this.queueOptions.batchSize}`);
       this.#startNextPlaylist();
     } catch (err) {
       this.running = false;
@@ -91,7 +94,10 @@ class StreamOrchestrator extends EventEmitter {
     this.stopping = false;
     try {
       const remaining = this.#remainingTracks();
-      this.#startNextPlaylist(remaining && this.playlistWriter.write(remaining), remaining ? ' (kaldığı parçadan devam)' : '');
+      this.#startNextPlaylist(
+        remaining && this.playlistWriter.write(remaining, this.currentAlbum),
+        remaining ? ' (kaldığı parçadan devam)' : '',
+      );
     } catch (err) {
       this.running = false;
       throw err;
@@ -116,15 +122,20 @@ class StreamOrchestrator extends EventEmitter {
   #startNextPlaylist(playlist = this.playlistWriter.writeNext(), note = '') {
     this.runNumber++;
     this.currentTracks = playlist.tracks;
+    this.currentAlbum = playlist.album;
     this.playStartedAt = null;
     this.speedWindow?.reset(this.now()); // yeni süreç: ilk 30 sn pencereye girmez
     this.speedState = 'warming';
     this.log.info(
-      `playlist #${this.runNumber}${note}: ${playlist.tracks.length} parça, ${minutes(playlist.totalDurationSeconds)} — ` +
+      `playlist #${this.runNumber}${note}: albüm "${playlist.album.name}", ${playlist.tracks.length} parça, ` +
+      `${minutes(playlist.totalDurationSeconds)} — ` +
       playlist.tracks.map((t) => t.title).join(' | '),
     );
     const overlayTexts = this.nowPlayingWriter ? this.#writeOverlayTexts(playlist.tracks) : undefined;
-    this.encoder.start({ playlistPath: playlist.path, runNumber: this.runNumber, ...(overlayTexts && { overlayTexts }) });
+    this.encoder.start({
+      playlistPath: playlist.path, runNumber: this.runNumber, backgroundPath: playlist.album.backgroundPath,
+      ...(overlayTexts && { overlayTexts }),
+    });
   }
 
   // Başlık dosyalarını yazar, her birini parçanın zaman aralığıyla eşler. Zamanlama ffmpeg'de

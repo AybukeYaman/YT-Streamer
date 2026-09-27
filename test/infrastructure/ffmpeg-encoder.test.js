@@ -268,3 +268,10 @@ test('Encoder soyut metotları implement edilmemişse hata verir', () => {
   assert.throws(() => e.start({}), /implement edilmemiş/);
   assert.throws(() => e.stop(), /implement edilmemiş/);
 });
+
+test('FfmpegEncoder start\'ta verilen backgroundPath kurulumdakini ezer (albüm başına arkaplan)', () => {
+  const { spawnFn, calls } = fakeSpawn();
+  const enc = new FfmpegEncoder({ profile, backgroundPath: BG, output: LOCAL, spawnFn });
+  enc.start({ playlistPath: 'p', runNumber: 1, backgroundPath: 'C:/ms/A/background.mp4' });
+  assert.equal(calls[0].args[calls[0].args.indexOf('-stream_loop') + 3], 'C:/ms/A/background.mp4');
+});

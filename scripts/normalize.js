@@ -9,6 +9,8 @@
 // Kullanım:
 //   node scripts/normalize.js             raw/ → music/ normalize et
 //   node scripts/normalize.js --analyze   raw/'u sadece analiz eder, hiçbir şey yazmaz
+//
+// normalizeFile albüm bazlı normalizasyonda (normalize-albums.js) da kullanılıyor.
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -129,9 +131,8 @@ async function isUpToDate(src, out) {
   return p !== null && matchesTargetFormat(p);
 }
 
-async function normalizeFile(file) {
-  const src = path.join(RAW_DIR, file);
-  const out = path.join(MUSIC_DIR, `${stem(file)}.m4a`);
+// src'yi out'a (.m4a) normalize eder; out güncelse atlar.
+async function normalizeFile(src, out) {
   const tmp = `${out}.tmp`;
 
   if (await isUpToDate(src, out)) return { status: 'skipped' };
@@ -189,7 +190,7 @@ async function normalizeAll() {
 
   for (const [i, f] of todo.entries()) {
     const tag = `[${String(i + 1).padStart(2)}/${todo.length}] ${f}`;
-    const res = await normalizeFile(f);
+    const res = await normalizeFile(path.join(RAW_DIR, f), path.join(MUSIC_DIR, `${stem(f)}.m4a`));
     counts[res.status]++;
     if (res.status === 'ok') {
       console.log(`${tag} — OK  ${res.inputI.toFixed(2)} LUFS (TP ${res.inputTP.toFixed(2)}) ` +
@@ -215,7 +216,11 @@ async function main() {
   return normalizeAll();
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+module.exports = { normalizeFile, AUDIO_EXT, kb };

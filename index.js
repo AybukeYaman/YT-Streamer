@@ -8,7 +8,7 @@ const { StreamOrchestrator } = require('./src/application/stream-orchestrator');
 const { NowPlayingWriter } = require('./src/application/now-playing-writer');
 const { Supervisor } = require('./src/application/supervisor');
 const { FfmpegEncoder } = require('./src/infrastructure/ffmpeg-encoder');
-const { TrackRepository } = require('./src/infrastructure/track-repository');
+const { AlbumRepository, SingleAlbumRepository } = require('./src/infrastructure/album-repository');
 const { writeFileAtomic } = require('./src/infrastructure/atomic-file');
 const { Logger } = require('./src/infrastructure/logger');
 
@@ -29,7 +29,12 @@ async function main() {
   const orchestrator = new StreamOrchestrator({
     encoder,
     log: logger.child('orchestrator'),
-    trackRepository: new TrackRepository({ dir: config.paths.music, log: logger.child('tracks') }),
+    // paths.albums: albüm düzeni (her playlist tek albüm, arkaplan albümle değişir); yoksa tek albüm
+    albumRepository: config.paths.albums
+      ? new AlbumRepository({ dir: config.paths.albums, log: logger.child('albums') })
+      : new SingleAlbumRepository({
+        musicDir: config.paths.music, backgroundPath: config.paths.background, log: logger.child('tracks'),
+      }),
     queue: config.queue,
     playlistPath: path.join(config.paths.runtime, 'playlist.txt'),
     writeFile: writeFileAtomic,

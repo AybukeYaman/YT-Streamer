@@ -159,11 +159,12 @@ class FfmpegEncoder extends Encoder {
     return this.child !== null;
   }
 
-  // options: { audioPath } (tek parça) ya da { playlistPath, runNumber, overlayTexts } (playlist modu)
-  start({ audioPath, playlistPath, runNumber, overlayTexts }) {
+  // options: { audioPath } (tek parça) ya da { playlistPath, runNumber, overlayTexts } (playlist modu);
+  // backgroundPath verilirse kurulumdakinin yerine o kullanılır (albüm başına arkaplan)
+  start({ audioPath, playlistPath, runNumber, overlayTexts, backgroundPath = this.backgroundPath }) {
     if (this.running) throw new Error('FfmpegEncoder zaten çalışıyor');
     const args = buildFfmpegArgs({
-      profile: this.profile, backgroundPath: this.backgroundPath, audioPath, playlistPath, runNumber,
+      profile: this.profile, backgroundPath, audioPath, playlistPath, runNumber,
       output: this.output, overlay: this.overlay, overlayTexts,
     });
     this.emit('log', { kind: 'command', args: args.map((a) => maskSecret(a, this.output)) });
