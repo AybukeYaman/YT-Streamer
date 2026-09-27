@@ -1,6 +1,6 @@
 # 24/7 YouTube Müzik Livestream — Plan
 
-**Son güncelleme:** 23 Eylül 2026
+**Son güncelleme:** 27 Eylül 2026
 **Yayın erişimi açılış:** 24 Eylül 2026, 23:04
 
 ---
@@ -12,12 +12,13 @@
 | 0 | Hazırlık | Kısmen tamam — YouTube erişimi beklemede |
 | 1 | Ham ffmpeg testi | Tamamlandı (gerçek RTMP, R2 doğrulandı) |
 | 2 | Node.js sarmalayıcı | Tamamlandı |
-| 2.5 | Ses normalizasyonu | **Şimdi yapılabilir** |
+| 2.5 | Ses normalizasyonu | Tamamlandı |
 | 3 | Kuyruk ve kesintisiz geçiş | Tamamlandı |
 | 4 | Now playing overlay | Tamamlandı |
 | 5 | Dayanıklılık | Tamamlandı (5.5 → Faz 1'e ertelendi) |
 | 6 | Kontrol arayüzü (opsiyonel) | Başlamadı |
-| 7 | VPS'e taşıma | Başlamadı |
+| 7 | VPS'e taşıma | Askıda — `faz-7-vps` branch'inde WIP (Docker hazır, merge edilmedi) |
+| 8 | Çoklu albüm düzeni | **Tamamlandı** (10 albüm / 353 parça) |
 
 ---
 
@@ -388,6 +389,38 @@ başlıklar taşmıyor
 **Docker burada gerçek bir sorunu çözüyor** (ortam farkı + tek komutla deploy).
 Faz 1-6'da gereksiz karmaşıklıktı, burada değil.
 
+**Durum:** `faz-7-vps` branch'inde 4 WIP commit var (Dockerfile, docker-compose.yml,
+config.docker.json, deploy betikleri, yerel Docker testi geçmiş). Branch merge
+edilmedi, VPS adımı askıda.
+
+**Merge edilirken Faz 8'den taşınacaklar:**
+- `config.docker.json` → `paths`: `albums: "./music-source"` (music/background yerine)
+- `docker-compose.yml` → `music-source/` volume olarak bağlanmalı
+- `Dockerfile` → `fonts-noto-cjk` kur, `config.docker.json`'da `fontFile`'ı
+  `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` yap (DejaVu'da CJK yok)
+
+### Faz 8 — Çoklu albüm düzeni — TAMAMLANDI (27 Eylül 2026)
+
+Tek `music/` + tek arkaplan yerine albüm başına klasör ve arkaplan.
+
+- **10 albüm, 353 parça** normalize edildi (hata yok), arkaplanlar 1280×720'ye
+  en-boy oranı korunarak hazırlandı
+- **Albüm-senkron arkaplan geçişi doğrulandı:** her playlist tek albümden oluşuyor,
+  arkaplan albüm sınırında (restart anında) değişiyor. Gerçek testte üst üste
+  2 restart'ta da albüm ve arkaplan değişti; restart boşluğu **622 ms ve 665 ms** —
+  tek albümlü Faz 3 değerleriyle (608–667 ms) aynı aralıkta, ek kesinti yok
+- Çökme sonrası aynı albümün arkaplanıyla devam ediyor (kuyruk korunuyor)
+- `Album` domain'de, `AlbumQueue` application'da, `AlbumRepository` infrastructure'da
+- Eski tek `music/` düzeni `SingleAlbumRepository` ile çalışmaya devam ediyor
+  (`config.paths.albums` varsa albüm düzeni, yoksa eski düzen)
+- **CJK font:** `overlay.fontFile` arial → `YuGothR.ttc` (Yu Gothic). arial Japonca
+  glifleri içermiyordu ve sessizce boş kutu basıyordu. Şu anki 10 albümde Japonca
+  başlık yok, bu değişiklik ileriye dönük. Docker tarafı yukarıda.
+- Ön işleme araçları (bir kerelik, `src/`'nin parçası değil):
+  `scripts/prepare-backgrounds.js`, `scripts/normalize-albums.js`
+
+Ayrıntılar ve gerekçeler: `KARARLAR.md`, Faz 8.
+
 ---
 
 ## Süreç ritmi
@@ -407,6 +440,7 @@ Faz atlanmaz. Özellikle 3.1 sonucuna göre sonraki fazların şekli değişebil
 
 ## Açık sorular
 
-- [ ] Kuyruk yaklaşımı hangisi olacak? (Faz 3.1 sonucu)
-- [ ] Arkaplan videosu tek mi olacak, rotasyon mu?
+- [x] Kuyruk yaklaşımı hangisi olacak? (Faz 3.1 → B yaklaşımı)
+- [x] Arkaplan videosu tek mi olacak, rotasyon mu? (Faz 8 → albüm başına arkaplan,
+      albüm sınırında değişiyor)
 - [ ] Yayın başlığı/açıklaması otomatik güncellenecek mi?

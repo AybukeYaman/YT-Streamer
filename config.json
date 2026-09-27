@@ -11,7 +11,7 @@
   "queue": { "mode": "shuffle", "batchSize": 50 },
   "overlay": {
     "enabled": true,
-    "fontFile": "C:/Windows/Fonts/arial.ttf",
+    "fontFile": "C:/Windows/Fonts/YuGothR.ttc",
     "fontSize": 28,
     "position": "bottom-left"
   },

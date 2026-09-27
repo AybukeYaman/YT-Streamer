@@ -271,13 +271,30 @@ albümün parçaları için birer Queue). Projede domain dosyaları birbirini im
 bu yüzden domain'e konamadı; I/O'su olmadığı için infrastructure'a da ait değil.
 Application katmanı kaldı.
 
-### Japonca karakterler — bilinen sınırlama
+### CJK font: arial → Yu Gothic
 
-21 parçanın başlığında Japonca karakter var. Overlay `drawtext` ile
-`C:/Windows/Fonts/arial.ttf` kullanıyor; bu font Japonca glifleri içermediği için o
-başlıklar yayında düzgün görünmüyor. Engelleyici sayılmadı ve düzeltilmedi —
-çözümü CJK destekli bir fontla (`overlay.fontFile`) değiştirmek olur, gerekirse
-ileride yapılabilir.
+Faz başında "21 dosyada Japonca karakter var, bilinen sınırlama" diye not edilmişti.
+Faz sonunda kontrol edildiğinde yayına giren 10 albümün **hiçbirinde** Japonca
+karakter kalmadığı görüldü (ne normalize çıktıda ne kaynak `audio/` klasörlerinde) —
+o 21 dosya tarama dışı bırakılan albümlerdeydi (`video3-tokyoNight` gibi).
+
+Sınırlamanın kendisi yine de gerçekti: `arial.ttf` Japonca glifleri içermiyor,
+`drawtext` onların yerine boş kutu (tofu) basıyor — ffmpeg hata vermiyor, sessizce
+bozuk render ediyor. Gelecekte Japonca başlıklı bir albüm eklenirse sorun fark
+edilmeden yayına çıkardı.
+
+**Karar:** `overlay.fontFile` = `C:/Windows/Fonts/YuGothR.ttc` (Yu Gothic Regular).
+Görsel olarak doğrulandı: hem Japonca (`東京の夜 さくら`) hem Türkçe (`ğ ı ö`)
+doğru render ediliyor; arial aynı metinde Japoncayı kutu basıyordu. Noto Sans CJK
+sistemde kurulu değil, Yu Gothic Windows'ta hazır geliyor. `.ttc` bir font
+koleksiyonu ama ffmpeg'in `fontfile`'ı indeks belirtmeden kabul ediyor.
+
+**Docker tarafı (faz-7-vps branch'inde, merge edilirken yapılacak):**
+`config.docker.json` şu an `/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf`
+kullanıyor — DejaVu'da da CJK yok, yani aynı sorun Linux'ta sürüyor. Yu Gothic
+Windows fontu olduğu için oraya taşınamaz. Yapılacak: `Dockerfile`'da
+`fonts-dejavu-core` yanına `fonts-noto-cjk` eklemek ve `config.docker.json`'daki
+`fontFile`'ı `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` yapmak.
 
 ### Sayılar
 
