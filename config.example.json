@@ -1,4 +1,5 @@
 {
+  "_README": "Bu bir SABLONDUR. Kopyala -> config.json (git'e dahil DEGILDIR, makineye ozel). 'overlay.fontFile' makineye gore degisir: Linux ornek /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf, Windows ornek C:/Windows/Fonts/YuGothR.ttc. YouTube stream key config.json'da DEGIL .env'de (YOUTUBE_STREAM_KEY).",
   "paths": {
     "albums": "./music-source",
     "runtime": "./runtime"
@@ -11,7 +12,7 @@
   "queue": { "mode": "shuffle", "batchSize": 50 },
   "overlay": {
     "enabled": true,
-    "fontFile": "C:/Windows/Fonts/YuGothR.ttc",
+    "fontFile": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "fontSize": 28,
     "position": "bottom-left"
   },

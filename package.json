@@ -6,9 +6,17 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "test": "node --test \"test/**/*.test.js\""
+    "tui": "node index.js --tui",
+    "test": "node --test \"test/**/*.test.{js,mjs}\""
   },
   "engines": {
     "node": ">=20.12"
+  },
+  "dependencies": {
+    "ink": "^7.1.1",
+    "react": "^19.3.0"
+  },
+  "devDependencies": {
+    "ink-testing-library": "^4.0.0"
   }
 }

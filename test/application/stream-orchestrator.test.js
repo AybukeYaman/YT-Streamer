@@ -178,6 +178,22 @@ test('encoder logları düzeylere dağıtılır, ilerleme 5 sn\'de bir', async (
   assert.ok(lines.some((l) => l.level === 'info' && l.m === 'ffmpeg başlatılıyor: -i x'));
 });
 
+test('kritik ffmpeg stderr (çıkış/bağlantı hatası) WARN olarak yayılır — panelde görünsün', async () => {
+  const { encoder, orch, lines } = setup();
+  await orch.start();
+  // Gerçek RTMP reddi satırları (bkz. teşhis): panelde (WARN) görünmeli, sadece dosyada (debug) değil.
+  encoder.emit('log', { kind: 'stderr', line: "[out#0/flv @ 0x1] Error opening output rtmps://a.rtmps.youtube.com/live2/***: I/O error" });
+  encoder.emit('log', { kind: 'stderr', line: '[tls @ 0x1] IO error: End of file' });
+  // Zararsız satır WARN'a yükselmez (panel gürültüsü olmasın) — debug kalır.
+  encoder.emit('log', { kind: 'stderr', line: '  Metadata:' });
+
+  const warns = lines.filter((l) => l.level === 'warn');
+  assert.ok(warns.some((l) => /Error opening output/.test(l.m)), 'çıkış hatası WARN olmalı');
+  assert.ok(warns.some((l) => /End of file/.test(l.m)), 'IO error WARN olmalı');
+  assert.ok(!warns.some((l) => /Metadata/.test(l.m)), 'zararsız satır WARN olmamalı');
+  assert.ok(lines.some((l) => l.level === 'debug' && l.m === '  Metadata:'), 'zararsız satır debug kalmalı');
+});
+
 // Overlay: TRACKS 60'ar sn. Başlık dosyaları playlist başında yazılır, encoder'a parça başına
 // zaman aralığıyla verilir — zamanlama ffmpeg'de, Node tarafında frame takibi yok.
 function setupOverlay(opts) {

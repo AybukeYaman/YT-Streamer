@@ -11,3 +11,5 @@ assets/
 .env
 runtime/
 music-source/
+node_modules/
+config.json

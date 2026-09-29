@@ -22,6 +22,11 @@ const { PlaylistWriter } = require('./playlist-writer');
 
 const PROGRESS_LOG_INTERVAL_MS = 5000;
 
+// ffmpeg ham stderr'i çoğunlukla bilgi amaçlı (debug → sadece dosya). Ama çıkış/bağlantı
+// hataları operatör için kritik: bu satırlar WARN olarak da yayılır ki TUI panelinde görünsün
+// (ör. RTMP reddi: "Error opening output ... I/O error"). Yayın davranışı değişmez.
+const CRITICAL_FFMPEG_STDERR = /error opening output|i\/o error|not authorized|connection (refused|reset|timed out)|conversion failed|no such file or directory|invalid data found|error in the pull function|end of file|broken pipe|unable to open|could not (write|open)|server (error|returned)/i;
+
 const minutes = (s) => `${(s / 60).toFixed(1)} dk`;
 
 class StreamOrchestrator extends EventEmitter {
@@ -115,6 +120,20 @@ class StreamOrchestrator extends EventEmitter {
     this.stopping = true;
     this.log.info('yayın durduruluyor');
     await this.encoder.stop();
+  }
+
+  // Dış okuyucular (StreamControlService, TUI, Web UI) için çalma durumu snapshot'ı.
+  // Mevcut akışa müdahale etmez, salt okunur kopya döner — iç property'lere doğrudan
+  // bağımlılık yerine bu kullanılır.
+  getPlaybackState() {
+    return Object.freeze({
+      running: this.running,
+      stopping: this.stopping,
+      runNumber: this.runNumber,
+      currentTracks: this.currentTracks,
+      currentAlbum: this.currentAlbum,
+      playStartedAt: this.playStartedAt,
+    });
   }
 
   // Çöken playlist'te çökme anında çalan parça ve sonrası. Konum duvar saatinden (ilk
@@ -212,7 +231,9 @@ class StreamOrchestrator extends EventEmitter {
         this.log.info(`frame=${entry.frame} fps=${entry.fps} bitrate=${entry.bitrateKbps}kbps speed=${entry.speed}x hız(30sn)=${windowed}`);
         break;
       case 'stderr':
-        this.log.debug(entry.line);
+        // Kritik çıkış/bağlantı hataları panelde görünsün diye WARN; gerisi sadece dosyaya (debug).
+        if (CRITICAL_FFMPEG_STDERR.test(entry.line)) this.log.warn(`ffmpeg: ${entry.line}`);
+        else this.log.debug(entry.line);
         break;
       case 'error':
         this.log.error(entry.message);

@@ -38,6 +38,17 @@ class Supervisor extends EventEmitter {
     this.orchestrator.on('exit', (e) => this.#onExit(e));
   }
 
+  // Dış okuyucular (StreamControlService, TUI, Web UI) için supervisor durumu snapshot'ı.
+  // pendingRestart: çökme sonrası yeniden başlatma timer'ı bekliyor mu?
+  // Mevcut lifecycle/backoff mantığına dokunmaz, salt okunur kopya döner.
+  getSnapshot() {
+    return Object.freeze({
+      lastStartAt: this.lastStartAt,
+      gaveUp: this.gaveUp,
+      pendingRestart: this.timer !== null && !this.stopping,
+    });
+  }
+
   async start() {
     this.stopping = false;
     this.lastStartAt = this.now();
