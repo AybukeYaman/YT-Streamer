@@ -1,0 +1,3 @@
+# VPS'te (Linux/bash) çalışan dosyalar her zaman LF olmalı — Windows'ta CRLF'e
+# dönüşürse shebang/heredoc bozulur ("$'\r': command not found" gibi hatalar).
+*.sh text eol=lf
