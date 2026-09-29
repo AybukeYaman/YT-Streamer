@@ -421,6 +421,25 @@ Tek `music/` + tek arkaplan yerine albüm başına klasör ve arkaplan.
 
 Ayrıntılar ve gerekçeler: `KARARLAR.md`, Faz 8.
 
+### Faz 9 — Süreç ölümünden sonra kaldığı yerden devam — TAMAMLANDI (27 Eylül 2026)
+
+Süreç tamamen ölürse (kill, terminal kapanması, elektrik) bellekteki kuyruk gidiyordu ve
+yeniden başlatma sıfırdan yeni bir shuffle kuruyordu. Artık çalan playlist'in konumu diske
+yazılıyor, açılışta okunup kaldığı parçadan devam ediliyor.
+
+- `StateStore` (infrastructure) `runtime/state.json`'a `{ album, trackPaths, elapsedSeconds }`
+  yazıyor: playlist başında sıfırla, sonra ilerleme loguyla aynı tempoda (5 sn)
+- `StreamOrchestrator.start()` durumu okuyup yarım kalan playlist'in **kalanını** aynı
+  albümle (aynı arkaplan) yeniden yazıyor; kuyruk tüketilmiyor, o playlist bitince
+  normal sıradan sürüyor
+- Bozuk/eski durum yayını engellemiyor: albüm ya da parça artık yoksa uyarılıp
+  normal kuyruktan başlanıyor
+- **Gerçek doğrulama:** 10:14'te öldürülen yayın (albüm "video 1", 31 dk'lık playlist'in
+  13.9 dk'sı oynamış) yeniden başlatıldığında 5. parçadan, kalan 7/11 parçayla devam etti
+- 159 test geçiyor (yeni: 7 orchestrator + 7 `StateStore`)
+
+Ayrıntılar ve gerekçeler: `KARARLAR.md`, Faz 9.
+
 ---
 
 ## Süreç ritmi

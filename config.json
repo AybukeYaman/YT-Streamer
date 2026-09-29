@@ -16,7 +16,7 @@
     "position": "bottom-left"
   },
   "output": {
-    "mode": "local",
+    "mode": "rtmp",
     "localPath": "./runtime/out.flv"
   }
 }

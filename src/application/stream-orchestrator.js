@@ -6,6 +6,9 @@
 // başlar; playlist bitince encoder code=0 ile kapanır, orchestrator kuyruğun kaldığı yerden
 // yeni playlist yazıp encoder'ı hemen yeniden başlatır.
 //
+// Süreç tamamen ölürse (kill, elektrik) bellekteki kuyruk gider; o hal için çalan playlist'in
+// konumu stateStore ile diske yazılır ve start() onu okuyup kaldığı parçadan devam eder.
+//
 // code !== 0 (gerçek çökme) burada ele alınmaz: loglanır, 'exit' (expected=false) yayılır.
 // Yeniden başlatma kararı (üstel geri çekilme, crash loop koruması) Supervisor'da; o da
 // resume() ile kaldığı yerden devam ettirir.
@@ -29,7 +32,7 @@ class StreamOrchestrator extends EventEmitter {
   // parça başlıkları yazılır ve encoder'a parça başına zaman aralığıyla verilir
   constructor({
     encoder, log, albumRepository, queue, playlistPath, writeFile,
-    nowPlayingWriter = null, speedWindow = null,
+    nowPlayingWriter = null, speedWindow = null, stateStore = null,
     now = () => Date.now(), random = Math.random,
   }) {
     super();
@@ -44,6 +47,8 @@ class StreamOrchestrator extends EventEmitter {
     this.playlistPath = playlistPath;
     this.writeFile = writeFile;
     this.nowPlayingWriter = nowPlayingWriter;
+    // stateStore: { save(state), load() } — verilirse süreç ölümünden sonra kaldığı yerden devam
+    this.stateStore = stateStore;
     this.now = now;
     this.random = random;
 
@@ -76,7 +81,8 @@ class StreamOrchestrator extends EventEmitter {
       const trackCount = albums.reduce((n, a) => n + a.tracks.length, 0);
       this.log.info(`yayın başlıyor: ${albums.length} albüm, ${trackCount} parça, mod=${queue.mode}, ` +
         `batchSize=${this.queueOptions.batchSize}`);
-      this.#startNextPlaylist();
+      const restored = this.#restoredPlaylist(albums);
+      this.#startNextPlaylist(restored?.playlist, restored?.note ?? '');
     } catch (err) {
       this.running = false;
       throw err;
@@ -119,6 +125,41 @@ class StreamOrchestrator extends EventEmitter {
     return this.currentTracks.slice(new PlaybackTimeline(this.currentTracks).indexAt(elapsed));
   }
 
+  // Diskteki durumdan (varsa) yarım kalan playlist'i kurtarır: aynı albüm, o an çalan parçadan
+  // itibaren kalanlar. Albüm ya da parçalar artık yoksa (klasör silinmiş, yeniden hazırlanmış)
+  // vazgeçilir — yayın normal kuyruktan başlar, durum uğruna yayın geciktirilmez.
+  #restoredPlaylist(albums) {
+    const state = this.stateStore?.load();
+    if (!state) return null;
+    const album = albums.find((a) => a.name === state.album);
+    if (!album) {
+      this.log.warn(`kayıtlı durum kullanılamadı: albüm "${state.album}" artık yok`);
+      return null;
+    }
+    const byPath = new Map(album.tracks.map((t) => [t.path, t]));
+    const tracks = state.trackPaths.map((p) => byPath.get(p));
+    if (tracks.some((t) => !t)) {
+      this.log.warn(`kayıtlı durum kullanılamadı: "${album.name}" albümünün bazı parçaları artık yok`);
+      return null;
+    }
+    const remaining = tracks.slice(new PlaybackTimeline(tracks).indexAt(state.elapsedSeconds));
+    return {
+      playlist: this.playlistWriter.write(remaining, album),
+      note: ` (kayıtlı durumdan devam: ${minutes(state.elapsedSeconds)} oynamış, ${remaining.length}/${tracks.length} parça kaldı)`,
+    };
+  }
+
+  // Çalan playlist ve içindeki konum. Konum duvar saatinden (ilk kare → şimdi); ffmpeg'in
+  // ilerlemesiyle aynı tempoda (speed ≈ 1x) olduğu için parça seçmeye yeter.
+  #saveState(elapsedSeconds) {
+    if (!this.stateStore || !this.currentTracks) return;
+    this.stateStore.save({
+      album: this.currentAlbum.name,
+      trackPaths: this.currentTracks.map((t) => t.path),
+      elapsedSeconds,
+    });
+  }
+
   #startNextPlaylist(playlist = this.playlistWriter.writeNext(), note = '') {
     this.runNumber++;
     this.currentTracks = playlist.tracks;
@@ -131,6 +172,7 @@ class StreamOrchestrator extends EventEmitter {
       `${minutes(playlist.totalDurationSeconds)} — ` +
       playlist.tracks.map((t) => t.title).join(' | '),
     );
+    this.#saveState(0); // yeni playlist: konum sıfırlanır (ilk kare gelmeden ölürse baştan)
     const overlayTexts = this.nowPlayingWriter ? this.#writeOverlayTexts(playlist.tracks) : undefined;
     this.encoder.start({
       playlistPath: playlist.path, runNumber: this.runNumber, backgroundPath: playlist.album.backgroundPath,
@@ -163,6 +205,8 @@ class StreamOrchestrator extends EventEmitter {
         const speed = this.#checkSpeed(entry.frame);
         if (this.now() - this.lastProgressLog < PROGRESS_LOG_INTERVAL_MS) return;
         this.lastProgressLog = this.now();
+        // Durum da bu tempoda (5 sn) yazılır: ölüm anıyla kayıt arası fark en fazla bir tik.
+        this.#saveState(this.playStartedAt === null ? 0 : (this.now() - this.playStartedAt) / 1000);
         // speed= ffmpeg'in süreç başından ortalaması; hız(30sn) bizim pencere ortalamamız.
         const windowed = speed?.average == null ? 'ısınıyor' : `${speed.average.toFixed(3)}x`;
         this.log.info(`frame=${entry.frame} fps=${entry.fps} bitrate=${entry.bitrateKbps}kbps speed=${entry.speed}x hız(30sn)=${windowed}`);

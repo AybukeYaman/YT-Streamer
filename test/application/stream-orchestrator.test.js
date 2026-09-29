@@ -35,7 +35,7 @@ const BG = 'C:/music-source/x/background.mp4';
 const oneAlbum = (tracks) => ({ list: async () => [new Album({ name: 'x', backgroundPath: BG, tracks })] });
 
 // Playlist yazımlarını bellekte tutar; her yazılan içerikten parça başlıklarını çıkarır.
-function setup({ tracks = TRACKS, batchSize = 2, now, nowPlayingWriter } = {}) {
+function setup({ tracks = TRACKS, batchSize = 2, now, nowPlayingWriter, stateStore } = {}) {
   const encoder = new FakeEncoder();
   const { log, lines } = fakeLog();
   const playlists = [];
@@ -48,6 +48,7 @@ function setup({ tracks = TRACKS, batchSize = 2, now, nowPlayingWriter } = {}) {
     writeFile: (p, content) => playlists.push(content.trim().split('\n').map((l) => l.match(/\/(\w+)\.m4a'$/)[1]).join('')),
     ...(now ? { now } : {}),
     nowPlayingWriter,
+    stateStore,
   });
   return { encoder, orch, lines, playlists };
 }
@@ -288,4 +289,96 @@ test('albümler: her playlist tek albüm, arkaplan albümle değişir; çökmede
   encoder.emit('exit', 1, null); // çökme: aynı albümün arkaplanıyla devam
   await orch.resume();
   assert.equal(encoder.starts.at(-1).backgroundPath, bg('A'));
+});
+
+// --- kalıcı durum: süreç ölümünden sonra kaldığı parçadan devam (stateStore) ---
+
+// Sözleşmeye uyan sahte durum deposu: yazılanları biriktirir, load() önceden verileni döner.
+function fakeStateStore(stored = null) {
+  const saves = [];
+  return { saves, save: (s) => saves.push(s), load: () => stored };
+}
+
+test('durum kaydı: playlist başında sıfırlanır, ilerlemede konum güncellenir', async () => {
+  let t = 1000;
+  const stateStore = fakeStateStore();
+  const { encoder, orch } = setup({ stateStore, now: () => t });
+  await orch.start();
+  assert.deepEqual(stateStore.saves, [
+    { album: 'x', trackPaths: ['C:/music/a.m4a', 'C:/music/b.m4a'], elapsedSeconds: 0 },
+  ]);
+
+  encoder.emit('log', { kind: 'progress', frame: 24, fps: 24, bitrateKbps: 2500, speed: 1 }); // ilk kare
+  assert.equal(stateStore.saves.at(-1).elapsedSeconds, 0); // ilk kare bu an: henüz 0
+
+  t += 90_000; // durum yazımı ilerleme loguyla aynı tempoda (5 sn)
+  encoder.emit('log', { kind: 'progress', frame: 2184, fps: 24, bitrateKbps: 2500, speed: 1 });
+  assert.equal(stateStore.saves.length, 3);
+  assert.equal(stateStore.saves[2].elapsedSeconds, 90); // ilk kareden bu yana geçen süre
+  assert.equal(stateStore.saves[2].album, 'x');
+
+  encoder.emit('exit', 0, null); // sıradaki playlist: konum sıfırdan
+  assert.deepEqual(stateStore.saves.at(-1), {
+    album: 'x', trackPaths: ['C:/music/c.m4a', 'C:/music/d.m4a'], elapsedSeconds: 0,
+  });
+});
+
+test('start: kayıtlı durumdan kaldığı parçadan devam eder, kalanları atlamaz', async () => {
+  // a,b,c (60 sn'lik parçalar), 75 sn oynamış → b çalıyordu: b ve c yeniden yazılır.
+  const stateStore = fakeStateStore({
+    album: 'x',
+    trackPaths: ['C:/music/a.m4a', 'C:/music/b.m4a', 'C:/music/c.m4a'],
+    elapsedSeconds: 75,
+  });
+  const { encoder, orch, playlists, lines } = setup({ stateStore, batchSize: 3 });
+  await orch.start();
+  assert.deepEqual(playlists, ['bc']);
+  assert.equal(encoder.starts[0].backgroundPath, BG); // aynı albüm → aynı arkaplan
+  assert.ok(lines.some((l) => /kayıtlı durumdan devam/.test(l.m)));
+
+  // Kuyruk tüketilmemiş: devam eden playlist bittiğinde normal sıradan (baştan) sürer.
+  encoder.emit('exit', 0, null);
+  assert.deepEqual(playlists, ['bc', 'abc']);
+});
+
+test('start: kayıtlı durum son parçanın ötesindeyse o parçadan devam eder', async () => {
+  const stateStore = fakeStateStore({
+    album: 'x', trackPaths: ['C:/music/a.m4a', 'C:/music/b.m4a'], elapsedSeconds: 9999,
+  });
+  const { orch, playlists } = setup({ stateStore });
+  await orch.start();
+  assert.deepEqual(playlists, ['b']);
+});
+
+test('start: kayıtlı durum yoksa normal kuyruktan başlar', async () => {
+  const stateStore = fakeStateStore(null);
+  const { orch, playlists, lines } = setup({ stateStore });
+  await orch.start();
+  assert.deepEqual(playlists, ['ab']);
+  assert.ok(!lines.some((l) => /kayıtlı durum/.test(l.m)));
+});
+
+test('start: kayıtlı durumun albümü artık yoksa uyarır ve normal başlar', async () => {
+  const stateStore = fakeStateStore({ album: 'silinmiş', trackPaths: ['C:/music/a.m4a'], elapsedSeconds: 10 });
+  const { orch, playlists, lines } = setup({ stateStore });
+  await orch.start();
+  assert.deepEqual(playlists, ['ab']);
+  assert.ok(lines.some((l) => l.level === 'warn' && /albüm "silinmiş" artık yok/.test(l.m)));
+});
+
+test('start: kayıtlı durumun parçaları artık yoksa uyarır ve normal başlar', async () => {
+  const stateStore = fakeStateStore({
+    album: 'x', trackPaths: ['C:/music/a.m4a', 'C:/music/silinmiş.m4a'], elapsedSeconds: 10,
+  });
+  const { orch, playlists, lines } = setup({ stateStore });
+  await orch.start();
+  assert.deepEqual(playlists, ['ab']);
+  assert.ok(lines.some((l) => l.level === 'warn' && /bazı parçaları artık yok/.test(l.m)));
+});
+
+test('stateStore verilmezse hiçbir şey değişmez (özellik tamamen isteğe bağlı)', async () => {
+  const { encoder, orch, playlists } = setup();
+  await orch.start();
+  encoder.emit('log', { kind: 'progress', frame: 24, fps: 24, bitrateKbps: 2500, speed: 1 });
+  assert.deepEqual(playlists, ['ab']);
 });

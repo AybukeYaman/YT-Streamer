@@ -301,3 +301,48 @@ Windows fontu olduğu için oraya taşınamaz. Yapılacak: `Dockerfile`'da
 10 albüm, 353 parça normalize edildi (hata yok). Eski tek `music/` + `background`
 düzeni `SingleAlbumRepository` ile çalışmaya devam ediyor: `config.paths.albums`
 varsa albüm düzeni, yoksa eski düzen.
+
+---
+
+## [Faz 9] Süreç ölümünden sonra kaldığı yerden devam: konum diske yazılıyor — 27 Eylül 2026
+
+**Soru:** Süreç öldürüldüğünde (kill, terminal kapanması, elektrik) yeniden başlatma neden
+kaldığı yerden devam etmiyor?
+
+**Sebep:** `resume()` yalnızca süreç içi çökmeyi kurtarıyordu — kuyruğu ve çalan playlist'i
+orchestrator'ın **belleğinden** okuyor. Süreç tamamen gidince bellekte hiçbir şey kalmıyor,
+`start()` sıfırdan yeni bir shuffle kuruyordu.
+
+**Karar:** Çalan playlist'in konumu diske yazılır (`runtime/state.json`), `start()` onu okur.
+
+```json
+{ "album": "video 1", "trackPaths": ["...", "..."], "elapsedSeconds": 836.875 }
+```
+
+**Neden bu üç alan:** Kuyruğun tamamı değil sadece çalan playlist saklanıyor — süreç içi
+`resume()` ile aynı semantik (shuffle sırası korunmuyor, çalan playlist korunuyor). Parçalar
+yol olarak saklanıyor; başlık ve süre yeniden başlarken albüm deposundan (ffprobe önbelleği)
+geliyor, durum dosyasına kopyalanmıyor — süre bilgisi iki yerde tutulursa çelişebilir.
+
+**Konum neden duvar saatinden:** `elapsedSeconds` ilk kareden o ana kadar geçen gerçek süre;
+ffmpeg'in frame sayısından değil. Aynı gerekçe süreç içi `#remainingTracks()`'te de geçerli —
+speed ≈ 1x olduğu için parça seçmeye yetiyor, iki yol aynı hesabı kullanıyor.
+
+**Yazma tempesi 5 sn:** İlerleme loguyla aynı tik. Ölüm anı ile son kayıt arası fark en fazla
+bir tik, yani devam noktası en kötü 5 sn geriden başlar — parça sınırı seçimini değiştirmiyor.
+Her ilerleme satırında (~2/sn) yazmak diske gereksiz yük olurdu.
+
+**Yazma atomik, okuma affedici:** Yazma `.tmp` → rename (kill tam yazma anına denk gelse bile
+yarım JSON okunmaz). Okuma tarafında bozuk dosya, eksik alan, artık var olmayan albüm ya da
+parça → uyarı + `null`, yayın normal kuyruktan başlar. Durum bir kolaylık; yayını asla
+engellememeli.
+
+**Ölçüm (gerçek doğrulama):** 10:00:22'de başlayan yayın 10:14:19'da öldürüldü (albüm
+"video 1", 31 dk'lık playlist'in 13.9 dk'sı oynamış, frame 20085 @ 24 fps). Yeniden
+başlatmada 5. parçadan (`Sayfa Arası`), kalan 7/11 parçayla ve aynı arkaplanla devam etti.
+
+**Bilinen sınırlama:** Açılışta 354 parçanın süresi ffprobe ile yeniden okunuyor
+(`TrackRepository` önbelleği süreç içi — bkz. Faz 3 kaydı). Bu, yeniden başlatmada
+~2,5 dakika yayın boşluğu demek; devam mekanizması bu süreyi kısaltmıyor, sadece
+boşluktan sonra doğru parçadan girilmesini sağlıyor. Önbelleğin diske alınması
+ayrı bir iş.

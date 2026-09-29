@@ -11,6 +11,7 @@ const { FfmpegEncoder } = require('./src/infrastructure/ffmpeg-encoder');
 const { AlbumRepository, SingleAlbumRepository } = require('./src/infrastructure/album-repository');
 const { writeFileAtomic } = require('./src/infrastructure/atomic-file');
 const { Logger } = require('./src/infrastructure/logger');
+const { StateStore } = require('./src/infrastructure/state-store');
 
 async function main() {
   const config = loadConfig();
@@ -42,6 +43,12 @@ async function main() {
       ? new NowPlayingWriter({ dir: path.join(config.paths.runtime, 'overlay'), writeFile: writeFileAtomic })
       : null,
     speedWindow: new SpeedWindow({ fps: profile.fps }),
+    // Süreç öldürülse bile (kill, elektrik) yeniden başlarken kaldığı parçadan devam.
+    stateStore: new StateStore({
+      file: path.join(config.paths.runtime, 'state.json'),
+      writeFile: writeFileAtomic,
+      log: logger.child('durum'),
+    }),
   });
 
   // Çökmede yeniden başlatma kararı supervisor'da; crash loop'ta vazgeçerse hata koduyla çık.
