@@ -1,5 +1,5 @@
 {
-  "_README": "Bu bir SABLONDUR. Kopyala -> config.json (git'e dahil DEGILDIR, makineye ozel). 'overlay.fontFile' makineye gore degisir: Linux ornek /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf, Windows ornek C:/Windows/Fonts/YuGothR.ttc. YouTube stream key config.json'da DEGIL .env'de (YOUTUBE_STREAM_KEY). OAuth kimligi ise .env.youtube'da (kanal seviyesi). 'broadcast' bolumu OPSIYONEL: yalnizca go-live otomasyonu kullanir, yayin sureci okumaz; hic verilmezse varsayilanlar gecerlidir.",
+  "_README": "Bu bir SABLONDUR. Kopyala -> config.json (git'e dahil DEGILDIR, makineye ozel). 'overlay.fontFile' makineye gore degisir: Linux ornek /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf, Windows ornek C:/Windows/Fonts/YuGothR.ttc. YouTube stream key config.json'da DEGIL .env'de (YOUTUBE_STREAM_KEY). OAuth kimligi ise .env.youtube'da (kanal seviyesi). 'broadcast' bolumu OPSIYONEL: yalnizca go-live otomasyonu kullanir, yayin sureci okumaz; hic verilmezse varsayilanlar gecerlidir. 'broadcast.thumbnailPath' yeni broadcast'e yuklenecek sabit kucuk resim: dosya repo'ya DAHIL DEGILDIR (assets/ git'te yok sayili), VPS'te elle konur; dosya yoksa sessizce atlanir. null verilirse kucuk resim hic denenmez.",
   "paths": {
     "albums": "./music-source",
     "runtime": "./runtime"
@@ -32,6 +32,7 @@
     "privacyStatus": "unlisted",
     "latencyPreference": "normal",
     "categoryId": "10",
-    "streamId": null
+    "streamId": null,
+    "thumbnailPath": "./assets/thumbnail.jpg"
   }
 }

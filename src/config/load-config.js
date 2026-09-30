@@ -25,6 +25,10 @@ const BROADCAST_DEFAULTS = Object.freeze({
   // Boşsa stream id .env'deki YOUTUBE_STREAM_KEY'den çözülür (cdn.ingestionInfo.streamName
   // karşılaştırması) — sabit id yazmak çoklu yayında yanlış stream'e bind riski taşır.
   streamId: null,
+  // Yeni broadcast'e yüklenecek sabit küçük resim. Dosya repo'ya GİRMEZ (assets/ yok
+  // sayılı), VPS'te elle konur; yoksa sessizce atlanır. null: küçük resim hiç denenmez.
+  // Sabit path yerine config alanı: çoklu yayında her kanal kendi resmini kullanabilir.
+  thumbnailPath: './assets/thumbnail.jpg',
 });
 
 class ConfigError extends Error {
@@ -150,6 +154,10 @@ function loadConfig({
         && !isNonEmptyString(rawBroadcast.streamId)) {
       problems.push('"broadcast.streamId" metin ya da null olmalı (null: key\'den çözülür)');
     }
+    if (rawBroadcast.thumbnailPath !== undefined && rawBroadcast.thumbnailPath !== null
+        && !isNonEmptyString(rawBroadcast.thumbnailPath)) {
+      problems.push('"broadcast.thumbnailPath" metin ya da null olmalı (null: küçük resim yüklenmez)');
+    }
   }
 
   if (problems.length) throw new ConfigError(configPath, problems);
@@ -166,7 +174,12 @@ function loadConfig({
     output: output.mode === 'local'
       ? { mode: 'local', localPath: abs(output.localPath) }
       : { mode: 'rtmp', streamKey: streamKey.trim() },
-    broadcast: { ...BROADCAST_DEFAULTS, ...rawBroadcast },
+    broadcast: (() => {
+      const merged = { ...BROADCAST_DEFAULTS, ...rawBroadcast };
+      // Küçük resim yolu kök dizine göre çözülür: servis cwd'den bağımsız çalışıyor
+      // (systemd unit'te WorkingDirectory'ye güvenmek kırılgan).
+      return { ...merged, thumbnailPath: merged.thumbnailPath ? abs(merged.thumbnailPath) : null };
+    })(),
   };
 }
 

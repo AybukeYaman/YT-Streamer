@@ -12,6 +12,7 @@ const BROADCAST_CONFIG = {
   privacyStatus: 'unlisted',
   latencyPreference: 'normal',
   streamId: null,
+  thumbnailPath: '/root/YT-Streamer/assets/thumbnail.jpg',
 };
 
 // Çağrı sırasını kaydeden sahte API. streamStatuses: getStreamStatus'un sırayla
@@ -19,6 +20,7 @@ const BROADCAST_CONFIG = {
 function fakeApi({
   broadcasts = {}, streams = [{ streamStatus: 'active', healthStatus: 'good' }],
   insertId = 'bid-1', streamIdByKey = STREAM_ID, failOn = {},
+  thumbnail = { skipped: false },
 } = {}) {
   const calls = [];
   const queue = [...streams];
@@ -42,6 +44,11 @@ function fakeApi({
       maybeFail('insertBroadcast');
       store[insertId] = { id: insertId, snippet: { title: opts.title }, status: { lifeCycleStatus: 'ready' } };
       return store[insertId];
+    },
+    setThumbnail: async ({ broadcastId, filePath }) => {
+      calls.push(['setThumbnail', broadcastId, filePath]);
+      maybeFail('setThumbnail');
+      return thumbnail;
     },
     bindBroadcast: async ({ broadcastId, streamId }) => {
       calls.push(['bindBroadcast', broadcastId, streamId]);
@@ -107,7 +114,7 @@ test('mutlu yol: sıra ingest kontrolü → insert → bind → transition(live)
   // oluşturmak kanalda çöp yayın bırakır (duman testinde görüldü).
   assert.deepEqual(names(api.calls), [
     'getAccessToken', 'findStreamIdByKey', 'getStreamStatus',
-    'insertBroadcast', 'bindBroadcast', 'transitionBroadcast',
+    'insertBroadcast', 'setThumbnail', 'bindBroadcast', 'transitionBroadcast',
   ]);
   assert.equal(stateStore.state.status, 'live');
   assert.equal(stateStore.state.broadcastId, 'bid-1');
@@ -355,4 +362,72 @@ test('başarısız deneme sonrası ikinci deneme yeni broadcast AÇMAZ', async (
 
   assert.equal(result.action, 'went-live');
   assert.equal(api.calls.filter((c) => c[0] === 'insertBroadcast').length, 1); // TEK insert
+});
+
+// ── küçük resim (thumbnails.set) ─────────────────────────────────────────────
+// Kritik DEĞİL: hiçbir başarısızlığı yayının canlıya geçmesini engellememeli.
+
+test('küçük resim: insert sonrası, bind öncesi yüklenir', async () => {
+  const { service, api } = setup();
+  await service.goLive();
+  const order = names(api.calls);
+  assert.deepEqual(
+    api.calls.find((c) => c[0] === 'setThumbnail'),
+    ['setThumbnail', 'bid-1', BROADCAST_CONFIG.thumbnailPath],
+  );
+  assert.ok(order.indexOf('setThumbnail') > order.indexOf('insertBroadcast'));
+  assert.ok(order.indexOf('setThumbnail') < order.indexOf('bindBroadcast'));
+});
+
+test('dosya yoksa (skipped) akış aynen canlıya geçer', async () => {
+  const api = fakeApi({ thumbnail: { skipped: true, reason: 'not_found' } });
+  const stateStore = fakeStateStore();
+  const { service, lines } = setup({ api, stateStore });
+
+  const result = await service.goLive();
+  assert.equal(result.action, 'went-live');
+  assert.equal(stateStore.state.status, 'live');
+  assert.ok(lines.some((l) => l.level === 'info' && /küçük resim atlandı \(dosya yok\)/.test(l.m)));
+  // "atlandı" bir hata değil: uyarı bile loglanmıyor.
+  assert.ok(!lines.some((l) => l.level === 'warn'));
+});
+
+// Asıl korunan davranış: bir thumbnail yüzünden yayın canlıya geçmezse kabul edilemez.
+test('küçük resim yüklemesi ATARSA go-live yine canlıya geçer', async () => {
+  const api = fakeApi({ failOn: { setThumbnail: new Error('quotaExceeded') } });
+  const stateStore = fakeStateStore();
+  const { service, lines } = setup({ api, stateStore });
+
+  const result = await service.goLive();
+  assert.equal(result.action, 'went-live');
+  assert.equal(result.broadcastId, 'bid-1');
+  assert.equal(stateStore.state.status, 'live');
+  assert.ok(names(api.calls).includes('transitionBroadcast'));
+  assert.ok(lines.some((l) => l.level === 'warn' && /küçük resim yüklenemedi \(quotaExceeded\)/.test(l.m)));
+});
+
+test('thumbnailPath null ise hiç denenmez', async () => {
+  const api = fakeApi();
+  const { service } = setup({ api, broadcastConfig: { ...BROADCAST_CONFIG, thumbnailPath: null } });
+  assert.equal((await service.goLive()).action, 'went-live');
+  assert.ok(!names(api.calls).includes('setThumbnail'));
+});
+
+// Yeniden kullanılan broadcast'te resim zaten yüklenmişti; tekrarı boşa kota.
+test('yeniden kullanılan broadcast için küçük resim tekrar yüklenmez', async () => {
+  const stateStore = fakeStateStore({ broadcastId: 'yarim', streamId: STREAM_ID, status: 'created', title: 't' });
+  const api = fakeApi({ broadcasts: { yarim: { id: 'yarim', status: { lifeCycleStatus: 'ready' } } } });
+  const { service } = setup({ api, stateStore });
+
+  assert.equal((await service.goLive()).broadcastId, 'yarim');
+  assert.ok(!names(api.calls).includes('setThumbnail'));
+});
+
+test('zaten canlıysa küçük resim yüklenmez', async () => {
+  const stateStore = fakeStateStore({ broadcastId: 'b', streamId: STREAM_ID, status: 'live', title: 't' });
+  const api = fakeApi({ broadcasts: { b: { id: 'b', status: { lifeCycleStatus: 'live' } } } });
+  const { service } = setup({ api, stateStore });
+
+  assert.equal((await service.goLive()).action, 'already-live');
+  assert.ok(!names(api.calls).includes('setThumbnail'));
 });

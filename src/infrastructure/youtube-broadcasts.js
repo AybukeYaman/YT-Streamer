@@ -1,6 +1,11 @@
 // liveBroadcasts + liveStreams uç noktaları. Yalnızca HTTP çağrısı ve alan seçimi;
 // karar mantığı (idempotans, sıra, yoklama) GoLiveService'te.
-const { apiRequest, listLiveStreams } = require('./youtube-oauth');
+const fs = require('fs');
+const path = require('path');
+
+const { apiRequest, uploadMedia, listLiveStreams } = require('./youtube-oauth');
+
+const THUMBNAIL_CONTENT_TYPES = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png' };
 
 // insert ile oluşturulan broadcast'te monitorStream KAPALI:
 // açıkken transition önce 'testing', sonra 'live' gerektiriyor — iki adım, iki hata
@@ -34,6 +39,33 @@ async function insertBroadcast({
       },
     },
   });
+}
+
+// Broadcast'e sabit bir küçük resim yükler (thumbnails.set; videoId = broadcastId).
+//
+// Dosya yoksa ATMAZ, { skipped: true } döner: küçük resim kritik değil ve dosya VPS'te
+// elle konuyor (repo'ya girmiyor) — yokluğu normal bir durum, hata değil. "Var mı?"
+// kontrolü burada, çünkü GoLiveService fs bilmiyor (katman ayrımı) ve çağrı öncesi
+// kontrol, boşa bir API çağrısı + kota harcamasını da önlüyor.
+async function setThumbnail({ accessToken, broadcastId, filePath }) {
+  let body;
+  try {
+    body = fs.readFileSync(filePath);
+  } catch (err) {
+    if (err.code === 'ENOENT' || err.code === 'EISDIR') return { skipped: true, reason: 'not_found', filePath };
+    throw err;
+  }
+  // Boş dosya (yarı kopyalanmış/truncate edilmiş): API zaten reddeder, çağrıya girmeyelim.
+  if (body.length === 0) return { skipped: true, reason: 'empty', filePath };
+
+  await uploadMedia({
+    accessToken,
+    path: 'thumbnails/set',
+    params: { videoId: broadcastId },
+    body,
+    contentType: THUMBNAIL_CONTENT_TYPES[path.extname(filePath).toLowerCase()] ?? 'image/jpeg',
+  });
+  return { skipped: false, filePath, bytes: body.length };
 }
 
 // Kalıcı stream'e bağlar. streamId boş verilirse bağ KOPARILIR (bu kodda kullanılmıyor).
@@ -87,6 +119,6 @@ async function getStreamStatus({ accessToken, streamId }) {
 }
 
 module.exports = {
-  insertBroadcast, bindBroadcast, transitionBroadcast, getBroadcast,
+  insertBroadcast, bindBroadcast, transitionBroadcast, getBroadcast, setThumbnail,
   findStreamIdByKey, getStreamStatus,
 };

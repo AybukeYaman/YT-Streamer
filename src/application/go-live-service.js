@@ -132,6 +132,9 @@ class GoLiveService {
       // sonraki tetik onu bulur ve yeniden kullanır, yeni bir tane açmaz.
       this.#saveState({ broadcastId, streamId, status: 'created', title });
       this.log.info(`broadcast oluşturuldu: ${broadcastId}`);
+      // Yalnızca YENİ broadcast'te: yeniden kullanılanda küçük resim zaten yüklenmişti,
+      // tekrarı boşa kota. Hiçbir koşulda akışı durdurmaz (#setThumbnail atmaz).
+      await this.#setThumbnail({ accessToken, broadcastId });
     }
 
     await this.api.bindBroadcast({ accessToken, broadcastId, streamId });
@@ -143,6 +146,25 @@ class GoLiveService {
     this.#saveState({ broadcastId, streamId, status: 'live', title, wentLiveAt });
     this.log.info(`broadcast CANLI: ${broadcastId}`);
     return { action: 'went-live', broadcastId, streamId, status: 'live', title, wentLiveAt };
+  }
+
+  // Küçük resim: kritik DEĞİL. Dosya yoksa sessizce atlanır, yükleme hata verirse
+  // uyarı loglanır ve go-live devam eder — bir thumbnail yüzünden yayının canlıya
+  // geçmemesi kabul edilemez (ve broadcast zaten oluşmuş durumda).
+  // state'e yazılmaz: idempotans kararlarında rolü yok.
+  async #setThumbnail({ accessToken, broadcastId }) {
+    const filePath = this.broadcastConfig.thumbnailPath;
+    if (!filePath) return;
+    try {
+      const result = await this.api.setThumbnail({ accessToken, broadcastId, filePath });
+      if (result?.skipped) {
+        this.log.info(`küçük resim atlandı (${result.reason === 'empty' ? 'dosya boş' : 'dosya yok'}): ${filePath}`);
+      } else {
+        this.log.info(`küçük resim yüklendi: ${filePath}`);
+      }
+    } catch (err) {
+      this.log.warn(`küçük resim yüklenemedi (${err.message}) — kritik değil, go-live sürüyor`);
+    }
   }
 
   // Kalıcı stream id: config'te verilmişse o, yoksa yayının key'inden çözülür.

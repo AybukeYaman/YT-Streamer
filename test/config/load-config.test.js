@@ -191,3 +191,23 @@ test('broadcast.streamId metin ya da null olmalı', () => {
 test('broadcast nesne değilse reddedilir', () => {
   assert.match(broadcastProblems('evet'), /"broadcast" bölümü nesne olmalı/);
 });
+
+test('broadcast.thumbnailPath varsayılanı kök dizine göre mutlaklaşır', () => {
+  const { dir, result } = load();
+  // Servis cwd'den bağımsız çalışıyor: göreli yol systemd altında yanlış yere bakardı.
+  assert.equal(result.broadcast.thumbnailPath, path.join(dir, 'assets', 'thumbnail.jpg'));
+});
+
+test('broadcast.thumbnailPath null verilebilir (küçük resim hiç denenmez)', () => {
+  const config = clone();
+  config.broadcast = { thumbnailPath: null };
+  assert.equal(load({ config }).result.broadcast.thumbnailPath, null);
+});
+
+test('broadcast.thumbnailPath metin ya da null olmalı', () => {
+  assert.match(broadcastProblems({ thumbnailPath: 42 }), /broadcast\.thumbnailPath/);
+  const config = clone();
+  config.broadcast = { thumbnailPath: './assets/ozel.png' };
+  const { dir, result } = load({ config });
+  assert.equal(result.broadcast.thumbnailPath, path.join(dir, 'assets', 'ozel.png'));
+});

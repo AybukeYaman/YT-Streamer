@@ -11,6 +11,9 @@ const crypto = require('crypto');
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const API_BASE = 'https://www.googleapis.com/youtube/v3';
+// Dosya yüklemeleri (thumbnails.set) AYRI bir tabana gider; API_BASE'e POST edilirse
+// "uploadType" yok sayılır ve istek reddedilir.
+const UPLOAD_BASE = 'https://www.googleapis.com/upload/youtube/v3';
 // .readonly transition/insert için yetmez — tam youtube scope'u gerekiyor.
 const SCOPE = 'https://www.googleapis.com/auth/youtube';
 
@@ -122,6 +125,39 @@ async function apiRequest({ accessToken, path: apiPath, params = {}, method = 'G
   return data;
 }
 
+// Tek dosyalık medya yüklemesi (uploadType=media): gövde ham dosya baytları.
+// Multipart (uploadType=multipart) yalnızca dosyayla birlikte metadata göndermek
+// gerektiğinde şart; thumbnails.set'te metadata YOK — videoId query string'de gidiyor,
+// yani boundary kurmanın kazancı sıfır, hata yüzeyi fazla.
+async function uploadMedia({
+  accessToken, path: apiPath, params = {}, body, contentType, method = 'POST',
+}) {
+  const url = new URL(`${UPLOAD_BASE}/${apiPath}`);
+  url.searchParams.set('uploadType', 'media');
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  const res = await fetch(url, {
+    method,
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': contentType },
+    body,
+  });
+  const text = await res.text();
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`YouTube yükleme JSON olmayan yanıt verdi (HTTP ${res.status}): ${text.slice(0, 200)}`);
+    }
+  }
+  if (!res.ok) {
+    const err = data?.error;
+    const reason = err?.errors?.[0]?.reason;
+    const detail = err?.message || `HTTP ${res.status}`;
+    throw new Error(`YouTube yükleme hatası (${apiPath}): ${detail}${reason ? ` [reason=${reason}]` : ''}`);
+  }
+  return data;
+}
+
 // Kanalın kalıcı stream'leri (part=cdn: ingestionInfo.streamName = stream key).
 function listLiveStreams({ accessToken }) {
   return apiRequest({
@@ -132,7 +168,7 @@ function listLiveStreams({ accessToken }) {
 }
 
 module.exports = {
-  SCOPE, AUTH_ENDPOINT, TOKEN_ENDPOINT, API_BASE,
+  SCOPE, AUTH_ENDPOINT, TOKEN_ENDPOINT, API_BASE, UPLOAD_BASE,
   createPkcePair, buildConsentUrl, exchangeCodeForTokens, getAccessToken,
-  apiRequest, listLiveStreams,
+  apiRequest, uploadMedia, listLiveStreams,
 };
