@@ -59,6 +59,15 @@ class StreamOrchestrator extends EventEmitter {
 
     this.running = false;
     this.stopping = false;
+    // stopRequested: "kapanış istendi" — stopping'den AYRI tutulur. stopping her
+    // start()/resume() başında false'a çekiliyor (yeni tur başlıyor anlamında), o yüzden
+    // uçuştaki bir start'ı iptal etmek için kullanılamaz: sinyal silinir. Bu alan yalnızca
+    // stop() ile set edilir, bir sonraki start()/resume() girişinde temizlenir.
+    this.stopRequested = false;
+    // startInFlight: start()/resume()'un uçuştaki promise'i (album yükleme ~10-15 sn sürer;
+    // ffprobe parça başına sıralı çalışıyor). stop() bunu bekler ki kapanış, yükleme bitip
+    // ffmpeg spawn edilmeden ÖNCE değil, o karar verildikten SONRA tamamlansın.
+    this.startInFlight = null;
     this.runNumber = 0;
     this.playlistWriter = null;
     this.lastProgressLog = -Infinity;
@@ -77,8 +86,12 @@ class StreamOrchestrator extends EventEmitter {
     if (this.running) throw new Error('StreamOrchestrator zaten çalışıyor');
     this.running = true;
     this.stopping = false;
-    try {
+    this.stopRequested = false;
+    return this.#trackStart(async () => {
       const albums = await this.albumRepository.list();
+      // Album yükleme uzun sürer (ffprobe parça başına, sıralı: 264 parçada ~12 sn).
+      // O pencerede stop() gelmişse ffmpeg'i HİÇ başlatmamalıyız.
+      if (this.#cancelStartIfRequested('albüm yükleme')) return;
       const queue = new AlbumQueue({ albums, mode: this.queueOptions.mode, random: this.random });
       this.playlistWriter = new PlaylistWriter({
         queue, batchSize: this.queueOptions.batchSize, playlistPath: this.playlistPath, writeFile: this.writeFile,
@@ -88,10 +101,7 @@ class StreamOrchestrator extends EventEmitter {
         `batchSize=${this.queueOptions.batchSize}`);
       const restored = this.#restoredPlaylist(albums);
       this.#startNextPlaylist(restored?.playlist, restored?.note ?? '');
-    } catch (err) {
-      this.running = false;
-      throw err;
-    }
+    });
   }
 
   // Çökme sonrası yeniden başlatma (Supervisor çağırır). Kuyruk korunur; yarım kalan
@@ -103,23 +113,62 @@ class StreamOrchestrator extends EventEmitter {
     if (!this.playlistWriter) return this.start();
     this.running = true;
     this.stopping = false;
-    try {
+    this.stopRequested = false;
+    return this.#trackStart(async () => {
+      if (this.#cancelStartIfRequested('yeniden başlatma')) return;
       const remaining = this.#remainingTracks();
       this.#startNextPlaylist(
         remaining && this.playlistWriter.write(remaining, this.currentAlbum),
         remaining ? ' (kaldığı parçadan devam)' : '',
       );
-    } catch (err) {
-      this.running = false;
-      throw err;
-    }
+    });
   }
 
+  // Kapanış. stopRequested ÖNCE set edilir: uçuşta bir start()/resume() varsa onu bekler,
+  // böylece kapanış "tamamlandı" derken yükleme bitip ffmpeg spawn edilmesi imkânsız olur.
+  //
+  // Neden gerekli (30 Eylül 2026, KARARLAR.md): eskiden stop() encoder'da çocuk süreç
+  // yoksa (album yükleme sürerken) anında resolve oluyordu. index.js "temiz kapanış
+  // tamamlandı" yazıyor, ama uçuştaki start() yüklemeyi bitirip ffmpeg'i başlatıyor ve
+  // süreç yayına giriyordu; shuttingDown=true olduğu için sonraki sinyaller de yok
+  // sayılıyor, systemd TimeoutStopSec'i dolup node'u SIGKILL ediyordu.
   async stop() {
+    this.stopRequested = true;
+    if (this.startInFlight) {
+      this.log.info('başlatma sürüyor — kapanış onu bekliyor (ffmpeg başlatılmayacak)');
+      await this.startInFlight.catch(() => {}); // başlatma hatası kapanışı bozmasın
+    }
     if (!this.running) return;
     this.stopping = true;
     this.log.info('yayın durduruluyor');
     await this.encoder.stop();
+  }
+
+  // start()/resume() gövdesini sarar: uçuştaki promise'i stop()'un beklemesi için tutar,
+  // hata halinde running'i eski davranışta olduğu gibi false'a çeker ve hatayı yukarı iletir.
+  #trackStart(body) {
+    const promise = (async () => {
+      try {
+        await body();
+      } catch (err) {
+        this.running = false;
+        throw err;
+      } finally {
+        // Yalnızca kendi kaydını temizler: araya yeni bir start girmişse ona dokunmaz.
+        if (this.startInFlight === promise) this.startInFlight = null;
+      }
+    })();
+    this.startInFlight = promise;
+    return promise;
+  }
+
+  // Uçuşta iken stop() geldiyse: ffmpeg başlatılmaz, yayın başlamamış sayılır.
+  // 'exit' expected=true ile yayılır — supervisor bunu çökme sanıp yeniden başlatmasın.
+  #cancelStartIfRequested(phase) {
+    if (!this.stopRequested) return false;
+    this.log.warn(`başlatma iptal edildi: kapanış istendi (${phase} sırasında) — ffmpeg başlatılmadı`);
+    this.#finish({ expected: true, code: null, signal: null });
+    return true;
   }
 
   // Dış okuyucular (StreamControlService, TUI, Web UI) için çalma durumu snapshot'ı.
@@ -129,6 +178,9 @@ class StreamOrchestrator extends EventEmitter {
     return Object.freeze({
       running: this.running,
       stopping: this.stopping,
+      // Kapanış istendi ama henüz encoder'a gelmedi (start uçuşta olabilir). UI bu aralıkta
+      // "restarting" değil "stopped" göstersin — yayın bir daha başlamayacak.
+      stopRequested: this.stopRequested,
       runNumber: this.runNumber,
       currentTracks: this.currentTracks,
       currentAlbum: this.currentAlbum,
@@ -180,6 +232,13 @@ class StreamOrchestrator extends EventEmitter {
   }
 
   #startNextPlaylist(playlist = this.playlistWriter.writeNext(), note = '') {
+    // Son çıkış kapısı: ffmpeg'i spawn eden TEK yer burası, o yüzden guard da burada
+    // tekrarlanıyor. Çağrı yolları (start, resume, playlist bitişinde yeniden başlatma)
+    // ileride çoğalsa bile kapanış istenmişken yeni süreç doğmasın.
+    if (this.stopRequested) {
+      this.log.warn('yeni playlist başlatılmadı: kapanış istendi');
+      return;
+    }
     this.runNumber++;
     this.currentTracks = playlist.tracks;
     this.currentAlbum = playlist.album;

@@ -161,7 +161,9 @@ class StreamControlService {
   // Önceki versiyon bu aralıkta yanlış 'stopped' dönerdi.
   #resolveState(pb, sup) {
     if (sup.gaveUp) return 'error';
-    if (pb.stopping) return 'stopped'; // stop() istendi, encoder kapanıyor
+    // stop() istendi: encoder kapanıyor (stopping) ya da henüz uçuştaki başlatma
+    // bekleniyor (stopRequested) — ikisinde de yayın bir daha başlamayacak.
+    if (pb.stopping || pb.stopRequested) return 'stopped';
     if (!pb.running) {
       // Çalışmıyor ama Supervisor yeniden başlatma timer'ı bekliyor → restarting
       return sup.pendingRestart ? 'restarting' : 'stopped';

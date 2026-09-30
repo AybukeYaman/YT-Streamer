@@ -34,6 +34,7 @@ function fakeOrchestrator(overrides = {}) {
       return Object.freeze({
         running: this.running,
         stopping: this.stopping,
+        stopRequested: this.stopRequested,
         runNumber: this.runNumber,
         currentTracks: this.currentTracks,
         currentAlbum: this.currentAlbum,
@@ -740,4 +741,17 @@ test('birden fazla progress olayı: son değerler korunur', () => {
   assert.equal(svc.getStatus().fps, 29);
   assert.equal(svc.getStatus().bitrateKbps, 4000);
   assert.equal(svc.getStatus().speed, 1.05);
+});
+
+// Kapanış istendiği anda (uçuştaki başlatma beklenirken) stopping henüz false, running
+// true ve playStartedAt null olur — eski mantık bu aralıkta 'restarting' diyordu, oysa
+// yayın bir daha başlamayacak.
+test('getStatus: stopRequested varken state stopped (restarting değil)', () => {
+  const svc = new StreamControlService({
+    orchestrator: fakeOrchestrator({ running: true, stopping: false, stopRequested: true, playStartedAt: null }),
+    supervisor: fakeSupervisor(),
+    encoder: new EventEmitter(),
+    log: fakeLog(),
+  });
+  assert.equal(svc.getStatus().state, 'stopped');
 });

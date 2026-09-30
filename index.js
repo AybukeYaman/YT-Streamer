@@ -18,6 +18,10 @@ const { StateStore } = require('./src/infrastructure/state-store');
 const { StreamTui } = require('./src/ui/stream-tui');
 const { LogBuffer } = require('./src/ui/log-buffer');
 
+// Temiz kapanıştan sonra sürecin kendi kendine kapanması için tanınan süre. systemd'nin
+// TimeoutStopSec=30'unun belirgin altında: kesme kararı bizde kalsın, sebebi loglanabilsin.
+const SHUTDOWN_WATCHDOG_MS = 5000;
+
 async function main() {
   // Çoklu yayın: her instance kendi config/env dosyasıyla çalışır (--config / --env).
   // Bayraksız çağrı varsayılanları kullanır → mevcut tek-yayın davranışı değişmez.
@@ -85,7 +89,13 @@ async function main() {
   let tui = null;
   let shuttingDown = false;
   const shutdown = async (reason) => {
-    if (shuttingDown) return; // ikinci Ctrl+C: kapanış zaten sürüyor, encoder'ın 5 sn sınırı geçerli
+    if (shuttingDown) {
+      // İkinci sinyal artık yok sayılmıyor: takılı bir kapanışta tek çıkış yolu buydu ve
+      // etkisiz olduğu için systemd'nin TimeoutStopSec'i doluyordu (30 Eylül 2026).
+      log.warn(`${reason} — kapanış zaten sürüyordu, zorla çıkılıyor`);
+      if (tui) tui.close();
+      process.exit(1);
+    }
     shuttingDown = true;
     log.info(`${reason} alındı`);
     await controlService.stop(); // supervisor.stop()'a delege eder: bekleyen yeniden başlatma da iptal
@@ -94,6 +104,18 @@ async function main() {
     log.info('temiz kapanış tamamlandı');
     process.exitCode = 0;
     if (process.connected) process.disconnect(); // IPC kanalı açıkken süreç kapanmaz
+    // Kapanış tamamlandıktan sonra süreç normalde event loop boşalınca kendi kendine
+    // kapanır. Boşalmazsa (açık bir handle, bitmeyen bir ffprobe zinciri) eskiden süreç
+    // sessizce ayakta kalıyor ve systemd 30 sn sonra SIGKILL ediyordu. Artık kapanışı
+    // kendimiz sonlandırıyoruz ve NEDENİNİ logluyoruz — teşhis için kritik.
+    const watchdog = setTimeout(() => {
+      const handles = typeof process._getActiveHandles === 'function' ? process._getActiveHandles().length : '?';
+      const requests = typeof process._getActiveRequests === 'function' ? process._getActiveRequests().length : '?';
+      log.warn(`kapanış sonrası süreç ${SHUTDOWN_WATCHDOG_MS} ms boyunca kapanmadı ` +
+        `(açık handle=${handles}, istek=${requests}) — zorla çıkılıyor`);
+      process.exit(0);
+    }, SHUTDOWN_WATCHDOG_MS);
+    watchdog.unref(); // tek başına süreci ayakta TUTMAZ: boş loop'ta normal kapanış kazanır
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   // SIGTERM de aynı temiz kapanıştan geçer. Unit'ler KillSignal=SIGINT kullanıyor,

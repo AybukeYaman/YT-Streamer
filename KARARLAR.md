@@ -504,3 +504,67 @@ edilir) ve `install-service.sh` de ileride aynı kontrolü çağırabilsin.
 **Sır güvenliği:** ffmpeg argümanları RTMP URL'sini, yani stream key'i içeriyor.
 Sweep log'a **yalnızca `pid/ppid/etime`** basar, `args`'ı asla — ayrı bir testle
 sabitlendi.
+
+---
+
+## [Faz 7] Kapanış sırasında başlatma yarışı: iptal edilebilir start() — 30 Eylül 2026
+
+**Gözlem:** art arda iki deploy. İkincisinin restart'ı, node album yüklerken
+(264 parça) geldi. journalctl: `19:14:24` SIGINT + "temiz kapanış tamamlandı",
+`19:14:36` yeni müzik yükleme + ffmpeg başlatma logları, `19:14:54`
+`State 'stop-sigterm' timed out. Killing.` → systemd node'u ve ffmpeg'i SIGKILL etti.
+
+**Log'un doğru okunuşu (ileride yanlış okunacak türden):** `19:14:54 − 30 =
+19:14:24`, yani süre dolan stop job'ı `19:14:24`'te başlayandı. Dolayısıyla
+`19:14:36`'daki "yeni süreç başladı" görünen loglar **yeni sürecin değil,
+systemd'nin kapatmaya çalıştığı ESKİ sürecin** logları. Hiçbir başka okuma bu
+aritmetiği vermiyor.
+
+**Kök sebep — üç satırın birleşimi:**
+1. `TrackRepository.list()` parça başına **sıralı** ffprobe çalıştırıyor: 264
+   parçada ~12 sn'lik bir `await` penceresi (`19:14:24 → 19:14:36` tam bu).
+2. `StreamOrchestrator.start()` bu `await`'ten sonra `stopping`'e **hiç
+   bakmıyordu**: yükleme bitince koşulsuz `#startNextPlaylist()` → ffmpeg spawn.
+3. `stop()` o anda `encoder.child === null` gördüğü için **anında resolve**
+   oluyordu → `index.js` "temiz kapanış tamamlandı" yazıyor, ama hiçbir şey
+   durdurulmamış oluyor.
+
+Sonuç: ölmesi gereken süreç, kapanış "bitti" dedikten sonra kendini yayına
+sokuyor. `index.js`'teki `shuttingDown` guard'ı sonraki sinyalleri de yok
+saydığı için kurtarma yolu da yoktu; tek sonlandırıcı systemd'nin SIGKILL'i.
+
+**Bugünkü kademeli kill (SIGTERM → SIGKILL) bozulmadı — devreye girecek bir
+çocuk süreç yoktu.** Orphan sweep ve cgroup temizliği de doğru çalıştı (yetim
+kalmadı). Bu bug o değişikliklerden önce de vardı; yalnızca iki deploy'un art
+arda gelmesi onu 12 saniyelik pencereye denk getirdi.
+
+**Çözüm:**
+- `stopRequested` alanı, `stopping`'den **ayrı**. `stopping` her
+  `start()`/`resume()` başında `false`'a çekildiği için uçuştaki bir başlatmayı
+  iptal etmeye uygun değil — aynı alanı kullanmak sinyali silerdi.
+- `stop()`: `stopRequested = true` → uçuştaki `startInFlight` promise'ini
+  **bekler** → sonra `encoder.stop()`. Kapanış artık "ffmpeg başlatılacak mı"
+  kararı verildikten SONRA tamamlanıyor.
+- `start()`: `await`'ten sonra guard → ffmpeg hiç başlatılmaz, `exit`
+  **expected=true** yayılır (supervisor çökme sanıp yeniden başlatmasın) ve
+  **açık bir warn loglanır**: "başlatma iptal edildi: kapanış istendi (albüm
+  yükleme sırasında)". Bugünkü teşhisi zorlaştıran şey, logların temiz kapanış
+  derken sürecin yayına girmesiydi; bu satır o durumu tek bakışta gösterir.
+- `#startNextPlaylist()`'e de guard: ffmpeg'i spawn eden **tek** nokta orası,
+  çağrı yolları çoğalsa bile kapanışta yeni süreç doğmasın.
+- `index.js`: ikinci sinyal artık **zorla çıkış** (eskiden tamamen etkisizdi,
+  oysa takılı kapanışta tek çıkış yolu oydu) + kapanış sonrası **5 sn watchdog**:
+  süreç hâlâ ayaktaysa açık handle/istek sayısını loglayıp `process.exit(0)`.
+  Watchdog `unref()`'li: boş event loop'ta normal kapanış kazanır, yalnızca
+  gerçekten bir şey süreci ayakta tutuyorsa tetikler.
+- `getPlaybackState()` artık `stopRequested` de veriyor; UI o aralıkta
+  "restarting" değil "stopped" gösteriyor (yayın bir daha başlamayacak).
+
+**`TimeoutStopSec=30`'a bilerek dokunulmadı:** düşürmek belirtiyi kısaltır,
+sebebi gizler. Kapanış artık bizim tarafta, 5 sn içinde sonlanıyor.
+
+**Kapsam dışı (ayrı iş):** ffprobe'u paralelleştirmek / süreleri kalıcı
+önbelleğe almak pencereyi ~1 sn'ye indirir ama yarışı **çözmez** — guard'sız
+1 saniyelik pencere de eninde sonunda yakalanır, üstelik daha nadir olduğu için
+teşhisi daha zor olur. Sıcak yolu (`TrackRepository`) değiştirdiği için de bu
+commit'e alınmadı: bir şey bozulursa sebebin hangisi olduğu belirsizleşirdi.

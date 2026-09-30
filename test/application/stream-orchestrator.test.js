@@ -35,14 +35,14 @@ const BG = 'C:/music-source/x/background.mp4';
 const oneAlbum = (tracks) => ({ list: async () => [new Album({ name: 'x', backgroundPath: BG, tracks })] });
 
 // Playlist yazımlarını bellekte tutar; her yazılan içerikten parça başlıklarını çıkarır.
-function setup({ tracks = TRACKS, batchSize = 2, now, nowPlayingWriter, stateStore } = {}) {
+function setup({ tracks = TRACKS, batchSize = 2, now, nowPlayingWriter, stateStore, albumRepository } = {}) {
   const encoder = new FakeEncoder();
   const { log, lines } = fakeLog();
   const playlists = [];
   const orch = new StreamOrchestrator({
     encoder,
     log,
-    albumRepository: oneAlbum(tracks),
+    albumRepository: albumRepository ?? oneAlbum(tracks),
     queue: { mode: 'sequential', batchSize },
     playlistPath: 'C:/runtime/playlist.txt',
     writeFile: (p, content) => playlists.push(content.trim().split('\n').map((l) => l.match(/\/(\w+)\.m4a'$/)[1]).join('')),
@@ -397,4 +397,134 @@ test('stateStore verilmezse hiçbir şey değişmez (özellik tamamen isteğe ba
   await orch.start();
   encoder.emit('log', { kind: 'progress', frame: 24, fps: 24, bitrateKbps: 2500, speed: 1 });
   assert.deepEqual(playlists, ['ab']);
+});
+
+// ── Kapanış / başlatma yarışı (30 Eylül 2026 olayı) ─────────────────────────
+// Album yükleme uzun sürüyor (ffprobe parça başına, sıralı). O pencerede stop()
+// gelirse eski davranış: stop() anında resolve olur ("temiz kapanış tamamlandı"),
+// ardından yükleme biter ve ffmpeg BAŞLATILIR — süreç yayına girer, systemd
+// TimeoutStopSec'i dolup SIGKILL eder. Aşağıdaki testler bunu sabitliyor.
+
+// Album yüklemesi elle çözülene kadar askıda kalan sahte repo.
+function pendingAlbumRepository(tracks = TRACKS) {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  return {
+    list: async () => { await gate; return [new Album({ name: 'x', backgroundPath: BG, tracks })]; },
+    finishLoading: () => { release(); },
+  };
+}
+
+test('start uçuştayken stop: ffmpeg HİÇ başlatılmaz', async () => {
+  const albumRepository = pendingAlbumRepository();
+  const { encoder, orch, lines } = setup({ albumRepository });
+
+  const starting = orch.start();
+  const stopping = orch.stop(); // yükleme sürerken kapanış istendi
+  albumRepository.finishLoading();
+  await starting;
+  await stopping;
+
+  assert.deepEqual(encoder.starts, []); // asıl iddia: yeni ffmpeg doğmadı
+  assert.equal(orch.running, false);
+  assert.ok(lines.some((l) => l.level === 'warn' && /başlatma iptal edildi.*albüm yükleme/.test(l.m)));
+});
+
+test('start uçuştayken stop: kapanış başlatmanın bitmesini BEKLER', async () => {
+  const albumRepository = pendingAlbumRepository();
+  const { orch, lines } = setup({ albumRepository });
+
+  const starting = orch.start();
+  let stopResolved = false;
+  const stopping = orch.stop().then(() => { stopResolved = true; });
+
+  // Yükleme hâlâ sürüyor: stop() resolve OLMAMALI (eski hatanın tam kalbi).
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(stopResolved, false);
+  assert.ok(lines.some((l) => /kapanış onu bekliyor/.test(l.m)));
+
+  albumRepository.finishLoading();
+  await starting;
+  await stopping;
+  assert.equal(stopResolved, true);
+});
+
+test('start uçuştayken stop: supervisor\'ı tetiklemesin (exit expected=true)', async () => {
+  const albumRepository = pendingAlbumRepository();
+  const { orch } = setup({ albumRepository });
+  const exits = [];
+  orch.on('exit', (e) => exits.push(e));
+
+  const starting = orch.start();
+  const stopping = orch.stop();
+  albumRepository.finishLoading();
+  await starting;
+  await stopping;
+
+  assert.deepEqual(exits, [{ expected: true, code: null, signal: null }]);
+});
+
+// resume() içinde uzun bir await YOK (playlist kalanı bellekten yazılır), yani start()
+// gibi bir pencere taşımıyor: ffmpeg senkron başlar, sonraki stop() onu normal yoldan
+// durdurur. Guard yine de #startNextPlaylist'te duruyor (ileride await eklenirse diye).
+test('resume: pencere yok — ffmpeg başlar, sonraki stop onu düzgün durdurur', async () => {
+  const { encoder, orch } = setup();
+  await orch.start();
+  encoder.emit('exit', 1, null); // çökme → running=false, playlistWriter duruyor
+
+  await orch.resume();
+  assert.equal(encoder.starts.length, 2);
+  await orch.stop();
+  assert.equal(encoder.stopCalls, 1);
+  assert.equal(orch.running, false);
+});
+
+// Hiç başlamamışken resume() → start()'a delege eder, yani album yükleme penceresini
+// devralır; iptal orada da geçerli olmalı.
+test('resume start\'a delege ederken stop: ffmpeg başlatılmaz', async () => {
+  const albumRepository = pendingAlbumRepository();
+  const { encoder, orch } = setup({ albumRepository });
+
+  const resuming = orch.resume(); // playlistWriter yok → start()
+  const stopping = orch.stop();
+  albumRepository.finishLoading();
+  await resuming;
+  await stopping;
+
+  assert.deepEqual(encoder.starts, []);
+  assert.equal(orch.running, false);
+});
+
+test('stop sonrası playlist bitişi yeni ffmpeg başlatmaz', async () => {
+  const { encoder, orch, lines } = setup();
+  await orch.start();
+  assert.equal(encoder.starts.length, 1);
+  await orch.stop();
+  // stopRequested set: kapanıştan sonra gecikmiş bir playlist bitişi gelse bile
+  // (ffmpeg'i spawn eden tek nokta #startNextPlaylist) yeni süreç doğmaz.
+  encoder.emit('exit', 0, null);
+  assert.equal(encoder.starts.length, 1);
+  assert.ok(!lines.some((l) => /playlist #2/.test(l.m)));
+});
+
+test('stop sonrası yeni start temiz çalışır (stopRequested sıfırlanır)', async () => {
+  const albumRepository = pendingAlbumRepository();
+  const { encoder, orch } = setup({ albumRepository });
+  const starting = orch.start();
+  const stopping = orch.stop();
+  albumRepository.finishLoading();
+  await starting;
+  await stopping;
+  assert.deepEqual(encoder.starts, []);
+
+  await orch.start(); // iptalden sonra yeniden başlatılabilmeli
+  assert.equal(encoder.starts.length, 1);
+  assert.equal(orch.running, true);
+});
+
+test('hiç başlamamışken stop zararsız', async () => {
+  const { encoder, orch } = setup();
+  await orch.stop();
+  assert.equal(encoder.stopCalls, 0);
+  assert.equal(orch.running, false);
 });

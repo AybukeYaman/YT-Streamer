@@ -505,3 +505,22 @@ Faz atlanmaz. Özellikle 3.1 sonucuna göre sonraki fazların şekli değişebil
 - [x] Arkaplan videosu tek mi olacak, rotasyon mu? (Faz 8 → albüm başına arkaplan,
       albüm sınırında değişiyor)
 - [ ] Yayın başlığı/açıklaması otomatik güncellenecek mi?
+---
+
+## Sıradaki iş — parça süresi okumayı hızlandır (ayrı faz)
+
+**Neden:** `TrackRepository.list()` parça başına **sıralı** ffprobe çalıştırıyor;
+264 parçada restart'ta ~12 saniyelik bir başlatma penceresi oluşuyor. Bu pencere
+30 Eylül 2026'daki kapanış yarışını (KARARLAR.md) görünür kılan şeydi — yarışın
+kendisi guard ile kapatıldı, yani bu iş artık **doğruluk değil performans**.
+
+**Yapılacak (sırayla değerlendir):**
+- Süreleri **kalıcı önbelleğe** al (dosya yolu + mtime + boyut → süre). Asıl
+  kazanç burada: restart'ta ffprobe hiç çalışmaz. KARARLAR.md'deki
+  "TrackRepository önbelleği restart'ta yenilenmiyor" notuyla birlikte ele alınmalı.
+- ffprobe'u **sınırlı eşzamanlılıkla** çalıştır (ör. 4 paralel). Düşük çekirdekli
+  VPS'te yayın başlarken CPU sıçraması yapmasın; hata toplama ve log sırası
+  deterministik kalsın.
+
+**Kapanış kriteri:** 264 parçalı kütüphanede ikinci ve sonraki başlatmalar
+1 sn'nin altında; parça eklenince/değişince önbellek kendini tazeliyor.
