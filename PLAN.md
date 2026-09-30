@@ -442,6 +442,40 @@ Ayrıntılar ve gerekçeler: `KARARLAR.md`, Faz 9.
 
 ---
 
+### Faz 10 — Config yönetimi ve deploy script'i — repo tarafı TAMAMLANDI (30 Eylül 2026)
+
+Her deploy'da `.env`'de key eksik mi diye elle bakma ihtiyacı kalktı. `.env.example`
+sözleşme kabul ediliyor; doğrulama tek bir script'te, deploy zinciri onu çağırıyor.
+
+- `scripts/deploy/check-env.sh` — `.env.example`'daki her key hedef dosyada **var ve dolu**
+  mu? Boş sayılanlar: boş, boşluk, `""`, `''`. `export KEY=` ve CRLF de kabul. Key
+  **isimlerini** raporlar, değerleri asla yazdırmaz. Fazla key hata değil, bilgi.
+- `deploy.sh` (proje kökü) — `git pull --ff-only` → `.env` doğrulama (eksikse **durur**) →
+  `npm ci --omit=dev` → `yt-streamer.service` restart → her `.env.<isim>` için
+  `yt-streamer@<isim>` restart. Bir instance'ın env'i eksikse **yalnızca o** atlanır,
+  diğerleri güncellenir; özette atlananlar açıkça listelenir ve çıkış kodu non-zero.
+- Restart sonrası 5 sn bekleyip `is-active` doğrulaması; düşmüşse son 20 satır `journalctl`.
+  `systemctl restart`'ın başarılı dönmesi servisin ayakta kalması demek değil.
+- `--dry-run`: **tamamen salt okunur** ilk tur. `git fetch` + "ne gelecek" listesi (merge
+  yok), env doğrulama, `npm ci --dry-run`, restart edilecek servislerin listesi. Çalışan
+  yayına / çalışma ağacına / `node_modules`'a dokunmaz. Erken çıkmaz, tüm sorunları toplar.
+- `--test` bayrağı opsiyonel: testler devDependencies gerektirdiği için tam `npm ci` →
+  `npm test` → `npm prune --omit=dev`. Varsayılan olarak çalışmaz (deploy hızı).
+- `install-service.sh` aynı doğrulayıcıyı çağırıyor ama **uyarı** olarak — ilk kurulumda key
+  henüz elde olmayabilir.
+- **`EnvironmentFile` bilerek eklenmedi:** uygulama `.env`'i kendisi okuyor; systemd'nin
+  quoting kuralları `util.parseEnv`'den farklı olduğu için ikinci bir okuma yolu sessiz
+  tutarsızlık riski. Gerekçe üretilen unit dosyalarının içine de yorum olarak yazıldı.
+- `.env` ↔ `.env.example` karşılaştırması: tek key (`YOUTUBE_STREAM_KEY`), eksik/fazla yok.
+- Kökte biriken `test-frame.jpg` / `test-assets-frame.jpg` silindi ve `.gitignore`'a eklendi.
+
+**Sırada (Faz 10 kalanı):** `deploy.sh`'ı VPS'te ilk kez çalıştırıp gerçek doğrulama —
+çoklu instance restart yolu ve eksik-env atlama davranışı canlı sistemde test edilecek.
+
+Ayrıntılar ve gerekçeler: `KARARLAR.md`, Faz 10.
+
+---
+
 ## Süreç ritmi
 
 Her faz: plan → prompt → uygulama → test → conflict/dead-code kontrolü →

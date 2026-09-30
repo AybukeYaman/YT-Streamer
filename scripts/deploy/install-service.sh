@@ -38,9 +38,14 @@ if [ "$NODE_VERSION_OK" != "yes" ]; then
 fi
 echo "node: $NODE_BIN ($("$NODE_BIN" -v))"
 
-if [ ! -f "$REPO_ROOT/.env" ]; then
-  echo "UYARI: $REPO_ROOT/.env yok. rtmp modunda YOUTUBE_STREAM_KEY zorunlu." >&2
-  echo "        Devam ediliyor ama uygulama config hatasıyla düşebilir." >&2
+# Env doğrulama tek yerde: scripts/deploy/check-env.sh (.env.example sözleşmedir).
+# Burada UYARI olarak geçilir, hata verilmez — ilk kurulumda .env henüz doldurulmamış
+# olabilir ve servisin kurulması yine de istenir. Kod güncellemesinde ise deploy.sh
+# aynı kontrolü HATA olarak uygular ve deploy'u durdurur.
+if ! bash "$SCRIPT_DIR/check-env.sh" .env >&2; then
+  echo "UYARI: .env eksik/boş — rtmp modunda uygulama config hatasıyla düşecek." >&2
+  echo "        Servis kurulumu yine de sürüyor; key'i doldurup şunu çalıştır:" >&2
+  echo "          systemctl restart yt-streamer" >&2
 fi
 
 if [ ! -f "$REPO_ROOT/config.json" ]; then
@@ -73,6 +78,11 @@ Description=YT Streamer - YouTube 7/24 muzik yayini
 After=network-online.target
 Wants=network-online.target
 
+# NOT: Unit'te bilerek EnvironmentFile YOK. Uygulama .env'i kendisi okur
+# (src/config/load-config.js, util.parseEnv) ve yolu __dirname bazlı olduğu için
+# WorkingDirectory'den bağımsızdır. systemd'nin EnvironmentFile quoting kuralları
+# util.parseEnv'den farklı olduğundan iki okuma yolu eklemek sessiz tutarsızlık
+# riski getirir, karşılığında hiçbir fayda sağlamaz. Ayrıntı: KARARLAR.md
 [Service]
 Type=simple
 WorkingDirectory=$REPO_ROOT

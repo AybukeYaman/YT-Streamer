@@ -19,3 +19,7 @@ config.*.json
 !config.example.json
 .env.*
 !.env.example
+
+# Frame yakalama/debug çıktıları (ffmpeg ile tek kare çıkarırken kökte birikiyor)
+test-frame.jpg
+test-assets-frame.jpg

@@ -87,6 +87,11 @@ Description=YT Streamer - %i
 After=network-online.target
 Wants=network-online.target
 
+# NOT: Unit'te bilerek EnvironmentFile YOK. Uygulama .env.%i dosyasini kendisi okur
+# (ExecStart'taki --env bayragi + src/config/load-config.js, util.parseEnv) ve yolu
+# __dirname bazlı olduğu için WorkingDirectory'den bağımsızdır. systemd'nin EnvironmentFile quoting kuralları
+# util.parseEnv'den farklı olduğundan iki okuma yolu eklemek sessiz tutarsızlık
+# riski getirir, karşılığında hiçbir fayda sağlamaz. Ayrıntı: KARARLAR.md
 [Service]
 Type=simple
 WorkingDirectory=$REPO_ROOT

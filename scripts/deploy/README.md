@@ -1,21 +1,88 @@
 # VPS kurulumu (systemd)
 
-Her VPS'te (yeni ya da mevcut) **tek komut**:
+| Ne zaman | Komut |
+|---|---|
+| **İlk kurulum** (yeni VPS) | `sudo bash scripts/deploy/install-service.sh` |
+| **Kod güncellemesi** (her deploy) | `bash deploy.sh` |
+| **Yeni yayın ekleme** | `sudo bash scripts/deploy/add-stream.sh <isim>` |
+
+## Kod güncellemesi — `deploy.sh`
 
 ```bash
-git pull
+bash deploy.sh --dry-run  # hiçbir şeyi DEĞİŞTİRMEZ — ne olacağını gösterir
+bash deploy.sh            # git pull -> env doğrulama -> npm ci -> tüm yayınları restart
+bash deploy.sh --test     # aynısı + testler (deploy öncesi)
+```
+
+### `--dry-run` — riskli olmayan ilk tur
+
+**Tamamen salt okunur.** Çalışan yayına, çalışma ağacına ve `node_modules`'a dokunmaz;
+yayın kesintisi riski yoktur, istediğin kadar çalıştırabilirsin. Gösterdikleri:
+
+- `git fetch` yapar ama **merge etmez** — pull'un hangi commit'leri ve hangi dosyaları
+  getireceğini listeler (asıl restart riski buradan gelir, script'ten değil)
+- `--ff-only` pull'un mümkün olup olmadığını önceden söyler (VPS'te elle commit yapılmışsa)
+- kirli çalışma ağacını bildirir
+- `.env` ve her `.env.<isim>` doğrulamasını yapar; gerçek deploy'un **nerede duracağını** yazar
+- `npm ci --omit=dev --dry-run` ile lock/package.json tutarlılığını sınar, tek bayt yazmadan
+- hangi servislerin restart **edileceğini** listeler, restart etmez
+
+Erken çıkmaz: tüm sorunları toplayıp özette listeler, böylece tek turda bütün tabloyu görürsün.
+Engelleyici sorun varsa çıkış kodu non-zero. `--test` ile birlikte kullanılamaz (testler
+devDependencies kurulumu gerektirir, bu da `node_modules`'ı değiştirir).
+
+Sırayla:
+1. `git pull --ff-only` — VPS'te elle değişiklik varsa sessiz merge yerine açık hata
+2. **`.env` doğrulama** — `.env.example`'daki key'lerden eksik/boş varsa **deploy durur** ve
+   hangi key olduğunu yazar (değerini değil)
+3. `npm ci --omit=dev` — lock dosyasına birebir uyar
+4. `yt-streamer.service` restart + 5 sn sonra gerçekten ayakta mı doğrulama; değilse son 20
+   satır `journalctl`
+5. **Her `.env.<isim>` için** `yt-streamer@<isim>` restart — bir instance'ın env'i eksikse
+   yalnızca **o** instance atlanır, diğerleri güncellenir; özet bölümü atlananı açıkça yazar
+
+`sudo` gerektirmez — `git`/`npm` mevcut kullanıcı olarak çalışır (root ile `git pull`
+"dubious ownership" verebilir), yalnızca `systemctl` çağrıları `sudo` ile yapılır.
+
+### Env doğrulamasını tek başına çalıştırma
+```bash
+bash scripts/deploy/check-env.sh .env
+bash scripts/deploy/check-env.sh .env.stream2
+```
+`.env.example` **sözleşmedir**: yeni bir key eklediğinde `.env.example`'a da ekle (boş değerle),
+böylece diğer makinelerde deploy o key eksikken durur. Script key **isimlerini** raporlar,
+değerleri asla yazdırmaz.
+
+## İlk kurulum
+
+```bash
 sudo bash scripts/deploy/install-service.sh
 ```
 
 Ne yapar:
 - node sürümünü doğrular (>=20)
-- `.env` yoksa uyarır (rtmp modunda `YOUTUBE_STREAM_KEY` zorunlu — bu dosya git'e dahil değil, elle oluşturulmalı)
+- `.env`'i `check-env.sh` ile doğrular; eksik/boşsa **uyarır ama kurulumu sürdürür** (ilk kurulumda key henüz elde olmayabilir — `.env` git'e dahil değil, elle oluşturulur). Kod güncellemesinde `deploy.sh` aynı kontrolü **hata** olarak uygular.
 - `config.json` yoksa `config.example.json`'dan oluşturur (sonra `overlay.fontFile`'ı bu makineye göre düzenlemen gerekir — Linux font yolu)
 - `npm install --omit=dev`
 - elle çalışan eski bir `node index.js` varsa **graceful** durdurur (orphan ffmpeg bırakmadan)
 - `/etc/systemd/system/yt-streamer.service` yazar ve etkinleştirir
 
-**İdempotent** — tekrar çalıştırmak güvenli (kod güncellemesi sonrası da kullanılır: `git pull && sudo bash scripts/deploy/install-service.sh` servisi restart eder).
+**İdempotent** — tekrar çalıştırmak güvenli (var olan servisi günceller/yeniden başlatır).
+Rutin kod güncellemesi için `install-service.sh` değil **`deploy.sh`** kullan: env doğrulaması
+yapar ve ek yayınları da restart eder. `install-service.sh` yalnızca unit dosyası değiştiğinde
+ya da yeni bir VPS kurarken gerekir.
+
+## Neden unit'te `EnvironmentFile` yok
+
+Uygulama `.env`'i **kendisi** okur (`src/config/load-config.js`, `util.parseEnv`); yol
+`__dirname` bazlı olduğu için `WorkingDirectory`'den bağımsız çalışır. Çoklu yayında aynı yol:
+`ExecStart ... --env .env.%i`.
+
+systemd'nin `EnvironmentFile` quoting/escape kuralları `util.parseEnv`'den farklıdır — ikisi
+birlikte kullanılsa aynı dosya iki farklı şekilde yorumlanabilirdi (özellikle quote ve `#`
+içeren değerlerde). Hiçbir fayda karşılığında sessiz tutarsızlık riski, bu yüzden eklenmedi.
+Tek bir key'i geçici olarak ezmek gerekirse `Environment=` yeterli: gerçek ortam değişkeni
+dosyadakini zaten ezer. Ayrıntı: `KARARLAR.md`, Faz 10.
 
 Neden script (elle terminale yapıştırmak yerine): SSH konsollarında uzun heredoc/çok satırlı komutlar bracketed-paste ve satır kaydırma yüzünden bozuluyor. Script dosya olarak çalıştığı için bu sorun oluşmaz.
 

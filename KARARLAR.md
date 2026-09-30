@@ -346,3 +346,90 @@ başlatmada 5. parçadan (`Sayfa Arası`), kalan 7/11 parçayla ve aynı arkapla
 ~2,5 dakika yayın boşluğu demek; devam mekanizması bu süreyi kısaltmıyor, sadece
 boşluktan sonra doğru parçadan girilmesini sağlıyor. Önbelleğin diske alınması
 ayrı bir iş.
+
+---
+
+## [Faz 10] Env doğrulama deploy'a taşındı; unit'te EnvironmentFile yok — 30 Eylül 2026
+
+**Soru:** Her deploy'da `.env`'de key eksik mi diye elle bakmak gerekiyor. Bu kontrol nereye
+konulmalı — systemd `EnvironmentFile`'a mı, uygulamaya mı, deploy script'ine mi?
+
+### `.env.example` sözleşmedir, doğrulayıcı tek yerdedir
+
+`scripts/deploy/check-env.sh` `.env.example`'daki key listesini alır ve hedef dosyada her
+key'in **var olduğunu ve dolu olduğunu** doğrular. Boş sayılan değerler: boş, yalnızca
+boşluk, `""` ve `''`. `export KEY=` biçimi ve CRLF satır sonları da kabul edilir.
+
+Script key **isimlerini** raporlar, **değerleri asla yazdırmaz** — deploy logları ve
+`journalctl` çıktısı sır sızdırmamalı.
+
+**Neden ayrı script:** aynı kontrol üç yerden çağrılıyor (`deploy.sh`, `install-service.sh`,
+elle). Üç kopya zamanla birbirinden ayrışırdı.
+
+**Fazla key hata değil:** `.env`'de `.env.example`'da olmayan bir key varsa yalnızca bilgi
+satırı basılır. Makineye özel ek ayarların deploy'u durdurması yanlış olurdu.
+
+### Aynı kontrol iki yerde iki farklı sertlikte
+
+| Çağıran | Eksik key durumunda | Neden |
+|---|---|---|
+| `install-service.sh` | UYARI, kurulum sürer | İlk kurulumda `.env` henüz doldurulmamış olabilir; servisin yine de kurulması istenir |
+| `deploy.sh` (ana yayın) | **HATA, deploy durur** | Çalışan bir sistem güncelleniyor; eksik key'le restart yayını düşürür |
+| `deploy.sh` (ek yayın) | O instance atlanır, diğerleri sürer | Tek eksik key tüm yayınları durdurmamalı |
+
+Ek yayın atlandığında çıkış kodu yine non-zero ve özet bölümü hangi instance'ın atlandığını
+açıkça yazar — sessizce eksik deploy olmaz.
+
+### Unit dosyalarında `EnvironmentFile` bilerek YOK
+
+Uygulama `.env`'i **kendisi** okur (`src/config/load-config.js`, `util.parseEnv`) ve yol
+`__dirname` bazlı olduğu için `WorkingDirectory`'den bağımsızdır. Çoklu yayında da aynı yol
+geçerli: `ExecStart ... --env .env.%i`.
+
+**Neden eklenmedi:** systemd'nin `EnvironmentFile` quoting/escape kuralları `util.parseEnv`'den
+farklıdır. İkisi birlikte kullanılsa aynı dosya iki farklı şekilde yorumlanabilir — özellikle
+quote ve `#` içeren değerlerde. Bu, hiçbir fayda karşılığında sessiz tutarsızlık riski.
+Ayrıca gerçek ortam değişkeni dosyadakini zaten ezer (`load-config.js`), yani `Environment=`
+ile tek key geçici olarak override edilebilir; bunun için `EnvironmentFile` gerekmiyor.
+
+Bu gerekçe üretilen unit dosyalarının içine de yorum olarak yazılır — soru
+`/etc/systemd/system/yt-streamer.service`'e bakılırken doğuyor, cevabın orada olması gerekir.
+
+### `deploy.sh` diğer kararları
+
+**`git pull --ff-only`:** VPS'te elle değişiklik yapılmışsa sessiz merge commit'i yerine açık
+hata. Neyin değiştiğini görmek isteriz.
+
+**`npm ci` (`npm install` değil):** lock dosyasına birebir uyar, lock'u güncellemez. Deploy
+makinesi kendi başına bağımlılık sürümü yükseltmemeli.
+
+**Testler varsayılan olarak çalışmaz (`--test` ile opsiyonel):** deploy hızını config
+doğrulamasına feda etmek mantıklı, teste feda etmek değil. `--test` verilirse testler
+devDependencies gerektirdiği (`ink-testing-library`) için önce tam `npm ci`, testler geçtikten
+sonra `npm prune --omit=dev` — prod kurulumunda dev paketi kalmaz.
+
+**`--dry-run` tamamen salt okunur (yalnızca "restart etmeyen deploy" değil):** ilk amaç
+prod'da ilk turu risksiz geçirmek. Bu yüzden `git pull` yerine `git fetch` + "ne gelecek"
+listesi, `npm ci` yerine `npm ci --dry-run`. Pull'u gerçekten yapsaydı çalışma ağacı
+değişirdi: servis restart edilene kadar yayın etkilenmez ama sonraki *herhangi* bir restart
+(systemd `Restart=always`, OOM, reboot) yeni kodu sessizce devreye alırdı — yani "hiçbir şey
+değişmedi" sözü yalan olurdu. `npm ci` de benzer şekilde `node_modules`'ı silip yeniden
+kurar; çalışan süreç gecikmeli bir modülü (`ink`/`react`, TUI yolu) o an require ederse
+patlayabilir. Salt okunur sınır bu iki tuzağı birlikte kapatır.
+
+**Dry-run erken çıkmaz:** gerçek deploy ilk sorunda durur, dry-run tüm sorunları toplayıp
+özette listeler. Amaç tek turda bütün tabloyu görmek — üç kez çalıştırıp üç ayrı sorun
+keşfetmek değil. Engelleyici sorun varsa çıkış kodu yine non-zero.
+
+**`--dry-run` + `--test` reddedilir:** testler devDependencies kurulumu gerektirir, bu da
+`node_modules`'ı değiştirir — dry-run sözüyle çelişir. Sessizce birini yok saymak yerine
+açık hata.
+
+**systemctl sorguları `sudo`'suz:** `cat`, `is-enabled`, `is-active`, `list-units` yetki
+istemez. Yalnızca `restart` ve `journalctl` `sudo` ile çağrılır — böylece `--dry-run` hiç
+parola sormaz (salt okunur bir komutun parola istemesi yanlış sinyal olurdu).
+
+**Restart sonrası 5 sn bekleyip `is-active` kontrolü:** `systemctl restart` restart'ın
+başarısını değil yalnızca komutun kabulünü bildirir. Saniyeler içinde crash eden bir süreci
+yakalamak için kısa bekleme + başarısızlıkta son 20 satır `journalctl`. Sessiz "başarılı"
+raporu vermek en kötü sonuç olurdu.
