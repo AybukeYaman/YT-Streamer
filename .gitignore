@@ -12,4 +12,10 @@ assets/
 runtime/
 music-source/
 node_modules/
+# Config makineye özeldir (font yolu, runtime klasörü). Çoklu yayında her instance
+# kendi config.<isim>.json + .env.<isim> dosyasını kullanır — hiçbiri git'e girmez.
 config.json
+config.*.json
+!config.example.json
+.env.*
+!.env.example

@@ -2,6 +2,8 @@
 // birbirine bağlar, Ctrl+C'de temiz kapanışı başlatır. Uygulama mantığı burada değil.
 const path = require('path');
 const { loadConfig } = require('./src/config/load-config');
+const { parseArgs } = require('./src/config/parse-args');
+const { acquireLock } = require('./src/infrastructure/instance-lock');
 const { StreamProfile } = require('./src/domain/stream-profile');
 const { SpeedWindow } = require('./src/domain/speed-window');
 const { StreamOrchestrator } = require('./src/application/stream-orchestrator');
@@ -17,9 +19,16 @@ const { StreamTui } = require('./src/ui/stream-tui');
 const { LogBuffer } = require('./src/ui/log-buffer');
 
 async function main() {
-  const config = loadConfig();
-  // --tui: aynı engine'i yöneten terminal paneli. Headless (bayraksız) davranış değişmez.
-  const useTui = process.argv.includes('--tui');
+  // Çoklu yayın: her instance kendi config/env dosyasıyla çalışır (--config / --env).
+  // Bayraksız çağrı varsayılanları kullanır → mevcut tek-yayın davranışı değişmez.
+  const args = parseArgs(process.argv.slice(2));
+  const config = loadConfig({ configFile: args.configFile, envFile: args.envFile });
+  // --tui: aynı engine'i yöneten terminal paneli.
+  const useTui = args.tui;
+
+  // İki instance aynı runtime'ı paylaşırsa playlist/state dosyaları çakışır ve aynı
+  // YouTube key'ine iki bağlantı gider. Sessiz bozulma yerine açıkça reddet.
+  const lock = acquireLock({ runtimeDir: config.paths.runtime });
   // TUI modunda loglar konsolu bozmasın diye ring tampona yazılır; panel bunu gösterir.
   // Dosyaya yazma normalde olduğu gibi sürer (Logger). Headless modda out = console.
   const logBuffer = useTui ? new LogBuffer({ capacity: 500 }) : null;
@@ -81,6 +90,7 @@ async function main() {
     log.info(`${reason} alındı`);
     await controlService.stop(); // supervisor.stop()'a delege eder: bekleyen yeniden başlatma da iptal
     if (tui) tui.close(); // terminali eski haline getir (imleç, raw mode, stdin serbest)
+    lock.release(); // runtime kilidini bırak (idempotent)
     log.info('temiz kapanış tamamlandı');
     process.exitCode = 0;
     if (process.connected) process.disconnect(); // IPC kanalı açıkken süreç kapanmaz
@@ -108,6 +118,7 @@ async function main() {
     // (imleç, raw mode, stdin) — yoksa hata main().catch'te konsol yerine bozuk panele yazılırdı.
     // close() idempotent; shutdown zaten çağırdıysa zararsız. Sonra hatayı yukarı ilet.
     if (tui) tui.close();
+    lock.release();
     throw err;
   }
 }
