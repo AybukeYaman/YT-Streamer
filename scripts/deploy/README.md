@@ -25,6 +25,7 @@ yayın kesintisi riski yoktur, istediğin kadar çalıştırabilirsin. Gösterdi
 - kirli çalışma ağacını bildirir
 - `.env` ve her `.env.<isim>` doğrulamasını yapar; gerçek deploy'un **nerede duracağını** yazar
 - `npm ci --omit=dev --dry-run` ile lock/package.json tutarlılığını sınar, tek bayt yazmadan
+- `daemon-reload` gerekip gerekmediğini söyler ama **reload etmez**
 - hangi servislerin restart **edileceğini** listeler, restart etmez
 
 Erken çıkmaz: tüm sorunları toplayıp özette listeler, böylece tek turda bütün tabloyu görürsün.
@@ -36,9 +37,10 @@ Sırayla:
 2. **`.env` doğrulama** — `.env.example`'daki key'lerden eksik/boş varsa **deploy durur** ve
    hangi key olduğunu yazar (değerini değil)
 3. `npm ci --omit=dev` — lock dosyasına birebir uyar
-4. `yt-streamer.service` restart + 5 sn sonra gerçekten ayakta mı doğrulama; değilse son 20
+4. Unit dosyası diskte değiştiyse **bir kez** `systemctl daemon-reload` (restart'tan önce)
+5. `yt-streamer.service` restart + 5 sn sonra gerçekten ayakta mı doğrulama; değilse son 20
    satır `journalctl`
-5. **Her `.env.<isim>` için** `yt-streamer@<isim>` restart — bir instance'ın env'i eksikse
+6. **Her `.env.<isim>` için** `yt-streamer@<isim>` restart — bir instance'ın env'i eksikse
    yalnızca **o** instance atlanır, diğerleri güncellenir; özet bölümü atlananı açıkça yazar
 
 `sudo` gerektirmez — `git`/`npm` mevcut kullanıcı olarak çalışır (root ile `git pull`
@@ -71,6 +73,30 @@ Ne yapar:
 Rutin kod güncellemesi için `install-service.sh` değil **`deploy.sh`** kullan: env doğrulaması
 yapar ve ek yayınları da restart eder. `install-service.sh` yalnızca unit dosyası değiştiğinde
 ya da yeni bir VPS kurarken gerekir.
+
+### `daemon-reload` neden otomatik ve neden her deploy'da değil
+
+systemd, unit dosyası diskte değişip de yüklenmediğinde restart'ı **engellemez** — uyarı basar
+ve sessizce **eski** tanımla başlatır. Bu yüzden `deploy.sh` restart'tan **önce** kontrol eder.
+
+Tespit `git diff` ile yapılamaz: **repoda unit dosyası yok.** `install-service.sh` ve
+`add-stream.sh` unit'i çalışma anında heredoc ile `/etc/systemd/system/` altına üretir.
+`deploy.sh` unit'e hiç dokunmadığı için hash karşılaştırması da hep "değişmedi" derdi — yani
+kontrol sessizce hiç tetiklenmezdi.
+
+Doğru kaynak systemd'nin kendisi:
+
+```bash
+systemctl show -p NeedDaemonReload --value yt-streamer.service   # yes / no
+```
+
+`yes` dönmedikçe `daemon-reload` çağrılmaz (körlemesine her deploy'da değil). Birden fazla
+unit değişse de reload süreç genelinde olduğu için **bir kez** yapılır. Sorgu yetki
+istemediğinden `--dry-run` bu kontrolü de parola sormadan yapar.
+
+> `daemon-reload` yalnızca **yüklü tanımı** tazeler. VPS'teki unit dosyası repodaki
+> üreticiden geri kaldıysa (örn. `install-service.sh` yeni bir alan eklemişse) bunu
+> düzeltmez — o makinede bir kez `sudo bash scripts/deploy/install-service.sh` gerekir.
 
 ## Neden unit'te `EnvironmentFile` yok
 

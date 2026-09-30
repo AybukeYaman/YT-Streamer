@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# VPS'te kod güncellemesi: git pull -> env doğrulama -> npm ci -> servisleri restart.
+# VPS'te kod güncellemesi: git pull -> env doğrulama -> npm ci -> (gerekirse
+# daemon-reload) -> servisleri restart.
 #
 #   bash deploy.sh              # normal deploy
 #   bash deploy.sh --dry-run    # hiçbir şeyi DEĞİŞTİRMEZ: ne olacağını gösterir
@@ -153,8 +154,38 @@ fi
 # ── Yardımcı: bir servisi restart et ve gerçekten ayakta mı doğrula ─────────
 FAILED=""
 WOULD_RESTART=""
+RELOAD_DONE=no
+NEED_RELOAD_UNITS=""
+
+# ── Yardımcı: unit dosyası diskte değiştiyse bir kez daemon-reload ─────────
+# Tespiti systemd'nin kendisi yapar: "unit dosyası diskte değişti ama yüklenmedi"
+# bayrağı zaten var ve uyarıyı basan mekanizma da bu. git diff ile tespit
+# İMKANSIZ, çünkü repoda unit DOSYASI yok — install-service.sh ve add-stream.sh
+# unit'i çalışma anında heredoc ile /etc/systemd/system/ altına üretir. deploy.sh
+# unit'e hiç dokunmadığı için hash karşılaştırması da hep "değişmedi" derdi.
+# Sorgu yetki istemez, bu yüzden --dry-run parola sormaz.
+maybe_daemon_reload() {
+  local unit="$1"
+  [ "$(systemctl show -p NeedDaemonReload --value "$unit" 2>/dev/null || true)" = "yes" ] || return 0
+  NEED_RELOAD_UNITS="$NEED_RELOAD_UNITS $unit"
+  if [ "$DRY_RUN" = "yes" ]; then
+    echo "DRY RUN — daemon-reload GEREKECEK: $unit (unit dosyası diskte değişmiş)"
+    return 0
+  fi
+  # daemon-reload süreç genelindedir; birden fazla unit değişmiş olsa da bir kez yeter.
+  if [ "$RELOAD_DONE" = "yes" ]; then return 0; fi
+  echo ""
+  echo "== systemctl daemon-reload ($unit unit dosyası diskte değişmiş) =="
+  $SUDO systemctl daemon-reload
+  RELOAD_DONE=yes
+}
+
 restart_service() {
   local unit="$1"
+  # Restart'tan ÖNCE: aksi halde systemd eski unit tanımıyla başlatır ve
+  # "Run systemctl daemon-reload" uyarısı verir (restart'ı engellemez, sessizce
+  # eski tanım devrede kalır — bu yüzden reload restart'tan sonra olmamalı).
+  maybe_daemon_reload "$unit"
   if [ "$DRY_RUN" = "yes" ]; then
     echo "DRY RUN — restart EDİLMEDİ: $unit (şu an: $(systemctl is-active "$unit" 2>/dev/null || echo bilinmiyor))"
     WOULD_RESTART="$WOULD_RESTART $unit"
@@ -239,6 +270,10 @@ if [ "$DRY_RUN" = "yes" ]; then
   else
     echo "Restart edilecek servis yok (hiçbiri kurulu/enable değil)."
   fi
+  if [ -n "$NEED_RELOAD_UNITS" ]; then
+    # Engelleyici DEĞİL (bu yüzden PROBLEMS'a girmiyor): gerçek deploy bunu kendisi yapar.
+    echo "daemon-reload gerekecek (gerçek deploy kendisi yapacak):$NEED_RELOAD_UNITS"
+  fi
   if [ -n "$PROBLEMS" ]; then
     echo ""
     echo "GERÇEK DEPLOY'U ENGELLEYECEK SORUN(LAR):$PROBLEMS" >&2
@@ -258,6 +293,10 @@ if [ -n "$FAILED" ]; then
 fi
 if [ -n "$SKIPPED" ]; then
   exit 1
+fi
+if [ "$RELOAD_DONE" = "yes" ]; then
+  echo ""
+  echo "systemctl daemon-reload yapıldı (unit dosyası değişmişti):$NEED_RELOAD_UNITS"
 fi
 echo ""
 echo "Deploy tamam. Loglar: journalctl -u $MAIN_SERVICE -f"

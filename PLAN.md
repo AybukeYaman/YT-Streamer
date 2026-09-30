@@ -454,6 +454,9 @@ sözleşme kabul ediliyor; doğrulama tek bir script'te, deploy zinciri onu ça�
   `npm ci --omit=dev` → `yt-streamer.service` restart → her `.env.<isim>` için
   `yt-streamer@<isim>` restart. Bir instance'ın env'i eksikse **yalnızca o** atlanır,
   diğerleri güncellenir; özette atlananlar açıkça listelenir ve çıkış kodu non-zero.
+- Unit dosyası diskte değiştiyse restart'tan **önce** bir kez `systemctl daemon-reload`.
+  Tespit `systemctl show -p NeedDaemonReload` ile — repoda unit dosyası olmadığı için
+  (heredoc ile üretiliyor) `git diff`/hash yaklaşımı sessizce hiç tetiklenmezdi.
 - Restart sonrası 5 sn bekleyip `is-active` doğrulaması; düşmüşse son 20 satır `journalctl`.
   `systemctl restart`'ın başarılı dönmesi servisin ayakta kalması demek değil.
 - `--dry-run`: **tamamen salt okunur** ilk tur. `git fetch` + "ne gelecek" listesi (merge
@@ -469,8 +472,13 @@ sözleşme kabul ediliyor; doğrulama tek bir script'te, deploy zinciri onu ça�
 - `.env` ↔ `.env.example` karşılaştırması: tek key (`YOUTUBE_STREAM_KEY`), eksik/fazla yok.
 - Kökte biriken `test-frame.jpg` / `test-assets-frame.jpg` silindi ve `.gitignore`'a eklendi.
 
-**Sırada (Faz 10 kalanı):** `deploy.sh`'ı VPS'te ilk kez çalıştırıp gerçek doğrulama —
-çoklu instance restart yolu ve eksik-env atlama davranışı canlı sistemde test edilecek.
+**İlk canlı deploy yapıldı (30 Eylül 2026).** Ortaya çıkan tek sorun: systemd "unit file
+changed on disk — run daemon-reload" uyarısı verdi; restart engellenmedi ama elle
+`daemon-reload` gerekti. Bu `deploy.sh`'a kalıcı olarak eklendi (yukarıdaki madde).
+
+**Sırada (Faz 10 kalanı):** çoklu instance restart yolu ve eksik-env atlama davranışı canlı
+sistemde henüz doğrulanmadı (VPS'te kaç instance olduğu da kayda geçmedi). Ayrıca düşük
+öncelikli ayrı iş: `check-env.sh` için otomatik test.
 
 Ayrıntılar ve gerekçeler: `KARARLAR.md`, Faz 10.
 

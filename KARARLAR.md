@@ -429,6 +429,27 @@ açık hata.
 istemez. Yalnızca `restart` ve `journalctl` `sudo` ile çağrılır — böylece `--dry-run` hiç
 parola sormaz (salt okunur bir komutun parola istemesi yanlış sinyal olurdu).
 
+**`daemon-reload` tespiti systemd'ye sorularak, `git diff` ile değil:** ilk canlı deploy'da
+systemd "unit file changed on disk, run daemon-reload" uyarısı verdi; restart'ı engellemedi ama
+sessizce **eski** unit tanımıyla başlattı — bu yüzden reload restart'tan **önce** olmalı.
+
+Tespit için `git diff --name-only` ya da pull öncesi/sonrası hash karşılaştırması
+**işlemez: repoda unit dosyası yok.** `install-service.sh` ve `add-stream.sh` unit'i çalışma
+anında heredoc ile üretir; `deploy.sh` unit'e hiç dokunmaz, dolayısıyla hash hep aynı çıkar ve
+kontrol sessizce hiç tetiklenmez — en kötü hata türü. Doğru kaynak systemd'nin kendi bayrağı:
+`systemctl show -p NeedDaemonReload --value <unit>`. Uyarıyı basan mekanizma da bu, yani
+tahmin yok. `yes` dönmedikçe çağrılmaz; birden fazla unit değişse de reload süreç genelinde
+olduğu için bir kez yapılır. Sorgu yetki istemediği için `--dry-run` de parola sormadan
+kontrol edip yalnızca raporlar.
+
+Dry-run'da bu **engelleyici sayılmaz** (`PROBLEMS`'a girmez): gerçek deploy kendisi hallediyor,
+oraya koymak dry-run'ı boş yere kırmızıya boyardı.
+
+**Sınırı:** `daemon-reload` yalnızca yüklü tanımı tazeler. VPS'teki unit dosyası repodaki
+üreticiden geri kaldıysa düzeltmez — o makinede bir kez `install-service.sh` gerekir.
+`deploy.sh`'ın "üretilecek unit ile diskteki fark var mı" diye bakması, unit üretim mantığının
+iki yerde durması demek olurdu; bilinçli olarak yapılmadı.
+
 **Restart sonrası 5 sn bekleyip `is-active` kontrolü:** `systemctl restart` restart'ın
 başarısını değil yalnızca komutun kabulünü bildirir. Saniyeler içinde crash eden bir süreci
 yakalamak için kısa bekleme + başarısızlıkta son 20 satır `journalctl`. Sessiz "başarılı"
