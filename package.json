@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node index.js",
     "tui": "node index.js --tui",
-    "test": "node --test \"test/**/*.test.{js,mjs}\""
+    "test": "node --test \"test/**/*.test.{js,mjs}\"",
+    "youtube:token": "node scripts/youtube/get-refresh-token.js",
+    "youtube:verify": "node scripts/youtube/verify-access.js"
   },
   "engines": {
     "node": ">=20.12"

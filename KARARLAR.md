@@ -568,3 +568,99 @@ sebebi gizler. Kapanış artık bizim tarafta, 5 sn içinde sonlanıyor.
 1 saniyelik pencere de eninde sonunda yakalanır, üstelik daha nadir olduğu için
 teşhisi daha zor olur. Sıcak yolu (`TrackRepository`) değiştirdiği için de bu
 commit'e alınmadı: bir şey bozulursa sebebin hangisi olduğu belirsizleşirdi.
+
+---
+
+## [Faz 9] YouTube broadcast otomasyonu — Aşama 1 kararları — 30 Eylül 2026
+
+Sistem bugüne kadar YouTube'a yalnızca **veri** gönderiyordu (ffmpeg → RTMPS).
+"Bu veriyi canlı yayına çevir" adımı elle Studio'da yapılıyordu. Aşama 1 kimlik
+katmanını kuruyor; Aşama 2 (`insert` → `bind` → `transition`) otomasyonu.
+
+**Kimlik bilgileri AYRI dosyada (`.env.youtube`), `.env.example`'a eklenmedi.**
+İki sebep:
+1. `scripts/deploy/check-env.sh`, `.env.example`'ı sözleşme kabul edip oradaki
+   **her** key'i zorunlu sayıyor (opsiyonel key desteği yok). Üç OAuth key'ini
+   oraya koymak, dosyalar doldurulana kadar **gerçek deploy'u durdururdu**
+   (`deploy.sh` bölüm 2 → `exit 1`) ve **her `.env.<isim>` instance'ını** "eksik
+   env" diye atlardı — `add-stream.sh` yeni instance'lara yalnızca
+   `YOUTUBE_STREAM_KEY` yazıyor.
+2. Semantik: OAuth kimliği **kanal** seviyesinde, yayın instance'ı seviyesinde
+   değil. Üç yayın için üç kopya client secret tutmak anlamsız ve sır yüzeyini
+   büyütür.
+Alternatif (`check-env.sh`'a `# optional` işareti eklemek) daha çok değişiklik ve
+daha çok risk demekti; per-instance sözleşme hiç değişmesin diye ayrı dosya seçildi.
+`.gitignore`'daki `.env.*` kalıbı dosyayı zaten gizliyor, şablon için
+`!.env.youtube.example` istisnası eklendi.
+
+**Sıfır yeni bağımlılık: düz `fetch`.** `googleapis` (~15 MB) zaten dışlanmıştı;
+aynı mantıkla `google-auth-library` da eklenmedi. Kullanılan uç nokta sayısı üç
+(token, liveStreams, ileride liveBroadcasts) ve PKCE + token takası `crypto` +
+yerleşik `fetch` ile yazılabilecek kadar basit. `package.json` dependencies
+değişmedi.
+
+**OAuth akışı: loopback redirect (`http://127.0.0.1:<port>`) + PKCE.**
+OOB akışı (`urn:ietf:wg:oauth:2.0:oob`) Ekim 2022'den beri engelli —
+`invalid_request` döner, yani "consent URL üret, kodu terminale yapıştır"ın
+klasik biçimi artık yok. Desktop client tipinde loopback izinli ve port önceden
+kaydedilmek zorunda değil.
+
+**VPS'te tarayıcı yok problemi: script tarayıcısı olan makinede çalıştırılıyor.**
+Refresh token makineye bağlı değil; VPS'e taşınan tek şey o token, authorization
+code hiç taşınmıyor. SSH tüneli (`ssh -L`) alternatifi telefondan işlemediği ve
+gereksiz karmaşık olduğu için seçilmedi.
+
+**Telefondan izin (`--manual`):** izin sonrası Safari
+`http://127.0.0.1:<port>/?code=...` adresine gidip "bağlanılamadı" der, ama kod
+**adres çubuğunda durur**. Script tam URL'i de sadece kodu da kabul ediyor. OOB'a
+ihtiyaç kalmadan iOS yolu böyle çalışıyor.
+
+**`access_type=offline` + `prompt=consent` zorunlu:** ikincisi olmadan aynı
+client'a verilen ikinci izinde Google `refresh_token`'ı **atlar** ve elde yalnızca
+1 saatlik access token kalır — sessiz ve teşhisi zor bir başarısızlık.
+
+**Testing modu 7 gün tuzağı.** OAuth consent screen "Testing" durumundayken
+refresh token **7 günde expire** olur; 7/24 yayın için kabul edilemez. Çözüm
+consent screen'i **"In production"**a almak: `youtube` scope'u *sensitive*
+(restricted değil), yani doğrulama olmadan da yayınlanabilir — bir kez
+"doğrulanmamış uygulama" uyarısı geçilir, 100 kullanıcı sınırı olur (bizde 1) ve
+**refresh token kalıcı olur**. Aşama 2'ye bırakılmadı, Aşama 1'in parçası yapıldı;
+`invalid_grant` hatası da bu ipucunu mesajına basıyor ve test ile sabitlendi.
+
+**Stream eşleştirme başlıktan DEĞİL key'den.** `verify-access.js`,
+`cdn.ingestionInfo.streamName` alanını `.env`'deki `YOUTUBE_STREAM_KEY` ile
+karşılaştırıyor. "Default stream key" başlığı dile/kanala göre değişir; key'in
+kendisi kesin eşleşmedir. Eşleşme yoksa (key başka kanala ait ya da izin farklı
+Google hesabıyla verilmiş) **non-zero çıkıyor** — Aşama 2 yanlış kanala yayın
+açmasın. Stream key hiçbir çıktıda geçmiyor, son 4 hane maskeli gösteriliyor.
+
+**Mimari:** `src/infrastructure/youtube-oauth.js` + `youtube-credentials.js`.
+`application`/`domain` katmanları ve `index.js` YouTube API'yi **tanımıyor** —
+yayın süreci ağ/API bağımlılığı almıyor (mevcut mimari testi bunu zorluyor).
+
+### Aşama 2 tasarım kısıtları (henüz kodlanmadı)
+
+**iOS'tan tetiklenebilir olmalı** (kullanıcı gereksinimi): canlıya alma adımı
+sadece VPS terminalinden değil, Safari'den bir link ya da iOS Shortcuts ile HTTP
+isteği göndererek de çalışmalı. Bu yüzden go-live yalnızca CLI script'i olamaz:
+VPS'te küçük bir HTTP servisi (`node:http`, bağımlılıksız) + `Authorization:
+Bearer <GOLIVE_AUTH_TOKEN>` (sabit-zamanlı karşılaştırma, hız sınırı). Token yer
+tutucusu `.env.youtube.example`'a şimdiden eklendi.
+
+**Yalnızca localhost'a bind + önünde TLS (Tailscale ya da Caddy).** Düz HTTP
+üzerinden bearer token göndermek onu sızdırır; canlı yayın başlatabilen bir
+endpoint için kabul edilemez. Tailscale tercih edilmeli: internete hiç açılmaz.
+
+**İdempotans — en kritik kısıt.** Unit'lerde `Restart=always`, supervisor 5
+çökmeye kadar yeniden başlatıyor. Broadcast oluşturma yayın sürecinin
+başlangıcına girerse **her restart yeni bir broadcast yaratır**: kanalda çöp
+yayınlar ve kota tükenmesi (`insert`/`transition` ~50 birim, günlük 10.000).
+Bu yüzden `index.js` API'yi hiç tanımayacak; aktif broadcast id'si diske yazılıp
+varsa yeni `insert` yapılmayacak.
+
+**Sıra zorunlu:** ffmpeg zaten basıyor → `insert` → `bind` (mevcut **kalıcı**
+stream id'ye) → ingest `active` olana kadar yokla → `transition(live)`.
+`transition` ingest aktif değilken hata veriyor, yani otomasyon yayını başlatan
+değil, **yayın başladıktan sonra çalışan** adım. `liveStreams.insert` ile her
+yayında yeni stream AÇILMAYACAK: restart dayanıklılığı kalıcı key'e dayanıyor
+(bkz. yukarıdaki RTMPS kopma/geri bağlanma kaydı).

@@ -19,6 +19,7 @@
 | 6 | Kontrol arayüzü (opsiyonel) | Başlamadı |
 | 7 | VPS'e taşıma | Askıda — `faz-7-vps` branch'inde WIP (Docker hazır, merge edilmedi) |
 | 8 | Çoklu albüm düzeni | **Tamamlandı** (10 albüm / 353 parça) |
+| 9 | YouTube broadcast otomasyonu | Aşama 1 tamam (kimlik katmanı); Aşama 2 başlamadı |
 
 ---
 
@@ -504,7 +505,8 @@ Faz atlanmaz. Özellikle 3.1 sonucuna göre sonraki fazların şekli değişebil
 - [x] Kuyruk yaklaşımı hangisi olacak? (Faz 3.1 → B yaklaşımı)
 - [x] Arkaplan videosu tek mi olacak, rotasyon mu? (Faz 8 → albüm başına arkaplan,
       albüm sınırında değişiyor)
-- [ ] Yayın başlığı/açıklaması otomatik güncellenecek mi?
+- [ ] Yayın başlığı/açıklaması otomatik güncellenecek mi? (Faz 9 Aşama 2'de
+      `liveBroadcasts.insert` snippet'i ile birlikte ele alınacak)
 ---
 
 ## Sıradaki iş — parça süresi okumayı hızlandır (ayrı faz)
@@ -524,3 +526,60 @@ kendisi guard ile kapatıldı, yani bu iş artık **doğruluk değil performans*
 
 **Kapanış kriteri:** 264 parçalı kütüphanede ikinci ve sonraki başlatmalar
 1 sn'nin altında; parça eklenince/değişince önbellek kendini tazeliyor.
+
+---
+
+## Faz 9 — YouTube broadcast otomasyonu
+
+Sistem bugüne kadar YouTube'a yalnızca **veri** gönderiyordu (ffmpeg → RTMPS).
+"Bu veriyi canlı yayına çevir" adımı elle Studio'da yapılıyordu. Amaç: bunu da
+otomatikleştirmek.
+
+### Aşama 1 — kimlik katmanı ✅ (30 Eylül 2026)
+
+**Yapıldı:**
+- `src/infrastructure/youtube-oauth.js` — PKCE, consent URL, token takası, access
+  token yenileme, `liveStreams.list`. **Sıfır yeni bağımlılık** (yerleşik `fetch`).
+- `src/infrastructure/youtube-credentials.js` — `.env.youtube` okur; ortam
+  değişkeni dosyayı ezer.
+- `scripts/youtube/get-refresh-token.js` — bir kerelik. Loopback + PKCE; `--manual`
+  ile telefondan izin (kod Safari'nin adres çubuğundan alınır).
+- `scripts/youtube/verify-access.js` — salt okuma. Refresh token'ı doğrular ve
+  `.env`'deki stream key'in **hangi stream id'ye** ait olduğunu key karşılaştırmasıyla
+  kesin olarak bulur (Aşama 2'deki `bind` hedefi).
+- `.env.youtube.example` sözleşmesi, `npm run youtube:token` / `youtube:verify`.
+
+**Kullanıcı tarafında (Google Cloud Console, kod değil):**
+- [x] Proje + YouTube Data API v3 etkin
+- [x] OAuth consent screen (External) + test user
+- [x] OAuth client (Desktop app) → Client ID + Secret
+- [ ] **OAuth consent screen → "In production"** — Testing modunda refresh token
+      7 günde expire olur, 7/24 yayın için zorunlu (bkz. KARARLAR.md)
+- [ ] `node scripts/youtube/get-refresh-token.js` → token'ı VPS'teki `.env.youtube`'a yaz
+- [ ] `node scripts/youtube/verify-access.js` → stream id eşleşmesini doğrula
+
+**Kapanış kriteri:** `verify-access.js` sıfır çıkış koduyla, `.env`'deki key'in
+stream id'sini işaretleyerek geçiyor.
+
+### Aşama 2 — go-live otomasyonu (başlamadı)
+
+**Akış:** ffmpeg zaten basıyor → `liveBroadcasts.insert` → `liveBroadcasts.bind`
+(mevcut **kalıcı** stream id'ye) → ingest `active` olana kadar yokla →
+`liveBroadcasts.transition(live)`.
+
+**Gereksinimler ve kısıtlar (ayrıntı: KARARLAR.md):**
+- **iOS'tan tetiklenebilmeli** — Safari'den link ya da iOS Shortcuts ile HTTP
+  isteği. Yalnızca CLI script'i yetmez: VPS'te küçük bir HTTP servisi
+  (`node:http`, bağımlılıksız), `Authorization: Bearer <GOLIVE_AUTH_TOKEN>`.
+- **Localhost'a bind + önünde TLS (Tailscale tercih).** Düz HTTP üzerinden bearer
+  token sızar; canlı yayın başlatabilen endpoint için kabul edilemez.
+- **İdempotans:** `Restart=always` + supervisor retry'ları yüzünden broadcast
+  oluşturma yayın sürecine girmeyecek — `index.js` API'yi tanımayacak, aktif
+  broadcast id'si diske yazılacak, varsa yeni `insert` yapılmayacak. Aksi halde
+  bir crash loop kanalda onlarca çöp yayın açar ve kotayı (10.000 birim/gün)
+  tüketir.
+- Kalıcı stream key korunacak; her yayında yeni stream **açılmayacak**.
+
+**Kapanış kriteri:** telefondan tek tetikle yayın canlıya geçiyor; ikinci tetik
+yeni broadcast açmıyor (idempotans); yayın süreci restart olduğunda broadcast
+etkilenmiyor.

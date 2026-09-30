@@ -19,6 +19,8 @@ config.*.json
 !config.example.json
 .env.*
 !.env.example
+# YouTube OAuth kimlik bilgileri makineye/kanala ozel; sablonu git'te durur.
+!.env.youtube.example
 
 # Frame yakalama/debug çıktıları (ffmpeg ile tek kare çıkarırken kökte birikiyor)
 test-frame.jpg
