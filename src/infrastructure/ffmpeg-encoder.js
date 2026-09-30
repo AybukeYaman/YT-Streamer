@@ -5,6 +5,10 @@ const { Encoder } = require('../application/encoder');
 
 const YOUTUBE_RTMPS_BASE = 'rtmps://a.rtmps.youtube.com/live2/';
 const DEFAULT_STOP_TIMEOUT_MS = 5000;
+// SIGTERM'den sonra SIGKILL'e geçiş süresi. Kısa tutulur: bu noktaya gelindiyse
+// ffmpeg zaten 'q'ya da SIGTERM'e cevap vermemiş, beklemek yalnızca systemd'nin
+// TimeoutStopSec'ine yaklaştırır (dolarsa node SIGKILL'lenir ve ffmpeg yetim kalır).
+const DEFAULT_KILL_TIMEOUT_MS = 3000;
 
 // runNumber verilirse (playlist modu) local çıktı her çalıştırmada ayrı dosyaya gider:
 // out.flv → out-1.flv, out-2.flv … — her restart gerçek yayında yeni bir RTMP oturumu,
@@ -140,6 +144,7 @@ class FfmpegEncoder extends Encoder {
     overlay = null, // { fontFile, fontSize, position } — null ise drawtext yok
     ffmpegPath = 'ffmpeg',
     stopTimeoutMs = DEFAULT_STOP_TIMEOUT_MS,
+    killTimeoutMs = DEFAULT_KILL_TIMEOUT_MS,
     spawnFn = spawn, // testlerde sahte süreç vermek için
   }) {
     super();
@@ -151,6 +156,7 @@ class FfmpegEncoder extends Encoder {
     if (overlay) overlayPosition(overlay.position);
     this.ffmpegPath = ffmpegPath;
     this.stopTimeoutMs = stopTimeoutMs;
+    this.killTimeoutMs = killTimeoutMs;
     this.spawnFn = spawnFn;
     this.child = null;
   }
@@ -196,19 +202,58 @@ class FfmpegEncoder extends Encoder {
     });
   }
 
-  // Önce ffmpeg'in standart kapanışı ('q' → çıktıyı düzgün kapatır), yanıt yoksa kill.
+  // Kapanış kademeli: 'q' (ffmpeg çıktıyı düzgün kapatır) → SIGTERM → SIGKILL.
+  //
+  // Neden escalation şart: eskiden son adım tek bir child.kill() (SIGTERM) idi ve
+  // promise yalnızca 'close' ile resolve oluyordu. ffmpeg SIGTERM'i yutarsa stop()
+  // sonsuza kadar pending kalıyor; kapanış zinciri (orchestrator → supervisor →
+  // index.js shutdown) askıda kalıyor, systemd TimeoutStopSec'i doluyor ve node'u
+  // SIGKILL ediyor — ffmpeg PPID=1'e düşüp yayına bağlı kalıyor (yetim süreç).
+  // Gerekçe ve gözlem: KARARLAR.md, 30 Eylül 2026.
   stop() {
     const child = this.child;
     if (!child) return Promise.resolve();
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this.emit('log', { kind: 'error', message: `ffmpeg ${this.stopTimeoutMs} ms içinde kapanmadı, kill()` });
-        child.kill();
-      }, this.stopTimeoutMs);
-      child.once('close', () => {
-        clearTimeout(timer);
+      const timers = [];
+      let settled = false;
+      const pid = child.pid === undefined ? '?' : child.pid;
+      // resolve tek sefer: hangi kademede kapanırsa kapansın kalan timer'lar iptal.
+      const finish = (failureNote = null) => {
+        if (settled) return;
+        settled = true;
+        for (const t of timers) clearTimeout(t);
+        if (failureNote) this.emit('log', { kind: 'error', message: failureNote });
         resolve();
-      });
+      };
+      const escalate = (signal, note, nextTimeoutMs, onNext) => {
+        this.emit('log', { kind: 'error', message: note });
+        child.kill(signal);
+        timers.push(setTimeout(onNext, nextTimeoutMs));
+      };
+
+      child.once('close', () => finish());
+
+      timers.push(setTimeout(() => {
+        escalate(
+          'SIGTERM',
+          `ffmpeg (pid=${pid}) ${this.stopTimeoutMs} ms içinde 'q' ile kapanmadı — SIGTERM gönderiliyor`,
+          this.killTimeoutMs,
+          () => escalate(
+            'SIGKILL',
+            `ffmpeg (pid=${pid}) SIGTERM'den sonra ${this.killTimeoutMs} ms içinde de kapanmadı — SIGKILL gönderiliyor`,
+            this.killTimeoutMs,
+            // SIGKILL'den sonra da 'close' gelmezse (pratikte kesilemez I/O beklemesi):
+            // kapanış zincirini askıda bırakmamak için yine resolve edilir. this.child
+            // BİLEREK null'lanmaz — böylece running=true kalır, start() yeni bir ffmpeg
+            // başlatmayı reddeder ve aynı stream key'ine ikinci bağlantı oluşmaz.
+            () => finish(
+              `ffmpeg (pid=${pid}) SIGKILL'den sonra da kapanmadı — kapanış beklenmeden sürdürülüyor. ` +
+              'Yetim süreç kalmış olabilir, VPS\'te kontrol et: ps -C ffmpeg -o pid,ppid,etime',
+            ),
+          ),
+        );
+      }, this.stopTimeoutMs));
+
       child.stdin.write('q');
     });
   }

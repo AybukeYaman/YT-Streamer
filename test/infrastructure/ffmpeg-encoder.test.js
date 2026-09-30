@@ -24,8 +24,17 @@ function fakeSpawn() {
     child.stderr = new PassThrough();
     child.written = '';
     child.stdin.on('data', (d) => { child.written += d; });
+    child.pid = 4242;
     child.killed = false;
-    child.kill = () => { child.killed = true; setImmediate(() => child.emit('close', null, 'SIGTERM')); };
+    // ignoreSignals: sinyali yutan (kapanmayan) ffmpeg'i taklit etmek için test doldurur.
+    child.ignoreSignals = [];
+    child.signals = [];
+    child.kill = (signal = 'SIGTERM') => {
+      child.killed = true;
+      child.signals.push(signal);
+      if (child.ignoreSignals.includes(signal)) return;
+      setImmediate(() => child.emit('close', null, signal));
+    };
     calls.push({ cmd, args, opts, child });
     return child;
   };
@@ -247,15 +256,56 @@ test('stop: önce q yazar, ffmpeg kapanınca resolve olur', async () => {
   assert.equal(child.killed, false);
 });
 
-test('stop: q\'ya yanıt yoksa süre dolunca kill', async () => {
+test('stop: q\'ya yanıt yoksa süre dolunca SIGTERM (SIGKILL\'e gerek kalmaz)', async () => {
   const { spawnFn, calls } = fakeSpawn();
-  const enc = new FfmpegEncoder({ profile, backgroundPath: BG, output: LOCAL, spawnFn, stopTimeoutMs: 20 });
+  const enc = new FfmpegEncoder({
+    profile, backgroundPath: BG, output: LOCAL, spawnFn, stopTimeoutMs: 20, killTimeoutMs: 20,
+  });
   const logs = [];
   enc.on('log', (e) => logs.push(e));
   enc.start({ audioPath: AUDIO });
   await enc.stop();
-  assert.equal(calls[0].child.killed, true);
-  assert.ok(logs.some((l) => l.kind === 'error' && /kill/.test(l.message)));
+  const { child } = calls[0];
+  assert.equal(child.killed, true);
+  assert.deepEqual(child.signals, ['SIGTERM']);
+  assert.ok(logs.some((l) => l.kind === 'error' && /SIGTERM/.test(l.message)));
+  // SIGTERM'e kapandı: SIGKILL timer'ı iptal edilmiş olmalı (geç tetiklenmesin).
+  await new Promise((r) => setTimeout(r, 60));
+  assert.deepEqual(child.signals, ['SIGTERM']);
+});
+
+test('stop: SIGTERM yutulursa SIGKILL\'e yükseltilir', async () => {
+  const { spawnFn, calls } = fakeSpawn();
+  const enc = new FfmpegEncoder({
+    profile, backgroundPath: BG, output: LOCAL, spawnFn, stopTimeoutMs: 10, killTimeoutMs: 10,
+  });
+  const logs = [];
+  enc.on('log', (e) => logs.push(e));
+  enc.start({ audioPath: AUDIO });
+  calls[0].child.ignoreSignals = ['SIGTERM'];
+  await enc.stop();
+  assert.deepEqual(calls[0].child.signals, ['SIGTERM', 'SIGKILL']);
+  assert.ok(logs.some((l) => l.kind === 'error' && /SIGKILL gönderiliyor/.test(l.message)));
+  assert.equal(enc.running, false); // SIGKILL kapattı → 'close' geldi → child temizlendi
+});
+
+// En kritik senaryo: eski kod bu durumda sonsuza kadar pending kalıyordu ve
+// kapanış zinciri askıda kalıp systemd'nin node'u SIGKILL etmesine yol açıyordu.
+test('stop: SIGKILL de yutulursa promise yine resolve olur ve uyarı loglanır', async () => {
+  const { spawnFn, calls } = fakeSpawn();
+  const enc = new FfmpegEncoder({
+    profile, backgroundPath: BG, output: LOCAL, spawnFn, stopTimeoutMs: 10, killTimeoutMs: 10,
+  });
+  const logs = [];
+  enc.on('log', (e) => logs.push(e));
+  enc.start({ audioPath: AUDIO });
+  calls[0].child.ignoreSignals = ['SIGTERM', 'SIGKILL'];
+  await enc.stop(); // askıda kalmamalı
+  assert.deepEqual(calls[0].child.signals, ['SIGTERM', 'SIGKILL']);
+  assert.ok(logs.some((l) => l.kind === 'error' && /SIGKILL'den sonra da kapanmadı/.test(l.message)));
+  // running=true kalır: start() ikinci bir ffmpeg başlatmayı reddetsin (çift yayın olmasın).
+  assert.equal(enc.running, true);
+  assert.throws(() => enc.start({ audioPath: AUDIO }), /zaten çalışıyor/);
 });
 
 test('çalışmıyorken stop hemen resolve olur', async () => {

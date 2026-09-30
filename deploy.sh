@@ -27,6 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 REPO_ROOT="$SCRIPT_DIR"
 CHECK_ENV="$REPO_ROOT/scripts/deploy/check-env.sh"
+SWEEP_ORPHANS="$REPO_ROOT/scripts/deploy/sweep-orphan-ffmpeg.sh"
 MAIN_SERVICE="yt-streamer"
 
 RUN_TESTS=no
@@ -210,7 +211,24 @@ restart_service() {
   fi
 }
 
-# ── 4) Ana yayın ────────────────────────────────────────────────────────────
+# ── 4) Restart öncesi orphan ffmpeg temizliği ───────────────────────────────
+# Yetim ffmpeg (ebeveyni canlı node değil, genelde PPID=1) restart'tan sonra
+# AYNI stream key'ine ikinci bir bağlantı demek. Deploy'u durdurmaz, sormaz:
+# sadece loglar ve öldürür. Gerekçe: KARARLAR.md, 30 Eylül 2026.
+# Tek tur yeterli — her ffmpeg kendi canlı node'una bağlı olduğu için unit
+# başına tekrar taramak aynı sonucu verir.
+echo ""
+if [ -f "$SWEEP_ORPHANS" ]; then
+  if [ "$DRY_RUN" = "yes" ]; then
+    bash "$SWEEP_ORPHANS" --dry-run || true
+  else
+    bash "$SWEEP_ORPHANS" || true
+  fi
+else
+  echo "UYARI: $SWEEP_ORPHANS yok — orphan ffmpeg kontrolü atlandı."
+fi
+
+# ── 5) Ana yayın ────────────────────────────────────────────────────────────
 # systemctl cat: unit yoksa non-zero döner (list-unit-files bir kalıpla 0 dönebilir).
 echo ""
 if systemctl cat "$MAIN_SERVICE.service" >/dev/null 2>&1; then
@@ -220,7 +238,7 @@ else
   echo "       Kurulum:  sudo bash scripts/deploy/install-service.sh"
 fi
 
-# ── 5) Ek yayınlar (.env.<isim> -> yt-streamer@<isim>) ──────────────────────
+# ── 6) Ek yayınlar (.env.<isim> -> yt-streamer@<isim>) ──────────────────────
 # Her instance'ın env'i ayrı doğrulanır; eksikse SADECE o instance atlanır.
 SKIPPED=""
 shopt -s nullglob
@@ -250,7 +268,7 @@ for env_file in "$REPO_ROOT"/.env.*; do
 done
 shopt -u nullglob
 
-# ── 6) Özet ─────────────────────────────────────────────────────────────────
+# ── 7) Özet ─────────────────────────────────────────────────────────────────
 echo ""
 echo "=================== ÖZET ==================="
 echo "commit: $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"

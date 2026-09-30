@@ -454,3 +454,53 @@ iki yerde durması demek olurdu; bilinçli olarak yapılmadı.
 başarısını değil yalnızca komutun kabulünü bildirir. Saniyeler içinde crash eden bir süreci
 yakalamak için kısa bekleme + başarısızlıkta son 20 satır `journalctl`. Sessiz "başarılı"
 raporu vermek en kötü sonuç olurdu.
+
+---
+
+## [Faz 7] Yetim ffmpeg: iki kademeli kill + restart öncesi orphan sweep — 30 Eylül 2026
+
+**Gözlem (29-30 Eylül haftası, bir kez):** restart sonrası aynı anda birden fazla
+ffmpeg ayakta kaldı. Eski süreç ölmeden yenisi başladığı için aynı stream key'ine
+iki bağlantı gitti.
+
+**Kök neden zinciri.** Eski `FfmpegEncoder.stop()`: `'q'` → 5 sn → tek bir
+`child.kill()`, yani **sadece SIGTERM**, sonrası yok. Promise **yalnızca** `'close'`
+ile resolve oluyordu. ffmpeg SIGTERM'i yutarsa (kesilemez I/O beklemesi, RTMP
+flush) `'close'` hiç gelmiyor → `stop()` sonsuza kadar pending → kapanış zinciri
+(`orchestrator.stop` → `supervisor.stop` → `index.js shutdown`) askıda kalıyor →
+systemd'nin `TimeoutStopSec=30`'u doluyor → systemd **node'u SIGKILL** ediyor →
+ffmpeg ebeveynsiz kalıp `PPID=1`'e düşüyor. Node yeniden başlayınca yetim ffmpeg
+hâlâ yayına bağlı: çift yayın.
+
+Node içinden çift ffmpeg doğması zaten mümkün değildi (`start()`, `this.child`
+üzerinden korunuyor ve `child` yalnız `'close'`da null'lanıyor) — sorun **süreç
+seviyesindeydi**, bu yüzden çözüm de iki yerde:
+
+**1. Escalation (`ffmpeg-encoder.js`):** `'q'` → SIGTERM → SIGKILL, her kademe
+loglanır. SIGKILL'den sonra da `'close'` gelmezse promise **yine resolve olur** —
+kapanışı askıda bırakıp systemd'nin node'u öldürmesine izin vermek, tam olarak
+kaçınmak istediğimiz şeydi. O yolda `this.child` **bilerek null'lanmaz**: `running`
+true kalır, `start()` yeni ffmpeg'i reddeder, yani çift yayın yerine yayın durur.
+Bu tercih bilinçli — bozuk çift yayın, durmuş yayından kötüdür.
+
+**2. `index.js`'e SIGTERM handler:** unit'ler `KillSignal=SIGINT` kullanıyor, ama
+elle `kill <pid>` ya da ileride `KillSignal`'i olmayan bir unit SIGTERM gönderir;
+handler yoksa Node anında ölür ve ffmpeg yine yetim kalır. Tek satırlık sigorta.
+
+**3. `deploy.sh` → `scripts/deploy/sweep-orphan-ffmpeg.sh`:** restart adımından
+hemen önce tek tur tarama. Kural: **meşru** = PPID'si bu repodan çalışan **canlı**
+bir `node .../index.js` süreci olan ffmpeg. Bu tanım systemd instance'larını da
+elle başlatılmış bir yayını da kapsar; "systemd MainPID'si değilse orphan" demek
+elle çalışan yayını sessizce öldürürdü — **yanlış pozitif en kritik risk**, testte
+ayrıca karşılanıyor. Orphan = args'ında repo yolu geçen ama meşru kümede olmayan
+(PPID=1 ya da ölmüş ebeveyn). Aksiyon: logla → SIGTERM → 3 sn → SIGKILL. Deploy
+**durmaz, sorulmaz**: amaç restart'ın önünü temizlemek, restart'ı engellemek değil.
+`--dry-run` yalnızca raporlar.
+
+**Neden ayrı script:** `check-env.sh` ile aynı gerekçe — mantık test edilebilir
+olsun (`ps`/`pgrep`/`kill` env ile enjekte edilir, sahte süreç tablosuyla test
+edilir) ve `install-service.sh` de ileride aynı kontrolü çağırabilsin.
+
+**Sır güvenliği:** ffmpeg argümanları RTMP URL'sini, yani stream key'i içeriyor.
+Sweep log'a **yalnızca `pid/ppid/etime`** basar, `args`'ı asla — ayrı bir testle
+sabitlendi.

@@ -96,6 +96,10 @@ async function main() {
     if (process.connected) process.disconnect(); // IPC kanalı açıkken süreç kapanmaz
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
+  // SIGTERM de aynı temiz kapanıştan geçer. Unit'ler KillSignal=SIGINT kullanıyor,
+  // ama elle `kill <pid>` ya da ileride KillSignal'i olmayan bir unit SIGTERM
+  // gönderir; handler yoksa Node anında ölür ve ffmpeg yetim kalır (PPID=1).
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
   // Başka bir Node süreci tarafından (fork, IPC) yönetiliyorsa: Windows'ta alt sürece SIGINT
   // gönderilemiyor (kill doğrudan sonlandırır), temiz kapanış için 'stop' mesajı.
   process.on('message', (m) => { if (m === 'stop') shutdown('stop mesajı'); });
