@@ -1,15 +1,21 @@
 {
-  "_README": "Bu bir SABLONDUR. Kopyala -> config.json (git'e dahil DEGILDIR, makineye ozel). 'overlay.fontFile' makineye gore degisir: Linux ornek /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf, Windows ornek C:/Windows/Fonts/YuGothR.ttc. YouTube stream key config.json'da DEGIL .env'de (YOUTUBE_STREAM_KEY).",
+  "_README": "Bu bir SABLONDUR. Kopyala -> config.json (git'e dahil DEGILDIR, makineye ozel). 'overlay.fontFile' makineye gore degisir: Linux ornek /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf, Windows ornek C:/Windows/Fonts/YuGothR.ttc. YouTube stream key config.json'da DEGIL .env'de (YOUTUBE_STREAM_KEY). OAuth kimligi ise .env.youtube'da (kanal seviyesi). 'broadcast' bolumu OPSIYONEL: yalnizca go-live otomasyonu kullanir, yayin sureci okumaz; hic verilmezse varsayilanlar gecerlidir.",
   "paths": {
     "albums": "./music-source",
     "runtime": "./runtime"
   },
   "profile": {
-    "width": 1280, "height": 720, "fps": 24,
-    "videoBitrate": "2500k", "audioBitrate": "160k",
+    "width": 1280,
+    "height": 720,
+    "fps": 24,
+    "videoBitrate": "2500k",
+    "audioBitrate": "160k",
     "preset": "veryfast"
   },
-  "queue": { "mode": "shuffle", "batchSize": 50 },
+  "queue": {
+    "mode": "shuffle",
+    "batchSize": 50
+  },
   "overlay": {
     "enabled": true,
     "fontFile": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -19,5 +25,13 @@
   "output": {
     "mode": "rtmp",
     "localPath": "./runtime/out.flv"
+  },
+  "broadcast": {
+    "title": "24/7 Cozy Lofi Radio ☕ Chill Beats to Study / Work / Sleep to...",
+    "description": "",
+    "privacyStatus": "unlisted",
+    "latencyPreference": "normal",
+    "categoryId": "10",
+    "streamId": null
   }
 }

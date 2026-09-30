@@ -664,3 +664,90 @@ stream id'ye) → ingest `active` olana kadar yokla → `transition(live)`.
 değil, **yayın başladıktan sonra çalışan** adım. `liveStreams.insert` ile her
 yayında yeni stream AÇILMAYACAK: restart dayanıklılığı kalıcı key'e dayanıyor
 (bkz. yukarıdaki RTMPS kopma/geri bağlanma kaydı).
+
+---
+
+## [Faz 9] Aşama 2 — go-live otomasyonu kararları — 1 Ekim 2026
+
+Akış: ffmpeg zaten basıyor → **ingest kontrolü** → `liveBroadcasts.insert` →
+`liveBroadcasts.bind` (kalıcı stream id) → `transition('live')`.
+
+**Yayın sürecinden AYRI servis (`yt-golive.service`).** `index.js` YouTube API'yi
+hiç tanımıyor. Sebep: unit'lerde `Restart=always`, supervisor 5 çökmeye kadar
+yeniden başlatıyor. Broadcast oluşturma yayın başlangıcına girerse her restart
+yeni bir broadcast yaratır — kanalda çöp yayınlar ve kota tükenmesi
+(`insert`/`transition` ~50 birim, günlük 10.000). Aynı `GoLiveService` hem HTTP
+servisi hem CLI tarafından kullanılıyor (`src/composition/go-live-wiring.js`):
+iki tetikleme yolu, tek mantık.
+
+**`src/composition/` klasörü açıldı.** Wiring `src/application` altına konamaz:
+mimari testi application katmanının `infrastructure` import etmesini yasaklıyor.
+Somut bağımlılıkları bağlamak `index.js` gibi bir composition root'un işi.
+
+**ingest kontrolü insert'ten ÖNCE — duman testinin ortaya çıkardığı kusur.**
+İlk uygulamada sıra insert → bind → ingest yoklama → transition idi. Duman
+testinde (sahte API + gerçek HTTP + gerçek disk) ffmpeg basmıyorken tetiklenince
+broadcast **oluşturuldu**, sonra ingest beklenip hata verildi ve kanalda `ready`
+durumunda **çöp bir yayın kaldı**; ikinci deneme bir tane daha ekledi (2 insert).
+Tam olarak kaçınmak istediğimiz şey. Düzeltme: ingest `active` olmadan insert
+yapılmıyor. `transition` zaten ingest aktif olmadan çalışmadığı için önce kontrol
+etmenin maliyeti yok, kazancı çöp broadcast olmaması. Düzeltmeden sonra aynı
+senaryoda toplam insert = 1.
+
+**Yarım kalan broadcast yeniden kullanılıyor.** `created`/`ready` durumundaki bir
+kayıt varsa yenisi açılmıyor, aynı broadcast bind + transition ile sürdürülüyor.
+`complete`/`revoked` ise bir daha canlıya alınamaz → kayıt temizlenip yeni insert.
+Üç durumlu ayrım (`live` / `reusable` / kullanılamaz) bu yüzden var.
+
+**İdempotansın tek bilgi kaynağı diskte** (`runtime/broadcast.json`, atomik yazma).
+`StateStore`'dan ayrı dosya: farklı ömür (broadcast günlerce yaşar, playlist konumu
+saniyelerde değişir) ve farklı yazar (go-live servisi vs yayın süreci) — aynı
+dosyaya iki süreç yazarsa son yazan diğerini siler. **Durum yazılamazsa akış
+DURUR**: yazmadan devam etmek idempotansı kaybettirir ve sonraki tetik ikinci bir
+broadcast açar.
+
+**`monitorStream` kapalı oluşturuluyor.** Açıkken `transition` önce `testing`,
+sonra `live` gerektiriyor — iki adım, iki hata yüzeyi. Kapalıyken tek
+`transition('live')` yeter. Studio önizlemesi kaybediliyor; 7/24 müzik yayını için
+gereksiz. `insert`'in zorunlu alanları `snippet.scheduledStartTime` ve
+`status.selfDeclaredMadeForKids` — ikincisi verilmezse API reddediyor.
+
+**`broadcast` config bölümü OPSİYONEL.** Zorunlu yapmak, VPS'teki mevcut
+`config.json`'larda bu bölüm olmadığı için **çalışan yayını** config hatasıyla
+düşürürdü. Bölüm yoksa varsayılanlar geçerli; verilen alanlar doğrulanıyor
+(geçersiz `privacyStatus` sessizce private yayına yol açmasın). `privacyStatus`
+varsayılanı **`unlisted`**: ilk otomatik broadcast kanalda beklenmedik şekilde
+herkese açık çıkmasın. Güven kazandıktan sonra elle `public`. Başlık **sabit**
+(`24/7 Cozy Lofi Radio ☕ ...`): her restart'ta yeni başlık kanalı kalabalıklaştırır.
+
+**Stream id sabit yazılmadı, key'den çözülüyor.** `cdn.ingestionInfo.streamName`
+karşılaştırması (`verify-access.js`'teki mekanizmanın aynısı). Çoklu yayında her
+instance KENDİ stream'ine bağlanır ve key döndürülürse id sessizce eskimez.
+Config'te opsiyonel `broadcast.streamId` override'ı var; boşsa çözülüyor.
+Eşleşme yoksa **açık hata** — yanlış kanala yayın açılmasın.
+
+**HTTP servisi: sadece `127.0.0.1`, TLS'i Tailscale sağlıyor.**
+`tailscale serve --bg https / http://127.0.0.1:8787` tailnet içinde geçerli
+sertifikayla HTTPS verip arkada loopback'e proxy'liyor; internete hiçbir port
+açılmıyor. Düz HTTP üzerinden bearer token göndermek onu sızdırır — canlı yayın
+başlatabilen bir endpoint için kabul edilemez. Tailscale **koda hiç girmiyor**
+(ulaşım katmanı); yarın Caddy'ye geçilse tek satır kod değişmez.
+
+**Auth fail-closed:** token boş ya da 32 karakterden kısaysa sunucu **başlamıyor**.
+Auth'suz ayağa kalkmak sessiz bir güvenlik açığı olurdu. Karşılaştırma iki tarafın
+SHA-256 özetleri üzerinden `timingSafeEqual` (uzunluk farkı bile sızmasın). Token
+hiçbir log satırına girmiyor (ayrı testle sabitlendi). URL parametresiyle token da
+kabul ediliyor (Safari'den tek dokunuş), ama README bunun tarayıcı geçmişine
+düştüğünü söyleyip Shortcuts + header öneriyor.
+
+**Eşzamanlı tetik → `409`.** iOS'ta çift dokunma iki broadcast yaratmasın diye
+tek-uçuş kilidi. İkinci istek sessizce aynı sonucu almıyor, açıkça reddediliyor:
+çağıran "şu an sürüyor" bilgisini almalı.
+
+**`/status` varsayılan olarak API'ye GİTMİYOR** (diskten okuyor). Telefondan sık
+yoklamak kotayı yemesin; taze bilgi için `?refresh=1`.
+
+**`deploy.sh` `yt-golive`'ı da restart ediyor.** Ayrı süreç ama AYNI repodan
+çalışıyor: pull sonrası restart edilmezse eski kodla devam eder (sessiz
+tutarsızlık). Kurulu değilse atlanıyor. Özet listesindeki `yt-streamer*` kalıbı
+`yt-golive`'ı kaçırdığı için oraya da eklendi.

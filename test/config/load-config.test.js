@@ -146,3 +146,48 @@ test('albüm modu: paths.albums boşsa hata', () => {
   config.paths = { albums: '', runtime: './runtime' };
   assert.deepEqual(problemsOf({ config }), ['"paths.albums" eksik ya da geçersiz']);
 });
+
+// ── broadcast bölümü (Faz 9 Aşama 2) ────────────────────────────────────────
+// OPSİYONEL olmak zorunda: VPS'teki mevcut config.json'larda bu bölüm yok ve
+// zorunlu yapmak ÇALIŞAN YAYINI config hatasıyla düşürürdü.
+const broadcastProblems = (broadcast) => {
+  const config = clone();
+  config.broadcast = broadcast;
+  return problemsOf({ config }).join(' | ');
+};
+
+test('broadcast bölümü yoksa varsayılanlar gelir (mevcut config.json kırılmaz)', () => {
+  const { result } = load();
+  assert.equal(result.broadcast.privacyStatus, 'unlisted'); // ilk broadcast herkese açık olmasın
+  assert.equal(result.broadcast.streamId, null); // null → key'den çözülür
+  assert.equal(result.broadcast.categoryId, '10');
+  assert.ok(result.broadcast.title.length > 0);
+});
+
+test('broadcast alanları config dosyasından okunur ve varsayılanlarla birleşir', () => {
+  const config = clone();
+  config.broadcast = { title: 'Özel Başlık', privacyStatus: 'public' };
+  const { result } = load({ config });
+  assert.equal(result.broadcast.title, 'Özel Başlık');
+  assert.equal(result.broadcast.privacyStatus, 'public');
+  assert.equal(result.broadcast.categoryId, '10'); // verilmeyen alan varsayılandan
+});
+
+test('geçersiz privacyStatus reddedilir (sessizce private yayına düşmesin)', () => {
+  assert.match(broadcastProblems({ privacyStatus: 'herkese-acik' }), /broadcast\.privacyStatus/);
+});
+
+test('boş broadcast.title reddedilir', () => {
+  assert.match(broadcastProblems({ title: '   ' }), /broadcast\.title/);
+});
+
+test('broadcast.streamId metin ya da null olmalı', () => {
+  assert.match(broadcastProblems({ streamId: 42 }), /broadcast\.streamId/);
+  const config = clone();
+  config.broadcast = { streamId: 'sabit-id' };
+  assert.equal(load({ config }).result.broadcast.streamId, 'sabit-id');
+});
+
+test('broadcast nesne değilse reddedilir', () => {
+  assert.match(broadcastProblems('evet'), /"broadcast" bölümü nesne olmalı/);
+});

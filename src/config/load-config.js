@@ -7,6 +7,25 @@ const { parseEnv } = require('util');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const OUTPUT_MODES = ['local', 'rtmp'];
+const PRIVACY_STATUSES = ['public', 'unlisted', 'private'];
+
+// broadcast bölümü OPSİYONEL: yalnızca go-live otomasyonu (Faz 9 Aşama 2) kullanıyor,
+// yayın süreci hiç okumuyor. Zorunlu yapmak, VPS'teki mevcut config.json'lar (bu bölüm
+// onlarda yok) yüzünden ÇALIŞAN YAYINI config hatasıyla düşürürdü. Bölüm yoksa
+// varsayılanlar geçerli; verilen alanlar doğrulanır.
+//
+// privacyStatus varsayılanı "unlisted": ilk otomatik broadcast kanalda beklenmedik
+// şekilde herkese açık çıkmasın (KARARLAR.md). Güven kazandıktan sonra elle "public".
+const BROADCAST_DEFAULTS = Object.freeze({
+  title: '24/7 Cozy Lofi Radio ☕ Chill Beats to Study / Work / Sleep to...',
+  description: '',
+  privacyStatus: 'unlisted',
+  latencyPreference: 'normal',
+  categoryId: '10', // Music
+  // Boşsa stream id .env'deki YOUTUBE_STREAM_KEY'den çözülür (cdn.ingestionInfo.streamName
+  // karşılaştırması) — sabit id yazmak çoklu yayında yanlış stream'e bind riski taşır.
+  streamId: null,
+});
 
 class ConfigError extends Error {
   constructor(file, problems) {
@@ -110,6 +129,29 @@ function loadConfig({
     }
   }
 
+  // Opsiyonel broadcast bölümü: verilen alanların tipi/değeri doğrulanır, eksikler
+  // varsayılandan gelir. Yanlış privacyStatus sessizce "private" yayına yol açmasın.
+  const rawBroadcast = raw.broadcast === undefined ? {} : raw.broadcast;
+  if (rawBroadcast === null || typeof rawBroadcast !== 'object') {
+    problems.push('"broadcast" bölümü nesne olmalı (ya da hiç verilmemeli)');
+  } else {
+    for (const key of ['title', 'description', 'latencyPreference', 'categoryId']) {
+      if (rawBroadcast[key] !== undefined && typeof rawBroadcast[key] !== 'string') {
+        problems.push(`"broadcast.${key}" metin olmalı`);
+      }
+    }
+    if (rawBroadcast.title !== undefined && !isNonEmptyString(rawBroadcast.title)) {
+      problems.push('"broadcast.title" boş olamaz');
+    }
+    if (rawBroadcast.privacyStatus !== undefined && !PRIVACY_STATUSES.includes(rawBroadcast.privacyStatus)) {
+      problems.push(`"broadcast.privacyStatus" "${rawBroadcast.privacyStatus}" — ${PRIVACY_STATUSES.map((s) => `"${s}"`).join(', ')} olmalı`);
+    }
+    if (rawBroadcast.streamId !== undefined && rawBroadcast.streamId !== null
+        && !isNonEmptyString(rawBroadcast.streamId)) {
+      problems.push('"broadcast.streamId" metin ya da null olmalı (null: key\'den çözülür)');
+    }
+  }
+
   if (problems.length) throw new ConfigError(configPath, problems);
 
   const abs = (p) => path.resolve(rootDir, p);
@@ -124,7 +166,8 @@ function loadConfig({
     output: output.mode === 'local'
       ? { mode: 'local', localPath: abs(output.localPath) }
       : { mode: 'rtmp', streamKey: streamKey.trim() },
+    broadcast: { ...BROADCAST_DEFAULTS, ...rawBroadcast },
   };
 }
 
-module.exports = { loadConfig, ConfigError };
+module.exports = { loadConfig, ConfigError, BROADCAST_DEFAULTS };

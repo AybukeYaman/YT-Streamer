@@ -159,3 +159,79 @@ systemctl stop yt-streamer
 
 ## Neden systemd (orphan sorunu)
 Uygulama elle (`node index.js &`) çalıştırılıp terminal/ssh oturumu kapanınca ya da süreç `kill -9`/OOM ile ölünce, spawn ettiği ffmpeg **orphan** (PPID=1) kalabilir — bir CPU çekirdeğini boşa yer ve aynı YouTube stream key'e ikinci bir bağlantı denediği için canlı yayınla çakışır. systemd `KillSignal=SIGINT` ile uygulamaya graceful kapanış sinyali gönderir (bizim shutdown zinciri → `supervisor.stop()` → ffmpeg `q`) ve cgroup temizliği sayesinde orphan kalmaz. `enable` sayesinde VPS reboot olsa da yayın kendiliğinden döner.
+
+---
+
+## go-live: YouTube yayınını otomatik canlıya alma (Faz 9 Aşama 2)
+
+ffmpeg zaten RTMPS'e basıyor; bu adım YouTube tarafında broadcast oluşturup stream'e
+bağlıyor ve **canlıya** alıyor. Yayın sürecinden (`yt-streamer`) **ayrı** bir servis:
+`index.js` YouTube API'yi hiç tanımaz, çünkü broadcast oluşturma yayın başlangıcına
+girerse `Restart=always` + supervisor retry'ları her restart'ta yeni broadcast yaratır
+(kanalda çöp yayınlar, kota tükenmesi).
+
+### Kurulum
+
+```bash
+# 1) Kimlik + auth token (.env.youtube)
+cp .env.youtube.example .env.youtube && chmod 600 .env.youtube
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"   # GOLIVE_AUTH_TOKEN
+node scripts/youtube/get-refresh-token.js    # tarayıcısı olan makinede çalıştır
+node scripts/youtube/verify-access.js        # stream id eşleşmesini doğrula
+
+# 2) Servisi kur (yalnızca 127.0.0.1'e bind eder)
+sudo bash scripts/deploy/install-golive-service.sh
+```
+
+### Terminalden kullanım
+
+```bash
+node scripts/youtube/go-live.js                    # canlıya al (idempotent)
+node scripts/youtube/go-live.js --status           # durum (API'ye gitmez)
+node scripts/youtube/go-live.js --status --refresh # durumu API'den taze al
+
+# HTTP üzerinden (servis çalışıyorken)
+TOKEN=$(grep GOLIVE_AUTH_TOKEN .env.youtube | cut -d= -f2)
+curl -fsS -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8787/go-live
+curl -fsS       -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8787/status
+curl -fsS http://127.0.0.1:8787/healthz            # auth'suz
+```
+
+**Ön koşul:** ffmpeg gerçekten yayın yapıyor olmalı. `transition`, ingest `active`
+değilken çalışmaz — bu komut yayını **başlatmaz**, canlıya **alır**. ffmpeg basmıyorsa
+komut broadcast **oluşturmadan** hata verir (kanalda çöp yayın bırakmaz).
+
+**İdempotans:** aktif broadcast varsa yeni broadcast **açılmaz** (`already-live` döner).
+Yarım kalmış bir broadcast varsa (oluşturulmuş ama canlıya alınamamış) o **yeniden
+kullanılır**. Eşzamanlı ikinci istek `409` alır.
+
+### iOS'tan tetikleme (Tailscale)
+
+Servis internete **açılmaz**; erişim tailnet üzerinden olur.
+
+```bash
+# VPS'te (bir kerelik)
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+sudo tailscale serve --bg https / http://127.0.0.1:8787
+sudo tailscale serve status        # verilen https adresini gösterir
+```
+
+`tailscale serve`, tailnet içinde **geçerli sertifikayla HTTPS** verir ve arkada
+loopback'e proxy'ler. Adres şöyle olur:
+`https://<makine>.<tailnet-adi>.ts.net/go-live`
+
+iPhone'a Tailscale uygulamasını kurup aynı hesapla giriş yap, sonra:
+
+**iOS Shortcuts (önerilen):** "Get Contents of URL" →
+- URL: `https://<makine>.<tailnet>.ts.net/go-live`
+- Method: `POST`
+- Headers: `Authorization: Bearer <GOLIVE_AUTH_TOKEN>`
+
+**Safari (hızlı yol):** `https://<makine>.<tailnet>.ts.net/go-live?token=<TOKEN>`
+Tarayıcı `GET` gönderdiği için bu yol `405` döner — Safari'yi kullanacaksan Shortcuts
+ile `POST` at. URL'deki token tarayıcı geçmişine ve sunucu loglarına düşebileceği için
+**Shortcuts + header tercih edilmeli**; URL parametresi yalnızca acil durum içindir.
+
+> Düz HTTP üzerinden bearer token göndermek onu sızdırır. Canlı yayın başlatabilen bir
+> endpoint için kabul edilemez, bu yüzden TLS'siz dışa açma **yapılmaz**.

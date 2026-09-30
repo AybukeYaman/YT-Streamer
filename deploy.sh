@@ -29,6 +29,7 @@ REPO_ROOT="$SCRIPT_DIR"
 CHECK_ENV="$REPO_ROOT/scripts/deploy/check-env.sh"
 SWEEP_ORPHANS="$REPO_ROOT/scripts/deploy/sweep-orphan-ffmpeg.sh"
 MAIN_SERVICE="yt-streamer"
+GOLIVE_SERVICE="yt-golive"
 
 RUN_TESTS=no
 DRY_RUN=no
@@ -238,7 +239,19 @@ else
   echo "       Kurulum:  sudo bash scripts/deploy/install-service.sh"
 fi
 
-# ── 6) Ek yayınlar (.env.<isim> -> yt-streamer@<isim>) ──────────────────────
+# ── 6) go-live servisi (yt-golive) ──────────────────────────────────────────
+# Yayın servisinden ayrı bir süreç ama AYNI repodan çalışıyor: pull sonrası restart
+# edilmezse eski kodla çalışmaya devam eder (sessiz tutarsızlık). Kurulu değilse
+# atlanır — Faz 9 Aşama 2 kurulmamış olabilir.
+echo ""
+if systemctl cat "$GOLIVE_SERVICE.service" >/dev/null 2>&1; then
+  restart_service "$GOLIVE_SERVICE.service"
+else
+  echo "bilgi: $GOLIVE_SERVICE.service kurulu değil — atlandı."
+  echo "       Kurulum:  sudo bash scripts/deploy/install-golive-service.sh"
+fi
+
+# ── 7) Ek yayınlar (.env.<isim> -> yt-streamer@<isim>) ──────────────────────
 # Her instance'ın env'i ayrı doğrulanır; eksikse SADECE o instance atlanır.
 SKIPPED=""
 shopt -s nullglob
@@ -268,11 +281,11 @@ for env_file in "$REPO_ROOT"/.env.*; do
 done
 shopt -u nullglob
 
-# ── 7) Özet ─────────────────────────────────────────────────────────────────
+# ── 8) Özet ─────────────────────────────────────────────────────────────────
 echo ""
 echo "=================== ÖZET ==================="
 echo "commit: $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
-systemctl list-units --type=service "yt-streamer*" --no-pager 2>/dev/null || true
+systemctl list-units --type=service "yt-streamer*" "yt-golive*" --no-pager 2>/dev/null || true
 
 if [ -n "$SKIPPED" ]; then
   echo ""

@@ -60,10 +60,21 @@ function loadYoutubeCredentials({
     );
   }
 
+  // go-live HTTP servisinin ayarları da aynı dosyadan gelir (ikisi de kanal seviyesi ve
+  // sır niteliğinde). Burada OPSİYONEL: refresh token alma ve verify komutları bunlara
+  // ihtiyaç duymuyor, sunucu kendi kontrolünü yapıyor (token yoksa başlamayı reddediyor).
+  const goLivePortRaw = pick('GOLIVE_PORT');
+  const goLivePort = goLivePortRaw === undefined ? undefined : Number(goLivePortRaw);
+  if (goLivePort !== undefined && (!Number.isInteger(goLivePort) || goLivePort < 1 || goLivePort > 65535)) {
+    throw new CredentialsError(`GOLIVE_PORT geçersiz: "${goLivePortRaw}" (1-65535 arası bir sayı olmalı)`);
+  }
+
   return {
     clientId: pick('YOUTUBE_CLIENT_ID'),
     clientSecret: pick('YOUTUBE_CLIENT_SECRET'),
     refreshToken: pick('YOUTUBE_REFRESH_TOKEN'),
+    goLiveAuthToken: pick('GOLIVE_AUTH_TOKEN'),
+    goLivePort,
     credentialsPath,
   };
 }

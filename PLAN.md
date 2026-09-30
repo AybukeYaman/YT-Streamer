@@ -19,7 +19,7 @@
 | 6 | Kontrol arayüzü (opsiyonel) | Başlamadı |
 | 7 | VPS'e taşıma | Askıda — `faz-7-vps` branch'inde WIP (Docker hazır, merge edilmedi) |
 | 8 | Çoklu albüm düzeni | **Tamamlandı** (10 albüm / 353 parça) |
-| 9 | YouTube broadcast otomasyonu | Aşama 1 tamam (kimlik katmanı); Aşama 2 başlamadı |
+| 9 | YouTube broadcast otomasyonu | Aşama 1 + Aşama 2 kodu tamam; VPS'te canlı test bekliyor |
 
 ---
 
@@ -561,7 +561,7 @@ otomatikleştirmek.
 **Kapanış kriteri:** `verify-access.js` sıfır çıkış koduyla, `.env`'deki key'in
 stream id'sini işaretleyerek geçiyor.
 
-### Aşama 2 — go-live otomasyonu (başlamadı)
+### Aşama 2 — go-live otomasyonu ✅ kod tamam (1 Ekim 2026), canlı test bekliyor
 
 **Akış:** ffmpeg zaten basıyor → `liveBroadcasts.insert` → `liveBroadcasts.bind`
 (mevcut **kalıcı** stream id'ye) → ingest `active` olana kadar yokla →
@@ -579,6 +579,29 @@ stream id'sini işaretleyerek geçiyor.
   bir crash loop kanalda onlarca çöp yayın açar ve kotayı (10.000 birim/gün)
   tüketir.
 - Kalıcı stream key korunacak; her yayında yeni stream **açılmayacak**.
+
+**Yapıldı:**
+- `src/application/go-live-service.js` — karar mantığı (idempotans, sıra, yoklama)
+- `src/infrastructure/youtube-broadcasts.js` — insert/bind/transition/ingest durumu
+- `src/infrastructure/broadcast-state-store.js` — `runtime/broadcast.json` (atomik)
+- `src/infrastructure/golive-server.js` — `node:http`, bearer auth, hız sınırı
+- `src/composition/go-live-wiring.js` — ortak kurulum (HTTP + CLI aynı mantık)
+- `scripts/golive-server.js`, `scripts/youtube/go-live.js`
+- `scripts/deploy/install-golive-service.sh` (`yt-golive.service`, 127.0.0.1)
+- `config.example.json` → opsiyonel `broadcast` bölümü; `deploy.sh` `yt-golive`'ı da
+  restart ediyor; `scripts/deploy/README.md` → kurulum + Tailscale + iOS adımları
+
+**Duman testinde bulunan ve düzeltilen kusur:** ingest kontrolü insert'ten SONRA
+olduğu için ffmpeg basmıyorken tetiklenince kanalda `ready` durumunda çöp broadcast
+kalıyordu. Sıra düzeltildi (ingest → insert); aynı senaryoda insert sayısı 2 → 1.
+
+**VPS'te kalan adımlar:**
+- [ ] `.env.youtube`'a `GOLIVE_AUTH_TOKEN` ekle (32+ karakter, yoksa servis başlamaz)
+- [ ] `sudo bash scripts/deploy/install-golive-service.sh`
+- [ ] `curl -X POST -H "Authorization: Bearer ..." http://127.0.0.1:8787/go-live`
+- [ ] Tailscale kur + `tailscale serve` (bkz. scripts/deploy/README.md)
+- [ ] iOS Shortcuts ile tetikle
+- [ ] Güven kazanınca `config.json` → `broadcast.privacyStatus: "public"`
 
 **Kapanış kriteri:** telefondan tek tetikle yayın canlıya geçiyor; ikinci tetik
 yeni broadcast açmıyor (idempotans); yayın süreci restart olduğunda broadcast
