@@ -768,3 +768,43 @@ değişmedi. Ölçüm notu yukarıda duruyor: overlay'li ffmpeg ~2.1 çekirdek,
 Değişiklik yalnız şablonda (`config.example.json`). Makinelerdeki `config.json`
 git'te olmadığı için elle güncellenir; `profile` süreç başlangıcında okunduğundan
 restart şart.
+
+---
+
+## [Faz 10] `add-stream.sh` config üretimi: tek tırnak yerine tırnaklı heredoc — 1 Ekim 2026
+
+**Soru:** `sudo bash scripts/deploy/add-stream.sh stream2` ilk gerçek çalıştırmada
+`Error: ENOENT: no such file or directory, open 'ayni'` ile düştü. Neden?
+
+**Sebep:** `config.<isim>.json` üreten node script'i **tek tırnaklı shell string**
+içindeydi ve içindeki Türkçe JS yorumu kesme işareti barındırıyordu:
+
+```
+// instance'lar ayni dosyaya yazmasin diye yine de instance'a ozel yapilir.
+```
+
+Shell için ilk kesme işareti string'i **kapatıyor**, ikincisi yenisini açıyordu.
+Node'a giden `-e` script'i satırın ortasından kesiliyor, kalan kelimeler
+(`ayni`, `dosyaya`, `yazmasin`, …) argüman olarak node'a geçiyordu →
+`process.argv.slice(1)` ile `src="ayni"` → `readFileSync("ayni")`.
+
+**İki okuma yolu da sessiz kaldı:** kesme işareti sayısı çift olduğu için tırnaklar
+dengeli görünüyor, `bash -n` temiz geçiyordu. Kesilen JS de geçerliydi — `//` yorumu
+string sonuna kadar uzadığı için node da syntax hatası vermiyordu. Hata ancak çalışma
+anında, yanlış dosya yolunda ortaya çıktı.
+
+**Karar:** JS artık **tırnaklı heredoc** ile veriliyor (`-e "$(cat <<'JS' … JS )"`).
+Tırnaklı heredoc'ta kesme işareti, `$` ve backtick zararsız; Türkçe yorumlar olduğu
+gibi kalabiliyor. Yorumları ASCII'leştirmek (kesme işaretlerini silmek) alternatifti
+ama aynı tuzak bir sonraki Türkçe yorumda yeniden kurulurdu — kurucu sorun quoting'di.
+
+**Doğrulama (yerel, VPS'te değil):** blok `config.example.json` üzerinde çalıştırıldı;
+üretilen dosya geçerli JSON, gerçek newline ile bitiyor, `_README` silinmiş,
+`paths.runtime` → `./runtime/stream2`, `output.localPath` → `./runtime/stream2/out.flv`.
+Ayrıca gerçek `loadConfig` ile yüklendi: OK. 375 test geçiyor. Son satırdaki
+`+"\n"` incelendi ve DOGRU bulundu (tek tırnakta backslash literal olduğundan JS
+`\n` kaçışını görüyor); heredoc'ta da aynı şekilde literal olduğu için olduğu gibi taşındı.
+
+**Hâlâ açık:** `add-stream.sh`'in tamamı (systemd template unit yazımı, `enable --now`,
+ikinci stream key ile canlı yayın) VPS'te doğrulanmadı. Bu kayıt yalnızca config üretim
+adımını kapsıyor.

@@ -55,7 +55,12 @@ else
   [ -f "$BASE" ] || BASE="$REPO_ROOT/config.example.json"
   if [ ! -f "$BASE" ]; then echo "HATA: kaynak config bulunamadi." >&2; exit 1; fi
   # runtime klasoru MUTLAKA ayri olmali: playlist.txt / state.json / overlay cakismasin.
-  "$NODE_BIN" -e '
+  # JS tirnakli heredoc'tan geliyor (<<'JS'), tek tirnakli shell string'den DEGIL: Turkce
+  # yorumlardaki kesme isareti (instance + 'lar) tek tirnakli string'i ortasindan kapatiyor,
+  # kalan kelimeler node'a arguman olarak gidiyordu -> readFileSync("ayni") / ENOENT. Kesilen
+  # JS de gecerli kaldigi icin ne `bash -n` ne node syntax hatasi veriyordu. Tirnakli
+  # heredoc'ta kesme isareti, $ ve backtick zararsiz. Ayrintı: KARARLAR.md
+  "$NODE_BIN" -e "$(cat <<'JS'
     const fs=require("fs");
     const [src,dst,name]=process.argv.slice(1);
     const c=JSON.parse(fs.readFileSync(src,"utf8"));
@@ -66,7 +71,8 @@ else
     // instance'lar ayni dosyaya yazmasin diye yine de instance'a ozel yapilir.
     if(c.output&&c.output.localPath!==undefined){c.output.localPath="./runtime/"+name+"/out.flv";}
     fs.writeFileSync(dst,JSON.stringify(c,null,2)+"\n");
-  ' "$BASE" "$CONFIG_FILE" "$NAME"
+JS
+  )" "$BASE" "$CONFIG_FILE" "$NAME"
   echo "config olusturuldu: $CONFIG_FILE  (runtime -> ./runtime/$NAME)"
   echo "  Farkli muzik istiyorsan: bu dosyadaki paths.albums degerini degistir."
 fi
