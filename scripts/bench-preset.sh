@@ -46,9 +46,16 @@ while [ $# -gt 0 ]; do
 done
 
 command -v ffmpeg >/dev/null || die "ffmpeg bulunamadi"
+# Cikti dizini yalniz sahibine acik: altinda canli surecten alinmis argumanlar ve
+# loglar birikiyor. umask 077 ayni koruma dosya bazinda da gecerli olsun diye.
+umask 077
 mkdir -p "$OUTDIR"
+chmod 700 "$OUTDIR"
 
 # ---------------------------------------------------------------- argumanlari al
+# Argumanlar DOGRUDAN bellege okunur; /proc/<pid>/cmdline diske OLDUGU GIBI kopyalanmaz.
+# Ham cmdline icinde "rtmps://.../live2/<stream key>" var — onu /tmp altinda bir dosyaya
+# yazmak key'i sizdirir. Diske ancak maskelenmis kopya yazilir (bkz. asagi).
 if [ -z "$ARGS_FILE" ]; then
   if [ -z "$PID" ]; then
     # Canli encoder: rtmps hedefine yazan ffmpeg. Birden fazlaysa --pid ile secilsin.
@@ -58,22 +65,40 @@ if [ -z "$ARGS_FILE" ]; then
     PID=${pids[0]}
   fi
   [ -r "/proc/$PID/cmdline" ] || die "/proc/$PID/cmdline okunamiyor (sudo gerekebilir)"
-  ARGS_FILE=$OUTDIR/args.bin
-  cp "/proc/$PID/cmdline" "$ARGS_FILE"
-  echo "Argumanlar pid=$PID surecinden alindi -> $ARGS_FILE"
+  mapfile -d '' -t RAW < "/proc/$PID/cmdline"
+  echo "Argumanlar pid=$PID surecinden alindi (diske ham haliyle yazilmadi)"
 else
   [ -r "$ARGS_FILE" ] || die "$ARGS_FILE okunamiyor"
+  mapfile -d '' -t RAW < "$ARGS_FILE"
   echo "Argumanlar $ARGS_FILE dosyasindan okunuyor"
 fi
-
-mapfile -d '' -t RAW < "$ARGS_FILE"
-[ ${#RAW[@]} -gt 0 ] || die "$ARGS_FILE bos"
+[ ${#RAW[@]} -gt 0 ] || die "arguman listesi bos"
 
 # cmdline'in ilk elemani argv0 (ffmpeg'in kendisi) -- arguman degil, ayir.
 FFMPEG=ffmpeg
 case "${RAW[0]}" in
   */ffmpeg|ffmpeg) FFMPEG=${RAW[0]}; RAW=("${RAW[@]:1}") ;;
 esac
+
+# ---------------------------------------------------------------- key maskeleme
+# Yayin hedefi (ve icindeki stream key) olcumde kullanilmiyor: her kosuda -f null -
+# ya da -f mp4 <dosya> ile degistiriliyor. Bu yuzden key'i burada, her seyden once
+# RAW icinden silmek guvenli — boylece ne args.bin'e ne cmd-*.txt'ye ne de bir hata
+# mesajina sizabilir. Yer tutucu birakiliyor ki "son eleman cikti hedefidir"
+# varsayimi bozulmasin.
+REDACTED=rtmps://REDACTED/live2/REDACTED
+masked=0
+for i in "${!RAW[@]}"; do
+  case "${RAW[$i]}" in
+    rtmps://*|rtmp://*) RAW[$i]=$REDACTED; masked=1 ;;
+  esac
+done
+if [ -n "$ARGS_FILE" ] && [ "$masked" = 1 ]; then
+  echo "UYARI: $ARGS_FILE icinde yayin hedefi (stream key) var — bu dosyayi paylasma/silme listesine al."
+fi
+
+# Kayit icin maskelenmis arguman dokumu (ayni formatta: NUL ayrakli).
+printf '%s\0' "${RAW[@]}" > "$OUTDIR/args.masked.bin"
 
 # ------------------------------------------------------------ album dogrulamasi
 # Albumun kimligi args icinde arkaplan yolu / playlist yolu / drawtext textfile'larinda
