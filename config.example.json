@@ -8,7 +8,7 @@
     "width": 1280,
     "height": 720,
     "fps": 24,
-    "videoBitrate": "2500k",
+    "videoBitrate": "3500k",
     "audioBitrate": "160k",
     "preset": "veryfast"
   },

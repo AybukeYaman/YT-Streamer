@@ -751,3 +751,20 @@ yoklamak kotayı yemesin; taze bilgi için `?refresh=1`.
 çalışıyor: pull sonrası restart edilmezse eski kodla devam eder (sessiz
 tutarsızlık). Kurulu değilse atlanıyor. Özet listesindeki `yt-streamer*` kalıbı
 `yt-golive`'ı kaçırdığı için oraya da eklendi.
+
+---
+
+## [Ayar] Video bitrate 2500k → 3500k — 1 Ekim 2026
+
+Görüntü kalitesi için `profile.videoBitrate` 2500k → 3500k. `preset` **bilerek
+veryfast kaldı**: 3 çekirdekli VPS'te CPU'yu riske atan asıl kaldıraç preset'tir.
+Sabit preset'te bitrate artışının CPU maliyeti küçük sayıldı (asıl yük hareket
+tahmininde, artan kısım entropi kodlamada) — **varsayım, ölçülmedi**; gerçek bedel
+upstream bant genişliğinde: ~2.7 → ~3.7 Mbit/s (+%40). `maxrate`/`bufsize`
+StreamProfile'da b:v'den türediği için (bufsize 7000k) tek değer yetti, kod
+değişmedi. Ölçüm notu yukarıda duruyor: overlay'li ffmpeg ~2.1 çekirdek,
+3 çekirdekte pay ~0.9 — `speed` 1.00x'in altına inerse ilk geri alınacak budur.
+
+Değişiklik yalnız şablonda (`config.example.json`). Makinelerdeki `config.json`
+git'te olmadığı için elle güncellenir; `profile` süreç başlangıcında okunduğundan
+restart şart.
