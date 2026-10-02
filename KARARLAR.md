@@ -1027,3 +1027,47 @@ VPS'te dogrulanmadi: gercek deploy'da park edilmis instance'in atlanmasi ve add-
 --force yolu.
 
 **Kapsam disi:** maskelemenin tum scriptlere yayilmasi (SORUN 4, siradaki faz).
+
+---
+
+## [Faz 4 / SORUN 4] Key maskeleme tek kaynakta, tum scriptlerde — 2 Ekim 2026
+
+**Durum tespiti:** maskeleme yalnizca `status.sh` icinde, satir ici bir fonksiyon olarak
+duruyordu. Denetimde gercek sizinti noktalari:
+- `add-stream.sh` ve `install-service.sh` → `systemctl status` (ana surecin komut
+  satirini basar, orada ffmpeg'in RTMP URL'si var) **siziyordu**
+- `deploy.sh` → restart basarisizliginda `journalctl -u <unit> -n 20` **sizdirabilirdi**
+- `install-golive-service.sh` → `systemctl status` (bu unit'in cmdline'inda key yok ama
+  son journal satirlarini basiyor) — tutarlilik icin o da maskeden geciyor
+- `sweep-orphan-ffmpeg.sh` **temizdi** (argumanlari bilerek hic basmiyor, kendi
+  basliginda yazili) — degistirilmedi
+- `check-env.sh` **temizdi** (yalnizca key ADLARINI basiyor, degerleri asla)
+
+**Karar:** maske `scripts/deploy/lib/mask.sh`'a cikti, `status.sh` dahil bes script onu
+source ediyor. Kopya kural birakmak, zamanla ayrisan iki maske demekti (check-env ile
+ayni gerekce: tek sozlesme, tek yer).
+
+**Fail-closed:** `mask_require` maskenin calistigini bilinen bir ornekle KANITLAR; sed
+ya da process substitution yoksa cagiran o ciktiyi **hic basmaz** (yerine nereye bakilacagini
+soyler). Maskesiz basmak, hic basmamaktan kotudur — sizmanin bedeli rotasyon.
+
+**Kapsam genisledi:** deger bazli katman artik `ALERT_WEBHOOK_URL` (ntfy konu adi),
+`HEARTBEAT_PING_URL` ve `GOLIVE_AUTH_TOKEN`'i da maskeliyor. Faz 1'de eklenen ntfy konu
+adi bir sirdir (bilen herkes dinleyebilir ve bildirim yayinlayabilir) ve auth token
+canli yayin baslatabilen bir endpoint'in anahtari.
+
+**Aliskanligi degistirmek:** `deploy.sh` ve `add-stream.sh` artik log ipucu olarak ONCE
+maskeli yolu (`status.sh`) oneriyor, ciplak `journalctl`'i "MASKESIZ, key icerir" etiketiyle
+ikinci sirada veriyor. Maskeleme ancak alisilan komut maskeli olursa ise yarar.
+
+**`.env.example` ve `.disabled` okunmaz:** ornek dosyada gercek deger yok; park isareti
+(Faz 3) bos dosya. Bos/kisa (<8 karakter) degerler kural uretmiyor — yoksa "s###" gibi bir
+kural ciktinin her yerini bozardi.
+
+**Dogrulama:** 462 test gecer (13 yeni). Testler sahte `.env` dizini (MASK_ENV_DIR) ile
+calisiyor: URL ici key, ciplak key, rotasyon oncesi key, instance env dosyalari, bildirim
+sirlari, yanlis pozitif yoklugu ve fail-closed davranis. VPS'te dogrulanmadi: gercek
+`systemctl status` / `journalctl` ciktilarinin maskeli basilmasi.
+
+**Hatirlatma:** bugun gorulen iki key rotasyon bekliyor (Studio -> yeni key -> .env ve
+.env.stream2 guncelle -> restart). Maskeleme gelecegi korur, gecmisi degil.

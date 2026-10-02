@@ -15,6 +15,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# ── Key maskesi ─────────────────────────────────────────────────────────────
+# Tutarlilik icin: bu unit'in komut satirinda key yok (node scripts/golive-server.js),
+# ama `systemctl status` son journal satirlarini da basar. Tek kural, tek kaynak.
+MASK_LIB="$REPO_ROOT/scripts/deploy/lib/mask.sh"
+if [ -f "$MASK_LIB" ]; then
+  # shellcheck source=scripts/deploy/lib/mask.sh
+  . "$MASK_LIB"
+else
+  mask() { cat; }
+  mask_require() { return 1; }
+fi
+
 SERVICE_NAME="yt-golive"
 UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 CREDENTIALS="$REPO_ROOT/.env.youtube"
@@ -96,7 +108,11 @@ fi
 sleep 3
 echo ""
 echo "== durum =="
-systemctl status "$SERVICE_NAME" --no-pager -l || true
+if mask_require; then
+  systemctl status "$SERVICE_NAME" --no-pager -l 2>&1 | mask || true
+else
+  systemctl status "$SERVICE_NAME" --no-pager -l || true
+fi
 
 echo ""
 echo "== yerel sağlık kontrolü =="

@@ -14,6 +14,20 @@ set -euo pipefail
 # ── Kök dizin: script'in bulunduğu repo'nun kökü ────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# ── Key maskesi ─────────────────────────────────────────────────────────────
+# `systemctl status` ana surecin komut satirini basar, orada ffmpeg'in RTMP URL'si
+# (yani stream key) var. Cikti maskeden gecirilir; maske calismiyorsa o cikti
+# BASILMAZ (fail-closed) — maskesiz basmak, hic basmamaktan kotudur.
+MASK_LIB="$REPO_ROOT/scripts/deploy/lib/mask.sh"
+if [ -f "$MASK_LIB" ]; then
+  # shellcheck source=scripts/deploy/lib/mask.sh
+  . "$MASK_LIB"
+else
+  echo "UYARI: $MASK_LIB yok — key iceren ciktilar atlanacak." >&2
+  mask() { cat; }
+  mask_require() { return 1; }
+fi
+
 SERVICE_NAME="yt-streamer"
 UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
@@ -108,7 +122,11 @@ fi
 sleep 3
 echo ""
 echo "== durum =="
-systemctl status "$SERVICE_NAME" --no-pager -l || true
+if mask_require; then
+  systemctl status "$SERVICE_NAME" --no-pager -l 2>&1 | mask || true
+else
+  echo "(servis durumu atlandi: key maskesi yok — 'systemctl status $SERVICE_NAME' ciktisi key icerir)"
+fi
 echo ""
 echo "== ffmpeg (orphan kontrolü — servisin node'una bağlı tek süreç olmalı) =="
 ps -C ffmpeg -o pid,ppid,%cpu,etime 2>/dev/null || echo "(henüz başlamadı — albüm yükleme sürüyor olabilir, birkaç sn sonra tekrar bak)"

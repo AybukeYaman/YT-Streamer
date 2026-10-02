@@ -36,51 +36,20 @@ while [ $# -gt 0 ]; do
 done
 
 # ---------------------------------------------------------------- maske kurulumu
-# Iki katman:
-#   1. Kalip bazli: rtmp(s)://.../live2/<key> ve YOUTUBE_*=<deger> — .env'de olmayan,
-#      rotasyondan onceki ya da baska bir makinenin key'i de maskelenir.
-#   2. Deger bazli: .env* dosyalarinda yazili olan key/token'lar birebir degistirilir —
-#      key log icinde URL disinda, ciplak gecse de yakalanir.
-# Kalip katmani her zaman devrede: .env okunamasa bile cikti maskesiz kalmaz.
-build_sed_script() {
-  printf '%s\n' \
-    's#(rtmps?://[^[:space:]]*/live2/)[A-Za-z0-9_-]+#\1***MASKED***#g' \
-    's#(YOUTUBE_[A-Z_]*(KEY|TOKEN|SECRET)[[:space:]]*=[[:space:]]*)[^[:space:]"]+#\1***MASKED***#g'
-  # Deger bazli katman: .env, .env.<instance>, .env.youtube …
-  local f line value
-  for f in "$REPO_ROOT"/.env "$REPO_ROOT"/.env.*; do
-    [ -f "$f" ] || continue
-    case "$f" in *.example) continue ;; esac
-    while IFS= read -r line; do
-      case "$line" in
-        YOUTUBE_*KEY=*|YOUTUBE_*TOKEN=*|YOUTUBE_*SECRET=*) value=${line#*=} ;;
-        *) continue ;;
-      esac
-      value=${value%\"}; value=${value#\"}
-      value=${value%\'}; value=${value#\'}
-      # Cok kisa degerler (bos ya da yer tutucu) maskelenmez: "s###" gibi bir kural
-      # ciktinin her yerini bozardi.
-      [ ${#value} -ge 8 ] || continue
-      # sed icin ayirici olarak # kullaniliyor; degerde # varsa kacir.
-      printf 's#%s#***MASKED***#g\n' "$(printf '%s' "$value" | sed -e 's#[\\&#]#\\&#g')"
-    done < "$f"
-  done
-}
+# Maske scripts/deploy/lib/mask.sh'ta — add-stream.sh, install-service.sh ve deploy.sh de
+# AYNI dosyayi kullaniyor (kopya kural birakmamak icin tek kaynak).
+MASK_LIB="$REPO_ROOT/scripts/deploy/lib/mask.sh"
+[ -f "$MASK_LIB" ] || { echo "HATA: $MASK_LIB yok — maskesiz cikti basilmaz." >&2; exit 1; }
+# shellcheck source=scripts/deploy/lib/mask.sh
+. "$MASK_LIB"
 
-SED_SCRIPT=$(build_sed_script)
-mask() { sed -E -f <(printf '%s\n' "$SED_SCRIPT"); }
+# Fail-closed: maske calismiyorsa hicbir sey basilmaz.
+mask_require || exit 1
 
 if [ "$FILTER_ONLY" = 1 ]; then
   mask
   exit 0
 fi
-
-# Maskenin gercekten devrede oldugunu kanitla: bilinen bir kalip filtreden gecirilir.
-probe=$(printf 'rtmps://a.rtmps.youtube.com/live2/abcd-efgh-ijkl-mnop-qrst\n' | mask)
-case "$probe" in
-  *MASKED*) ;;
-  *) echo "HATA: maske calismiyor, cikti basilmadi (sed -E -f destegi yok?)" >&2; exit 1 ;;
-esac
 
 section() { echo; echo "===== $* ====="; }
 

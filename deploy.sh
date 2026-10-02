@@ -28,6 +28,7 @@ cd "$SCRIPT_DIR"
 REPO_ROOT="$SCRIPT_DIR"
 CHECK_ENV="$REPO_ROOT/scripts/deploy/check-env.sh"
 INSTANCE_STATE_LIB="$REPO_ROOT/scripts/deploy/lib/instance-state.sh"
+MASK_LIB="$REPO_ROOT/scripts/deploy/lib/mask.sh"
 SWEEP_ORPHANS="$REPO_ROOT/scripts/deploy/sweep-orphan-ffmpeg.sh"
 MAIN_SERVICE="yt-streamer"
 GOLIVE_SERVICE="yt-golive"
@@ -67,6 +68,16 @@ fi
 [ -f "$INSTANCE_STATE_LIB" ] || { echo "HATA: $INSTANCE_STATE_LIB yok." >&2; exit 1; }
 # shellcheck source=scripts/deploy/lib/instance-state.sh
 . "$INSTANCE_STATE_LIB"
+# Key maskesi: restart başarısızlığında journalctl çıktısı basılıyor ve orada ffmpeg'in
+# RTMP URL'si (stream key) geçebilir. Yoksa o çıktı atlanır (fail-closed).
+if [ -f "$MASK_LIB" ]; then
+  # shellcheck source=scripts/deploy/lib/mask.sh
+  . "$MASK_LIB"
+else
+  echo "UYARI: $MASK_LIB yok — hata loglarının basılması atlanacak." >&2
+  mask() { cat; }
+  mask_require() { return 1; }
+fi
 
 # Dry-run'da erken çıkmak yerine tüm sorunlar toplanır: tek tur bütün tabloyu göstersin.
 PROBLEMS=""
@@ -210,8 +221,14 @@ restart_service() {
   if systemctl is-active --quiet "$unit"; then
     echo "ok: $unit çalışıyor"
   else
-    echo "HATA: $unit restart sonrası ayakta değil. Son loglar:" >&2
-    $SUDO journalctl -u "$unit" -n 20 --no-pager >&2 || true
+    echo "HATA: $unit restart sonrası ayakta değil. Son loglar (maskeli):" >&2
+    # journalctl ffmpeg komut satırını basabilir (içinde stream key) — maskeden geçer.
+    # Maske yoksa loglar BASILMAZ: hata mesajı yine görünür, sır sızmaz.
+    if mask_require 2>/dev/null; then
+      $SUDO journalctl -u "$unit" -n 20 --no-pager 2>&1 | mask >&2 || true
+    else
+      echo "  (loglar atlandı: key maskesi yok — 'bash scripts/deploy/status.sh $unit' ile bak)" >&2
+    fi
     FAILED="$FAILED $unit"
   fi
 }
@@ -359,4 +376,6 @@ if [ "$RELOAD_DONE" = "yes" ]; then
   echo "systemctl daemon-reload yapıldı (unit dosyası değişmişti):$NEED_RELOAD_UNITS"
 fi
 echo ""
-echo "Deploy tamam. Loglar: journalctl -u $MAIN_SERVICE -f"
+echo "Deploy tamam."
+echo "Loglar (maskeli, paylasilabilir): bash scripts/deploy/status.sh"
+echo "Canli takip (MASKESIZ, key icerir): journalctl -u $MAIN_SERVICE -f"

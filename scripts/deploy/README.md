@@ -191,6 +191,37 @@ systemctl restart yt-streamer             # graceful restart (orphan bırakmaz)
 systemctl stop yt-streamer
 ```
 
+## Key maskeleme — hangi komut neyi sızdırır
+
+ffmpeg yayın URL'sini (içinde stream key) **komut satırında** almak zorunda; ffmpeg'in
+bunu dosyadan okuma yolu yok. Dolayısıyla `ps aux`, `systemctl status`, `journalctl` ve
+`/proc/<pid>/cmdline` key'i **daima** gösterir. Maskeleme bu sızmayı kapatmaz — çıktıyı
+korur, yani ekran görüntüsü / kopyala-yapıştır / log paylaşımı yoluyla sızmayı önler.
+Pratikte gerçek kanal budur (1 Ekim: iki key terminal çıktısında göründü ve rotasyon
+gerekti).
+
+Tek kural, tek kaynak: **`scripts/deploy/lib/mask.sh`**. İki katman — kalıp bazlı
+(`live2/<key>`, `YOUTUBE_*KEY|TOKEN|SECRET=`, ki rotasyondan önceki key'ler de yakalanır)
+ve değer bazlı (`.env*` dosyalarında yazılı key/token/webhook sırları birebir).
+
+| Komut | Durum |
+|---|---|
+| `bash scripts/deploy/status.sh` | **Maskeli** — paylaşılabilir, inceleme için bunu kullan |
+| `deploy.sh` (restart başarısızlığında `journalctl`) | **Maskeli** |
+| `add-stream.sh`, `install-service.sh`, `install-golive-service.sh` (`systemctl status`) | **Maskeli** |
+| `sweep-orphan-ffmpeg.sh` | ffmpeg argümanlarını hiç basmaz (yalnızca pid/ppid/etime) |
+| `check-env.sh` | Yalnızca key **adlarını** basar, değerlerini asla |
+| `scripts/bench-preset.sh` | Yayın hedefini argümanlardan ayıklar, diske maskeli döküm yazar |
+| `journalctl -u … -f`, `ps aux`, `systemctl status` (**elle**) | **MASKESİZ** — paylaşma |
+
+Maskeleme **fail-closed**: maske çalışmazsa (ör. `sed -E -f` desteği yok) o çıktı hiç
+basılmaz. Maskesiz basmak, hiç basmamaktan kötüdür.
+
+Elle bir komut çalıştırman gerekiyorsa süzgeci tek başına kullanabilirsin:
+```bash
+journalctl -u yt-streamer -n 200 | bash scripts/deploy/status.sh --filter
+```
+
 ## Neden systemd (orphan sorunu)
 Uygulama elle (`node index.js &`) çalıştırılıp terminal/ssh oturumu kapanınca ya da süreç `kill -9`/OOM ile ölünce, spawn ettiği ffmpeg **orphan** (PPID=1) kalabilir — bir CPU çekirdeğini boşa yer ve aynı YouTube stream key'e ikinci bir bağlantı denediği için canlı yayınla çakışır. systemd `KillSignal=SIGINT` ile uygulamaya graceful kapanış sinyali gönderir (bizim shutdown zinciri → `supervisor.stop()` → ffmpeg `q`) ve cgroup temizliği sayesinde orphan kalmaz. `enable` sayesinde VPS reboot olsa da yayın kendiliğinden döner.
 

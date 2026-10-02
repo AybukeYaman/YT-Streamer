@@ -33,6 +33,20 @@ TEMPLATE_UNIT="/etc/systemd/system/yt-streamer@.service"
 CONFIG_FILE="$REPO_ROOT/config.$NAME.json"
 ENV_FILE="$REPO_ROOT/.env.$NAME"
 MARKER_FILE="$ENV_FILE.disabled"
+# ── Key maskesi ─────────────────────────────────────────────────────────────
+# `systemctl status` ana surecin komut satirini basar, orada ffmpeg'in RTMP URL'si
+# (yani stream key) var. Cikti maskeden gecirilir; maske calismiyorsa o cikti
+# BASILMAZ (fail-closed) — maskesiz basmak, hic basmamaktan kotudur.
+MASK_LIB="$REPO_ROOT/scripts/deploy/lib/mask.sh"
+if [ -f "$MASK_LIB" ]; then
+  # shellcheck source=scripts/deploy/lib/mask.sh
+  . "$MASK_LIB"
+else
+  echo "UYARI: $MASK_LIB yok — key iceren ciktilar atlanacak." >&2
+  mask() { cat; }
+  mask_require() { return 1; }
+fi
+
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "HATA: root gerekli (sudo bash scripts/deploy/add-stream.sh $NAME)" >&2
@@ -167,9 +181,14 @@ fi
 
 sleep 3
 echo ""
-systemctl status "yt-streamer@$NAME" --no-pager -l || true
+if mask_require; then
+  systemctl status "yt-streamer@$NAME" --no-pager -l 2>&1 | mask || true
+else
+  echo "(servis durumu atlandi: key maskesi yok — 'systemctl status yt-streamer@$NAME' ciktisi key icerir)"
+fi
 echo ""
 echo "== tum yayinlar =="
 systemctl list-units --type=service 'yt-streamer*' --no-pager || true
 echo ""
-echo "Loglar: journalctl -u yt-streamer@$NAME -f"
+echo "Loglar (maskeli): bash scripts/deploy/status.sh yt-streamer@$NAME"
+echo "Canli takip (MASKESIZ, key icerir): journalctl -u yt-streamer@$NAME -f"
