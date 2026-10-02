@@ -1285,3 +1285,49 @@ notunu kapatıyor.
 gözle kontrol edildi (`%i` korunuyor, satır `[Service]` bölümünde ve `ExecStart`'tan
 önce). VPS tarafı: `systemctl cat yt-streamer` + node'u `kill -9` edip restart sonrası
 `ps -C ffmpeg -o pid,ppid,etime` tek süreç göstermeli.
+
+---
+
+## [Faz C] Yavaş encode artık alarm üretiyor (SpeedAlarm) — 2 Ekim 2026
+
+**Soru:** `SpeedWindow`'un 'slow'/'fast' durumu kime haber veriyor?
+
+**Bulgu — kimseye.** Tek tüketicisi `stream-orchestrator.js`'teki bir `log.warn` satırıydı.
+Encode 0.75x'e düşse bile ffmpeg ilerleme basmaya devam ediyor → `state.json` yazılıyor →
+encoder kalp atışı **sağlıklı**, ingest **sağlıklı**, ölü adam anahtarı **yeşil**. İzleyici
+kekeleyen bir yayın görürken panelde ve telefonda her şey yolunda görünüyordu. Mevcut
+kontrol setinin en belirgin kör noktası buydu.
+
+**Karar:** yeni `src/application/speed-alarm.js` — saf mantık (I/O yok), zamanı ve bildirim
+kanalını dışarıdan alır. `#checkSpeed` içinden **her** ilerleme satırında besleniyor
+(durum değişiminde değil: bekleme penceresi zamanın ilerlemesiyle dolacak).
+
+**Bekleme penceresi (dwellMs = 60 sn) şart.** Eşik (0.95) civarında salınan bir hız her
+geçişte bildirim gönderse telefon susmazdı. Anormal durum 60 sn **kesintisiz** sürmeden
+alarm yok; 'ok'a dönünce — yalnızca alarm gönderilmişse — bir "düzeldi" bildirimi gider.
+Ayrıca `slow → fast` geçişi pencereyi baştan saydırıyor (başka bir arıza), ve 'warming'
+(yeni ffmpeg süreci) pencereyi sıfırlıyor: playlist sınırındaki restart'tan önce birikmiş
+süre yeni sürece yazılsa, restart sonrası ilk anormal örnek anında alarm verirdi.
+
+**Neden `HealthMonitor`'a kontrol olarak EKLENMEDİ:** hız verisi yayın sürecinde
+(yt-streamer), `HealthMonitor` ise go-live sürecinde (yt-golive) çalışıyor. Veriyi
+`state.json`'a yeni bir alan koyup süreçler arası taşımak **ikinci bir dosya sözleşmesi**
+demekti — encoder kalp atışında "ikinci kalp atışı dosyası eklenmedi" denmesinin aynı
+gerekçesi. Faz A bildirim kanalını zaten yayın sürecine getirdiği için alarmı doğrudan
+oradan göndermek hem daha az parça hem tek eşik politikası.
+
+**Eşikler status'a ekleniyor** (`{ ...status, low, high }`): `SpeedAlarm`'ın ikinci bir
+yapılandırma kaynağı olmaması için. `SpeedWindow.status()`'a `low`/`high` eklemek de
+düşünüldü ama domain sözleşmesini (ve iki `deepEqual` testini) bu iş için değiştirmeye
+değmedi.
+
+**Doğrulama (canlı, uçtan uca):** yerel yayın 1080p/veryslow ile bilerek yavaşlatıldı
+(speed 0.75x). `ALERT_WEBHOOK_URL` sahte bir ntfy sunucusuna yönlendirildi:
+- 20:32:46 — pencere "yavaş" dedi (log),
+- 20:33:47 — tam **60 sn sonra** alarm gitti; HTTP POST yakalandı:
+  `Title: [smoke] YAYIN SORUNU: encode hizi`, `Priority: high`, `Tags: rotating_light`,
+  gövdede Türkçe metin ve `0.753x (eşik 0.95)`,
+- sonraki 75 sn'de **tekrar bildirim yok** (tek alarm politikası çalışıyor).
+
+Bu koşum Faz A'nın `WebhookAlerter` kurulumunu ve `instanceLabel` türetmesini de canlı
+doğruladı (etiket `[smoke]`, config.smoke.json'dan).

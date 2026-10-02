@@ -11,6 +11,7 @@ const { NowPlayingWriter } = require('./src/application/now-playing-writer');
 const { Supervisor } = require('./src/application/supervisor');
 const { StreamControlService } = require('./src/application/stream-control-service');
 const { NullAlerter } = require('./src/application/alerter');
+const { SpeedAlarm } = require('./src/application/speed-alarm');
 const { FfmpegEncoder } = require('./src/infrastructure/ffmpeg-encoder');
 const { WebhookAlerter } = require('./src/infrastructure/webhook-alerter');
 const { loadAlertChannel } = require('./src/infrastructure/youtube-credentials');
@@ -54,6 +55,20 @@ async function main() {
     output: config.output,
     overlay: overlayEnabled ? overlayStyle : null,
   });
+
+  // Bildirim kanalı: tekrarlayan çökme (supervisor) ve yavaş encode (speedAlarm) buradan
+  // haber veriyor. Kanal yoksa NullAlerter: her şey yalnızca log'a gider (eski davranış).
+  // URL go-live servisiyle AYNI yerden (.env.youtube) okunur ama YouTube kimliği İSTENMEZ —
+  // yayın süreci OAuth'a bağımlı olmamalı (bkz. scripts/golive-server.js başlığı).
+  const alertLog = logger.child('bildirim');
+  const { alertWebhookUrl } = loadAlertChannel();
+  const alerter = alertWebhookUrl
+    ? new WebhookAlerter({ url: alertWebhookUrl, label: instanceLabel(args.configFile), log: alertLog })
+    : new NullAlerter();
+  if (!alertWebhookUrl) {
+    alertLog.warn('ALERT_WEBHOOK_URL boş — sorunlar yalnızca loga yazılacak, telefona bildirim GİTMEYECEK');
+  }
+
   const orchestrator = new StreamOrchestrator({
     encoder,
     log: logger.child('orchestrator'),
@@ -70,6 +85,9 @@ async function main() {
       ? new NowPlayingWriter({ dir: path.join(config.paths.runtime, 'overlay'), writeFile: writeFileAtomic })
       : null,
     speedWindow: new SpeedWindow({ fps: profile.fps }),
+    // Hız eşiğinin dışına çıkıp orada KALMAK bildirim üretir. Diğer kontroller bu durumu
+    // göremiyor: ffmpeg ilerleme basmaya devam ettiği için kalp atışı ve ingest sağlıklı.
+    speedAlarm: new SpeedAlarm({ alerter, log: logger.child('hız') }),
     // Süreç öldürülse bile (kill, elektrik) yeniden başlarken kaldığı parçadan devam.
     stateStore: new StateStore({
       file: path.join(config.paths.runtime, 'state.json'),
@@ -77,18 +95,6 @@ async function main() {
       log: logger.child('durum'),
     }),
   });
-
-  // Tekrarlayan çökme bildirimi. Kanal yoksa NullAlerter: her şey yalnızca log'a gider
-  // (bugünkü davranış). URL go-live servisiyle AYNI yerden (.env.youtube) okunur ama
-  // YouTube kimliği İSTENMEZ — yayın süreci OAuth'a bağımlı olmamalı.
-  const alertLog = logger.child('bildirim');
-  const { alertWebhookUrl } = loadAlertChannel();
-  const alerter = alertWebhookUrl
-    ? new WebhookAlerter({ url: alertWebhookUrl, label: instanceLabel(args.configFile), log: alertLog })
-    : new NullAlerter();
-  if (!alertWebhookUrl) {
-    alertLog.warn('ALERT_WEBHOOK_URL boş — tekrarlayan çökme yalnızca loga yazılacak, telefona bildirim GİTMEYECEK');
-  }
 
   // Çökmede yeniden başlatma kararı supervisor'da. Vazgeçme YOK: eşik aşılınca alarm verir
   // ama yeniden başlatmayı sürdürür (bkz. supervisor.js başlığı, KARARLAR.md 2 Ekim 2026).

@@ -273,6 +273,63 @@ test('hız penceresi: uyarı sadece durum değişince (bir kez), normale dönü�
   assert.equal(speedWindow.samples.length, 0);
 });
 
+// Alarm ilerleme satırlarından besleniyor mu, eşikler ona ulaşıyor mu, zaman orchestrator'ın
+// saatinden mi geliyor? (SpeedAlarm'ın kendi kuralları test/application/speed-alarm.test.js'te.)
+test('hız alarmı: eşik dışında kalıcı olunca bildirim, normale dönünce "düzeldi"', async () => {
+  const { SpeedWindow } = require('../../src/domain/speed-window');
+  const { SpeedAlarm } = require('../../src/application/speed-alarm');
+  let t = 0;
+  const sent = [];
+  const encoder = new FakeEncoder();
+  const { log, lines } = fakeLog();
+  const orch = new StreamOrchestrator({
+    encoder, log, albumRepository: oneAlbum(TRACKS), queue: { mode: 'sequential', batchSize: 2 },
+    playlistPath: 'p', writeFile: () => {}, now: () => t,
+    speedWindow: new SpeedWindow({ fps: 24 }),
+    speedAlarm: new SpeedAlarm({ alerter: { async alert(p) { sent.push(p); } }, log, dwellMs: 10000 }),
+  });
+  await orch.start();
+  let frame = 0;
+  const run = (untilMs, speed) => {
+    for (; t <= untilMs; t += 500) {
+      encoder.emit('log', { kind: 'progress', frame: Math.round(frame), fps: 24, bitrateKbps: 2500, speed: 1 });
+      frame += speed * 12;
+    }
+  };
+  run(70000, 1); // ısınma + pencere dolar, durum ok
+  run(110000, 0.8); // 40 sn yavaş: bekleme penceresi (10 sn) dolar
+  await new Promise((r) => setImmediate(r));
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].level, 'error');
+  assert.match(sent[0].message, /ENCODE YETİŞEMİYOR: hız 0\.\d+x \(eşik 0\.95\)/);
+
+  run(170000, 1); // toparlanma
+  await new Promise((r) => setImmediate(r));
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].level, 'info');
+  assert.match(sent[1].message, /normale döndü/);
+  // Alarm log'u da yayın loguna düşüyor (panelde görünsün).
+  assert.ok(lines.some((l) => l.level === 'warn' && /ENCODE YETİŞEMİYOR/.test(l.m)));
+});
+
+test('speedAlarm verilmezse davranış değişmez (yalnızca log)', async () => {
+  const { SpeedWindow } = require('../../src/domain/speed-window');
+  let t = 0;
+  const encoder = new FakeEncoder();
+  const { log, lines } = fakeLog();
+  const orch = new StreamOrchestrator({
+    encoder, log, albumRepository: oneAlbum(TRACKS), queue: { mode: 'sequential', batchSize: 2 },
+    playlistPath: 'p', writeFile: () => {}, speedWindow: new SpeedWindow({ fps: 24 }), now: () => t,
+  });
+  await orch.start();
+  let frame = 0;
+  for (; t <= 110000; t += 500) {
+    encoder.emit('log', { kind: 'progress', frame: Math.round(frame), fps: 24, bitrateKbps: 2500, speed: 1 });
+    frame += (t > 70000 ? 0.8 : 1) * 12;
+  }
+  assert.ok(lines.some((l) => l.level === 'warn' && /encode yetişemiyor/.test(l.m)));
+});
+
 test('application katmanı child_process, fs ya da infrastructure import etmez', () => {
   const dir = path.join(__dirname, '..', '..', 'src', 'application');
   for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.js'))) {

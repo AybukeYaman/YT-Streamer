@@ -37,13 +37,16 @@ class StreamOrchestrator extends EventEmitter {
   // parça başlıkları yazılır ve encoder'a parça başına zaman aralığıyla verilir
   constructor({
     encoder, log, albumRepository, queue, playlistPath, writeFile,
-    nowPlayingWriter = null, speedWindow = null, stateStore = null,
+    nowPlayingWriter = null, speedWindow = null, speedAlarm = null, stateStore = null,
     now = () => Date.now(), random = Math.random,
   }) {
     super();
     // speedWindow: SpeedWindow — anlık hızın 30 sn pencere ortalaması; eşik dışına çıkınca
     // uyarı loglanır (sadece görünürlük, otomatik aksiyon yok)
     this.speedWindow = speedWindow;
+    // speedAlarm: SpeedAlarm — aynı durumu bildirime çevirir (eşik dışında bir süre kalınırsa
+    // telefona alarm). Verilmezse davranış eskisi gibi: yalnızca log.
+    this.speedAlarm = speedAlarm;
     this.speedState = 'warming';
     this.encoder = encoder;
     this.log = log;
@@ -306,9 +309,13 @@ class StreamOrchestrator extends EventEmitter {
     const now = this.now();
     this.speedWindow.add(frame, now);
     const status = this.speedWindow.status(now);
+    const { low, high } = this.speedWindow;
+    // Alarm HER satırda beslenir (durum değişiminde değil): bekleme penceresi zamanın
+    // ilerlemesiyle dolduğu için "60 sn'dir yavaş" ancak böyle anlaşılır. Eşikler status'a
+    // eklenir — SpeedAlarm'ın ikinci bir yapılandırma kaynağı olmasın.
+    this.speedAlarm?.update({ ...status, low, high }, now);
     if (status.state !== this.speedState && status.state !== 'warming') {
       const avg = `${status.average.toFixed(3)}x`;
-      const { low, high } = this.speedWindow;
       if (status.state === 'slow') this.log.warn(`encode yetişemiyor: hız(30sn)=${avg} < ${low}`);
       else if (status.state === 'fast') this.log.warn(`anormal hız, sessiz arıza olabilir: hız(30sn)=${avg} > ${high}`);
       else if (this.speedState !== 'warming') this.log.info(`hız normale döndü: hız(30sn)=${avg}`);
