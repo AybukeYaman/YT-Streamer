@@ -12,6 +12,7 @@ const { loadYoutubeCredentials } = require('../infrastructure/youtube-credential
 const { getAccessToken } = require('../infrastructure/youtube-oauth');
 const broadcasts = require('../infrastructure/youtube-broadcasts');
 const { BroadcastStateStore } = require('../infrastructure/broadcast-state-store');
+const { PendingVodStore } = require('../infrastructure/pending-vod-store');
 const { writeFileAtomic } = require('../infrastructure/atomic-file');
 const { GoLiveService } = require('../application/go-live-service');
 
@@ -43,9 +44,18 @@ function buildGoLive({
     log: logger.child('broadcast-durum'),
   });
 
+  // Bitmiş yayınların VOD gizliliği için bekleyen iş kuyruğu. broadcast.json'dan AYRI
+  // dosya: o dosya yayın bitince siliniyor (bkz. pending-vod-store.js).
+  const pendingVods = new PendingVodStore({
+    file: path.join(config.paths.runtime, 'vod-pending.json'),
+    writeFile: writeFileAtomic,
+    log: logger.child('vod-gizlilik'),
+  });
+
   const service = new GoLiveService({
     api,
     stateStore,
+    pendingVods,
     log: logger.child('go-live'),
     broadcastConfig: config.broadcast,
     // local modda stream key yok; o durumda streamId config'ten gelmeli.

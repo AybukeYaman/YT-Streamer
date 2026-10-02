@@ -118,7 +118,40 @@ async function getStreamStatus({ accessToken, streamId }) {
   };
 }
 
+// Bitmiş bir yayının VOD'unun gizliliğini değiştirir (broadcast = video, aynı id).
+//
+// NEDEN ÖNCE OKUYOR: videos.update, part'ta GÖNDERİLEN bölümü bir BÜTÜN olarak
+// değiştiriyor — status gönderip içine yalnızca privacyStatus koyarsan
+// selfDeclaredMadeForKids, license, embeddable gibi kardeş alanlar varsayılana döner.
+// Bu yüzden mevcut status okunur, üzerine privacyStatus yazılır, hepsi geri gönderilir.
+// Maliyet 1 ek birim (videos.list) — bir alanı sessizce sıfırlamanın bedelinden ucuz.
+//
+// Video yoksa (elle silinmiş) { skipped: true } döner, ATMAZ: silinmiş bir video için
+// bekleyen iş sonsuza kadar tekrar denenmemeli, kuyruktan düşmesi gerekiyor.
+// Gizlilik zaten istenen değerdeyse de çağrı yapılmaz (idempotans + kota).
+async function updateVideoPrivacy({ accessToken, videoId, privacyStatus }) {
+  const current = await apiRequest({
+    accessToken,
+    path: 'videos',
+    params: { part: 'status', id: videoId },
+  });
+  const status = current.items?.[0]?.status;
+  if (!status) return { skipped: true, reason: 'video bulunamadı' };
+  if (status.privacyStatus === privacyStatus) {
+    return { skipped: true, reason: `gizlilik zaten "${privacyStatus}"`, privacyStatus };
+  }
+  const previous = status.privacyStatus ?? null;
+  await apiRequest({
+    accessToken,
+    method: 'PUT',
+    path: 'videos',
+    params: { part: 'status' },
+    body: { id: videoId, status: { ...status, privacyStatus } },
+  });
+  return { skipped: false, previous, privacyStatus };
+}
+
 module.exports = {
   insertBroadcast, bindBroadcast, transitionBroadcast, getBroadcast, setThumbnail,
-  findStreamIdByKey, getStreamStatus,
+  findStreamIdByKey, getStreamStatus, updateVideoPrivacy,
 };

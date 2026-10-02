@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { setThumbnail } = require('../../src/infrastructure/youtube-broadcasts');
+const { setThumbnail, insertBroadcast, updateVideoPrivacy } = require('../../src/infrastructure/youtube-broadcasts');
 
 const BROADCAST_ID = 'bid-1';
 
@@ -100,4 +100,68 @@ test('API hatası yukarı taşınır (reason dahil) — çağıran karar verir',
       /thumbnails\/set.*exceeded your quota.*reason=quotaExceeded/s,
     );
   }));
+});
+
+// ── insert gövdesi ──────────────────────────────────────────────────────────
+// recordFromStart KASITEN YOK: bu kanal kaydı kapatmaya yetkili değil
+// (API: "The user is not permitted to disable recording", disableRecordingNotAllowed).
+// Gönderilirse insert 403 döner ve yayın HİÇ açılmaz. Sonda ile doğrulandı — KARARLAR.md.
+test('insert gövdesi: monitorStream kapalı, otomatik başlat/durdur kapalı, recordFromStart GÖNDERİLMEZ', async () => {
+  await withFetch([{ body: { id: 'bid-1' } }], async (calls) => {
+    await insertBroadcast({
+      accessToken: 'at', title: 'T', description: 'D',
+      privacyStatus: 'public', latencyPreference: 'normal',
+      scheduledStartTime: '2026-10-02T00:00:00.000Z',
+    });
+    const body = JSON.parse(calls[0].options.body);
+    assert.equal(body.status.privacyStatus, 'public');
+    assert.equal(body.status.selfDeclaredMadeForKids, false);
+    assert.deepEqual(body.contentDetails.monitorStream, { enableMonitorStream: false });
+    assert.equal(body.contentDetails.enableAutoStart, false);
+    assert.equal(body.contentDetails.enableAutoStop, false);
+    // 403 sebebi: bu iki alan gövdeye GİRMEMELİ.
+    assert.ok(!('recordFromStart' in body.contentDetails));
+    assert.ok(!('enableDvr' in body.contentDetails));
+  });
+});
+
+// ── updateVideoPrivacy ──────────────────────────────────────────────────────
+const statusResponse = (status) => ({ body: { items: [{ id: 'v1', status }] } });
+
+test('gizlilik çevirme: mevcut status okunur, kardeş alanlar KORUNARAK geri yazılır', async () => {
+  await withFetch([
+    statusResponse({ privacyStatus: 'public', selfDeclaredMadeForKids: false, license: 'youtube', embeddable: true }),
+    { body: {} },
+  ], async (calls) => {
+    const result = await updateVideoPrivacy({ accessToken: 'at', videoId: 'v1', privacyStatus: 'unlisted' });
+
+    assert.deepEqual(result, { skipped: false, previous: 'public', privacyStatus: 'unlisted' });
+    // 1. çağrı okuma, 2. çağrı yazma.
+    assert.equal(calls[0].options.method ?? 'GET', 'GET');
+    assert.equal(calls[1].options.method, 'PUT');
+    const body = JSON.parse(calls[1].options.body);
+    assert.equal(body.status.privacyStatus, 'unlisted');
+    // Kritik: videos.update gönderilen part'ı BÜTÜN olarak değiştiriyor — bu alanlar
+    // gövdede olmasa varsayılana dönerdi.
+    assert.equal(body.status.selfDeclaredMadeForKids, false);
+    assert.equal(body.status.license, 'youtube');
+    assert.equal(body.status.embeddable, true);
+  });
+});
+
+test('gizlilik zaten istenen değerdeyse yazma çağrısı YAPILMAZ (idempotans + kota)', async () => {
+  await withFetch([statusResponse({ privacyStatus: 'unlisted' })], async (calls) => {
+    const result = await updateVideoPrivacy({ accessToken: 'at', videoId: 'v1', privacyStatus: 'unlisted' });
+    assert.equal(result.skipped, true);
+    assert.equal(calls.length, 1); // yalnızca okuma
+  });
+});
+
+test('video yoksa (elle silinmiş) ATMAZ, skipped döner — kuyrukta sonsuza takılmasın', async () => {
+  await withFetch([{ body: { items: [] } }], async (calls) => {
+    const result = await updateVideoPrivacy({ accessToken: 'at', videoId: 'yok', privacyStatus: 'unlisted' });
+    assert.equal(result.skipped, true);
+    assert.match(result.reason, /bulunamadı/);
+    assert.equal(calls.length, 1);
+  });
 });

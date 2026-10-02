@@ -59,6 +59,13 @@ function fakeApi({
       calls.push(['getStreamStatus', streamId]);
       return queue.length > 1 ? queue.shift() : queue[0];
     },
+    updateVideoPrivacy: async ({ videoId, privacyStatus }) => {
+      calls.push(['updateVideoPrivacy', videoId, privacyStatus]);
+      maybeFail('updateVideoPrivacy');
+      const prev = store[videoId]?.status?.privacyStatus ?? 'public';
+      if (prev === privacyStatus) return { skipped: true, reason: 'zaten öyle', privacyStatus };
+      return { skipped: false, previous: prev, privacyStatus };
+    },
     transitionBroadcast: async ({ broadcastId, status }) => {
       calls.push(['transitionBroadcast', broadcastId, status]);
       maybeFail('transitionBroadcast');
@@ -81,6 +88,24 @@ function fakeStateStore(initial = null, { failWrite = false } = {}) {
       state = s;
     },
     clear: () => { state = null; },
+  };
+}
+
+function fakePendingVods(initial = [], { failWrite = false, failRead = false } = {}) {
+  let pending = [...initial];
+  return {
+    get pending() { return pending; },
+    list: () => { if (failRead) throw new Error('okunamadı'); return [...pending]; },
+    add: (entry) => {
+      if (failWrite) throw new Error('disk dolu');
+      if (!pending.some((e) => e.broadcastId === entry.broadcastId)) pending.push(entry);
+      return [...pending];
+    },
+    remove: (ids) => {
+      const drop = new Set(ids);
+      pending = pending.filter((e) => !drop.has(e.broadcastId));
+      return [...pending];
+    },
   };
 }
 
@@ -709,4 +734,130 @@ test('goLive (CLI yolu) hâlâ senkron: sonucu bekler', async () => {
   const { service } = setup({ api });
   const result = await service.goLive();
   assert.equal(result.action, 'went-live');
+});
+
+// ── VOD gizliliği: yayın bitince kaydı liste dışına al ───────────────────────
+//
+// Bu sistemde "yayın bitti" OLAYI yok (transition('complete') hiç çağrılmıyor).
+// Bitiş yalnızca kayıtlı broadcast'in lifeCycleStatus'u 'complete' görülünce anlaşılır —
+// ve orası broadcast.json'ı siliyor. Kuyruğa yazma o silmeden ÖNCE olmalı.
+
+const VOD_CONFIG = { ...BROADCAST_CONFIG, vodPrivacy: 'unlisted' };
+
+// Kayıtta 'live' duran ama YouTube'da bitmiş bir broadcast: keşif yolunu tetikler.
+function endedSetup(extra = {}) {
+  const api = fakeApi({
+    broadcasts: { 'old-1': { id: 'old-1', snippet: { title: 'Eski yayın' }, status: { lifeCycleStatus: 'complete', privacyStatus: 'public' } } },
+  });
+  const stateStore = fakeStateStore({ broadcastId: 'old-1', streamId: STREAM_ID, status: 'live', title: 'Eski yayın' });
+  const pendingVods = fakePendingVods();
+  return { ...setup({ api, stateStore, broadcastConfig: VOD_CONFIG, pendingVods, ...extra }), pendingVods };
+}
+
+test('VOD: bitmiş broadcast keşfedilince kuyruğa alınır ve hemen çevrilir', async () => {
+  const { service, api, stateStore, pendingVods } = endedSetup();
+  await service.goLive();
+
+  assert.deepEqual(api.calls.filter((c) => c[0] === 'updateVideoPrivacy'), [['updateVideoPrivacy', 'old-1', 'unlisted']]);
+  // Çevrildi → kuyruktan düştü.
+  assert.deepEqual(pendingVods.pending, []);
+  // Eski kayıt temizlendi, yeni broadcast açıldı (mevcut davranış bozulmadı).
+  assert.equal(stateStore.state.broadcastId, 'bid-1');
+});
+
+test('VOD: çevirme hata verirse kayıt kuyrukta KALIR, go-live devam eder', async () => {
+  const api = fakeApi({
+    broadcasts: { 'old-1': { id: 'old-1', snippet: { title: 'E' }, status: { lifeCycleStatus: 'complete' } } },
+    failOn: { updateVideoPrivacy: new Error('503 backend error') },
+  });
+  const pendingVods = fakePendingVods();
+  const { service, lines } = setup({
+    api,
+    stateStore: fakeStateStore({ broadcastId: 'old-1', streamId: STREAM_ID, status: 'live' }),
+    broadcastConfig: VOD_CONFIG,
+    pendingVods,
+  });
+  const result = await service.goLive();
+
+  assert.equal(result.action, 'went-live'); // bir gizlilik ayarı yayını düşürmez
+  assert.deepEqual(pendingVods.pending.map((e) => e.broadcastId), ['old-1']);
+  assert.ok(lines.some((l) => l.level === 'warn' && /kuyrukta kaldı/.test(l.m)));
+});
+
+test('VOD: kuyruğa yazılamazsa (disk dolu) go-live yine sürer, uyarı loglanır', async () => {
+  const { service, lines } = endedSetup({ pendingVods: fakePendingVods([], { failWrite: true }) });
+  const result = await service.goLive();
+
+  assert.equal(result.action, 'went-live');
+  assert.ok(lines.some((l) => l.level === 'warn' && /public kalabilir/.test(l.m)));
+});
+
+test('VOD: vodPrivacy null ise kuyruğa hiç alınmaz, çevirme çağrısı yapılmaz', async () => {
+  const api = fakeApi({
+    broadcasts: { 'old-1': { id: 'old-1', snippet: { title: 'E' }, status: { lifeCycleStatus: 'complete' } } },
+  });
+  const pendingVods = fakePendingVods();
+  const { service } = setup({
+    api,
+    stateStore: fakeStateStore({ broadcastId: 'old-1', streamId: STREAM_ID, status: 'live' }),
+    broadcastConfig: BROADCAST_CONFIG, // vodPrivacy yok
+    pendingVods,
+  });
+  await service.goLive();
+
+  assert.deepEqual(pendingVods.pending, []);
+  assert.ok(!names(api.calls).includes('updateVideoPrivacy'));
+});
+
+test('VOD: checkIngestHealth bekleyen işleri tekrar dener (periyodik kurtarma)', async () => {
+  const api = fakeApi();
+  const pendingVods = fakePendingVods([{ broadcastId: 'stuck-1', title: 'T', discoveredAt: 'dün' }]);
+  const { service } = setup({
+    api,
+    stateStore: fakeStateStore({ broadcastId: 'cur', streamId: STREAM_ID, status: 'live' }),
+    broadcastConfig: VOD_CONFIG,
+    pendingVods,
+  });
+  await service.checkIngestHealth();
+
+  assert.deepEqual(api.calls.filter((c) => c[0] === 'updateVideoPrivacy'), [['updateVideoPrivacy', 'stuck-1', 'unlisted']]);
+  assert.deepEqual(pendingVods.pending, []);
+});
+
+test('VOD: kuyruk boşken checkIngestHealth hiç çevirme çağrısı yapmaz (kota)', async () => {
+  const api = fakeApi();
+  const { service } = setup({
+    api,
+    stateStore: fakeStateStore(null), // kayıtlı yayın da yok → hiç API çağrısı olmamalı
+    broadcastConfig: VOD_CONFIG,
+    pendingVods: fakePendingVods(),
+  });
+  const result = await service.checkIngestHealth();
+
+  assert.equal(result.skipped, true);
+  assert.deepEqual(api.calls, []);
+});
+
+test('VOD: bir kaydın hatası diğerlerini engellemez', async () => {
+  const api = fakeApi({ failOn: {} });
+  let n = 0;
+  const base = api.updateVideoPrivacy;
+  api.updateVideoPrivacy = async (opts) => {
+    n += 1;
+    if (opts.videoId === 'bad') { api.calls.push(['updateVideoPrivacy', 'bad', opts.privacyStatus]); throw new Error('403'); }
+    return base(opts);
+  };
+  const pendingVods = fakePendingVods([
+    { broadcastId: 'ok-1' }, { broadcastId: 'bad' }, { broadcastId: 'ok-2' },
+  ]);
+  const { service } = setup({
+    api,
+    stateStore: fakeStateStore({ broadcastId: 'cur', streamId: STREAM_ID, status: 'live' }),
+    broadcastConfig: VOD_CONFIG,
+    pendingVods,
+  });
+  await service.checkIngestHealth();
+
+  assert.equal(n, 3); // üçü de denendi
+  assert.deepEqual(pendingVods.pending.map((e) => e.broadcastId), ['bad']); // yalnız hatalı kaldı
 });

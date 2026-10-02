@@ -20,6 +20,12 @@ const BROADCAST_DEFAULTS = Object.freeze({
   title: '24/7 Cozy Lofi Radio ☕ Chill Beats to Study / Work / Sleep to...',
   description: '',
   privacyStatus: 'unlisted',
+  // Yayın bitince VOD'un (kayıt) gizliliği bu değere çevrilir. null: HİÇ dokunulmaz —
+  // varsayılan, mevcut davranışı korur. "Canlı public + VOD unlisted" API'de tek
+  // çağrıyla yapılamıyor (broadcast ile VOD aynı video, privacyStatus ortak) ve
+  // recordFromStart:false bu kanalda yasak (disableRecordingNotAllowed) — bu yüzden
+  // bitişte sonradan çevirme. Ayrıntı: KARARLAR.md
+  vodPrivacy: null,
   latencyPreference: 'normal',
   categoryId: '10', // Music
   // Boşsa stream id .env'deki YOUTUBE_STREAM_KEY'den çözülür (cdn.ingestionInfo.streamName
@@ -155,6 +161,11 @@ function loadConfig({
     }
     if (rawBroadcast.privacyStatus !== undefined && !PRIVACY_STATUSES.includes(rawBroadcast.privacyStatus)) {
       problems.push(`"broadcast.privacyStatus" "${rawBroadcast.privacyStatus}" — ${PRIVACY_STATUSES.map((s) => `"${s}"`).join(', ')} olmalı`);
+    }
+    // null geçerli: "VOD gizliliğine dokunma" demenin yolu.
+    if (rawBroadcast.vodPrivacy !== undefined && rawBroadcast.vodPrivacy !== null
+        && !PRIVACY_STATUSES.includes(rawBroadcast.vodPrivacy)) {
+      problems.push(`"broadcast.vodPrivacy" "${rawBroadcast.vodPrivacy}" — ${PRIVACY_STATUSES.map((s) => `"${s}"`).join(', ')} ya da null olmalı`);
     }
     if (rawBroadcast.streamId !== undefined && rawBroadcast.streamId !== null
         && !isNonEmptyString(rawBroadcast.streamId)) {

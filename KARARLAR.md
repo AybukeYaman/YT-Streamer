@@ -1071,3 +1071,104 @@ sirlari, yanlis pozitif yoklugu ve fail-closed davranis. VPS'te dogrulanmadi: ge
 
 **Hatirlatma:** bugun gorulen iki key rotasyon bekliyor (Studio -> yeni key -> .env ve
 .env.stream2 guncelle -> restart). Maskeleme gelecegi korur, gecmisi degil.
+
+## [Faz 5] Overlay dikey konumu config'den: `overlay.bottomOffset` — 2 Ekim 2026
+
+**Sorun:** overlay metni ekranin dibine cok yakindi; YouTube oynaticinin kontrol/ilerleme
+cubugu o bandi kapatinca basliklar kesiliyordu. `y=h-80` ffmpeg-encoder.js'te SABIT
+kodluydu (Faz 4'te dogrulanmis deger), ayarlamak icin kod degisikligi gerekiyordu.
+
+**Karar:** `OVERLAY_POSITIONS` sabit tablodan fonksiyon tablosuna dondu; alt konumlar
+`y=h-${bottomOffset}` uretiyor. Deger `config.broadcast` degil `config.overlay`
+altinda — overlay'in bir stil ozelligi.
+
+**Geriye uyumluluk:** alan yoksa 80. Eski config'ler birebir ayni ffmpeg komutunu
+uretir. Varsayilan BILEREK yukseltilmedi: davranis degisikligi config'de gorunur
+olsun, sessizce olmasin.
+
+**Ust konumlar sabit (40) kaldi:** ustte kesilme sorunu yok, ayarlanabilirlik bedava
+degil (ikinci alan, ikinci dogrulama, ikinci test).
+
+**Dogrulama:** `bottomOffset` pozitif sayi olmali, degilse `FfmpegEncoder` KURULURKEN
+atar — yayin ortasinda degil, baslangicta. 720p'de 100 ≈ alt kenara 72px (cubugun ustu).
+
+## [Faz 5] Canli public + VOD liste disi: API'de yok, bitiste cevirme — 2 Ekim 2026
+
+**Istek:** canli yayin herkese acik kalsin (izleyici + sohbet), ama yayin bitince olusan
+VOD (kayit) herkese acik OLMASIN.
+
+**API'de karsiligi YOK.** Sebep alan eksikligi degil, veri modeli: broadcast ile VOD
+AYNI videodur, ayni id. Dokumanin ifadesi: "the broadcast represents exactly one YouTube
+video, so the privacy settings are identical to those supported for videos". Yani
+`status.privacyStatus` TEK bir alan, hem canliyi hem kaydi yonetiyor. "Canliyken public,
+sonra unlisted" insert govdesinde temsil edilemez — zaman icinde DEGISEN bir deger.
+
+Tek tek bakilan ve ise yaramayan alanlar:
+- `status.recordingStatus` — **salt okunur** (notRecording/recording/recorded)
+- `contentDetails.recordFromStart` — kaydin alinip alinmamasi, gizlilikle ilgisi yok
+- `contentDetails.availabilityConfig` — adi umut verici ama **cografi kisitlama**
+- `privacyStatusAfterStreamEnds` gibi bir alan hic yok
+
+Studio'daki "tekrar videosunu liste disi yap" kutusu gercek ama ise yaramaz: kanal ayari
+degil YAYIN BASINA ayar, ve bizim yayinlar her go-live'da API ile YENIDEN olusuyor —
+elle isaretlenecek bir yayin yok.
+
+**`recordFromStart: false` DENENDI ve REDDEDILDI.** Tek seferlik sonda ile dogrulandi:
+
+    A: recordFromStart:false + enableDvr:false
+       403 "The user is not permitted to disable recording."
+       [reason=disableRecordingNotAllowed]
+    B: kontrol — mevcut uretim govdesi
+       KABUL EDILDI (recordFromStart=true enableDvr=true)
+
+Kontrolun gecmesi kritik: sorun kimlik/kota degil, SADECE kaydi kapatmak yasak. Dokuman
+diyor: "can only be set to false if the broadcasting channel is allowed to disable
+recordings". Bu izin kullanici tarafindan acilamiyor (dokumante bir yol yok).
+**Bu yuzden insert govdesine `recordFromStart` KOYULMAMALI** — koyulsa her go-live 403
+ile duser, yayin hic acilmaz. Bunu koruyan bir test var (youtube-broadcasts.test.js).
+
+**Karar:** kayit alinir, yayin bitince VOD'un gizliligi `videos.update` ile cevrilir.
+`config.broadcast.vodPrivacy` (varsayilan `null` = dokunma).
+
+**Mimari bulgu — "yayin bitti" OLAYI YOK:** `transition('complete')` bu sistemde hic
+cagrilmiyor (tek transition `'live'`), Supervisor ve HealthMonitor broadcast'ten habersiz.
+Bitis YALNIZCA `GoLiveService#existingBroadcast` kayitli broadcast'in lifeCycleStatus'unu
+`complete` gorunce anlasiliyor — ve orasi `broadcast.json`'i SILIYOR, id o anda kaybolur.
+Bu yuzden kuyruga yazma `clear()`'dan ONCE.
+
+Bu zayiflik degil avantaj: kesif noktasi bellekteki bir event degil DISKTEKI duruma
+dayaniyor, cokuse dayaniklilik neredeyse bedava geliyor.
+
+**Kalici kuyruk** `runtime/vod-pending.json` (`PendingVodStore`). `broadcast.json`'a
+yazilamaz cunku o dosya tam bu anda siliniyor; ayrica omurleri farkli (bekleyen is API
+hatasi surerse gunlerce kalir). Basarili cevirmeler listeden duser, basarisizlar KALIR.
+
+**Iki tetik:** (1) kesiften hemen sonra (token elde, ek maliyet yok) — yaygin durumda
+saniyeler icinde cevrilir; (2) `checkIngestHealth()` basinda, yani HealthMonitor
+temposunda (~60 sn) — cokme/API hatasi sonrasi kurtarma. **Kuyruk bossa hic API cagrisi
+yapilmaz**, "yayin kapaliyken kota harcanmaz" sozu korunur.
+
+**`videos.update` ONCE OKUYOR:** gonderilen part'i BUTUN olarak degistiriyor; status
+gonderip icine yalnizca privacyStatus koyarsan `selfDeclaredMadeForKids`, `license`,
+`embeddable` varsayilana doner. Mevcut status okunur, uzerine yazilir. 1 ek birim kota —
+bir alani sessizce sifirlamanin bedelinden ucuz.
+
+**Kabul edilen takas:** cevirme ANINDA degil. Sistem bitisi ancak periyodik tur ya da bir
+go-live/status cagrisinda ogreniyor → VOD ~60 sn public kalabilir. Anlik yapmanin tek
+yolu yayin sonlandirmayi sisteme almak (`transition('complete')`), bu cok daha buyuk bir
+degisiklik ve "YouTube kapatsin" davranisini bozar.
+
+**Hatalar yayini DUSURMEZ:** kuyruga yazamamak da, cevirememek de yalnizca uyari loglar.
+`#saveState`'in tersi — orada yazamamak IKINCI bir broadcast demekti, burada yalnizca bir
+gizlilik ayari kaciyor.
+
+**Gecmis VOD'lar:** `scripts/youtube/unlist-past-vods.js`. Varsayilan KURU CALISMA,
+gercek degisiklik icin `--apply`. Yalnizca `complete` olanlar — canli yayini liste disina
+almak izleyiciyi aninda dusururdu. Kanalda 21 broadcast: 2 bitmemis (atlandi), 13 zaten
+private, **6 public complete** cevrildi.
+
+**Not:** `config.json`'da `broadcast` bolumu YOKTU, yani `privacyStatus` varsayilandan
+(`unlisted`) geliyor — ama canli yayin (XpwWzSY4QMc) public. Yeni broadcast'ler unlisted
+acilacak. Canli yayinin public olmasi isteniyorsa `broadcast.privacyStatus: "public"`
+ayrica eklenmeli; bu Faz 5'te BILEREK degistirilmedi (dis dunyaya donuk bir degisiklik,
+karar kullanicinin).

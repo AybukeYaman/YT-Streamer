@@ -54,11 +54,14 @@ class GoLiveError extends Error {
 
 class GoLiveService {
   // api: { getAccessToken, insertBroadcast, bindBroadcast, transitionBroadcast,
-  //        getBroadcast, findStreamIdByKey, getStreamStatus }
-  // broadcastConfig: { title, description, privacyStatus, latencyPreference, streamId|null }
+  //        getBroadcast, findStreamIdByKey, getStreamStatus, updateVideoPrivacy }
+  // broadcastConfig: { title, description, privacyStatus, vodPrivacy, latencyPreference, streamId|null }
   // streamKey: yayının .env'deki key'i (streamId null ise ondan çözülür)
   constructor({
     api, stateStore, log, broadcastConfig, streamKey,
+    // pendingVods: { list(), add(), remove() } — yayın bitince VOD gizliliğini çevirmek
+    // için bekleyen iş kuyruğu. null: özellik tamamen kapalı (CLI/test yolu).
+    pendingVods = null,
     ingestTimeoutMs = DEFAULT_INGEST_TIMEOUT_MS,
     pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
     staleGraceMs = DEFAULT_STALE_GRACE_MS,
@@ -77,6 +80,7 @@ class GoLiveService {
     this.log = log;
     this.broadcastConfig = broadcastConfig;
     this.streamKey = streamKey;
+    this.pendingVods = pendingVods;
     this.ingestTimeoutMs = ingestTimeoutMs;
     this.pollIntervalMs = pollIntervalMs;
     this.staleGraceMs = staleGraceMs;
@@ -134,6 +138,10 @@ class GoLiveService {
   // liveStreams sorgulanır (1 kota birimi), broadcast çekilmez. Kayıtta canlı bir
   // broadcast yoksa hiç API çağrısı yapılmaz — yayın yokken kota harcanmaz.
   async checkIngestHealth() {
+    // Periyodik kurtarma: çevirme çağrısı çökme/API hatası yüzünden yarım kalmışsa
+    // burada tekrar denenir (HealthMonitor temposu, ~60 sn). Kuyruk boşsa hiçbir API
+    // çağrısı yapmaz — "yayın kapalıyken kota harcanmaz" sözü korunur.
+    await this.#drainPendingVods();
     const state = this.stateStore.load();
     if (!state?.broadcastId || !state?.streamId) return { skipped: true, reason: 'kayıtlı yayın yok' };
     if (!ACTIVE_STATUSES.has(state.status)) {
@@ -450,7 +458,13 @@ class GoLiveService {
     if (REUSABLE_STATUSES.has(lifeCycle)) return { kind: 'reusable', ...base };
     // complete / revoked: bir daha canlıya alınamaz, yenisi gerekiyor.
     this.log.warn(`kayıtlı broadcast ${state.broadcastId} kullanılamaz durumda (${lifeCycle}) — kayıt temizlendi`);
+    // Yayının bittiğini öğrendiğimiz TEK yer burası. VOD gizliliği istenmişse id'yi
+    // clear()'dan ÖNCE kuyruğa yaz — clear() broadcast.json'ı siliyor, id kaybolur.
+    this.#enqueueVodPrivacy({ broadcastId: state.broadcastId, title: base.title });
     this.stateStore.clear();
+    // Hemen dene: yaygın durumda VOD saniyeler içinde çevrilir, 60 sn'lik periyodik
+    // tur yalnızca başarısızlık/çökme için kalır. Token elimizde, ek maliyeti yok.
+    await this.#drainPendingVods(accessToken);
     return null;
   }
 
@@ -513,6 +527,69 @@ class GoLiveService {
         `broadcast durumu yazılamadı (${err.message}) — idempotans kaybolacağı için durduruldu`,
         { code: 'state_write_failed' },
       );
+    }
+  }
+
+  // Bitmiş yayının VOD'unu gizlilik kuyruğuna alır.
+  //
+  // ATMAZ: bu noktada broadcast zaten bitmiş ve çağıran #existingBroadcast'in işi
+  // go-live'ı sürdürmek. Kuyruğa yazamamak (disk dolu vb.) VOD'u public bırakır —
+  // istenmeyen ama yayını durdurmaktan iyi. #saveState'in tersi: orada yazamamak
+  // ikinci bir broadcast demekti, burada yalnızca bir gizlilik ayarı kaçıyor.
+  #enqueueVodPrivacy({ broadcastId, title }) {
+    if (!this.pendingVods || !this.broadcastConfig.vodPrivacy) return;
+    try {
+      this.pendingVods.add({ broadcastId, title, discoveredAt: new Date(this.now()).toISOString() });
+      this.log.info(`VOD gizliliği kuyruğa alındı: ${broadcastId} → ${this.broadcastConfig.vodPrivacy}`);
+    } catch (err) {
+      this.log.warn(`VOD gizliliği kuyruğa yazılamadı (${broadcastId}): ${err.message} — VOD public kalabilir`);
+    }
+  }
+
+  // Kuyruğu boşaltır: her kayıt için videos.update. BAŞARILI olanlar düşürülür,
+  // başarısızlar KALIR ve sonraki tur tekrar denenir (kalıcı kuyruğun tüm anlamı bu).
+  // Bir kaydın hatası diğerlerini engellemez.
+  //
+  // Çökme güvenliği: çağrı yapıldıktan sonra ama kuyruk güncellenmeden önce ölürsek
+  // kayıt diskte kalır ve bir sonraki turda tekrar denenir — updateVideoPrivacy
+  // idempotent (zaten istenen değerdeyse çağrı yapmıyor), tekrar zararsız.
+  //
+  // ATMAZ: çağıranları (checkIngestHealth, #existingBroadcast) bir gizlilik ayarı
+  // yüzünden düşürmemeli.
+  // accessToken: çağıranın elinde varsa geçilir — boşa bir token yenileme olmasın.
+  async #drainPendingVods(accessToken = null) {
+    const target = this.broadcastConfig.vodPrivacy;
+    if (!this.pendingVods || !target) return;
+    let waiting;
+    try {
+      waiting = this.pendingVods.list();
+    } catch (err) {
+      this.log.warn(`bekleyen VOD listesi okunamadı: ${err.message}`);
+      return;
+    }
+    if (waiting.length === 0) return; // API çağrısı YOK — kota harcanmaz
+
+    const token = accessToken ?? (await this.api.getAccessToken()).accessToken;
+    const done = [];
+    for (const { broadcastId } of waiting) {
+      try {
+        const result = await this.api.updateVideoPrivacy({ accessToken: token, videoId: broadcastId, privacyStatus: target });
+        done.push(broadcastId);
+        this.log.info(result.skipped
+          ? `VOD ${broadcastId} atlandı: ${result.reason}`
+          : `VOD ${broadcastId} gizliliği "${result.previous}" → "${target}"`);
+      } catch (err) {
+        // Kuyrukta kalır, sonraki tur tekrar denenir.
+        this.log.warn(`VOD ${broadcastId} gizliliği çevrilemedi: ${err.message} — kuyrukta kaldı`);
+      }
+    }
+    if (done.length === 0) return;
+    try {
+      this.pendingVods.remove(done);
+    } catch (err) {
+      // Çevirme OLDU ama kuyruk güncellenemedi: sonraki tur aynı videoyu tekrar dener,
+      // updateVideoPrivacy "zaten unlisted" diyip atlar. Zararsız, sadece 1 birim kota.
+      this.log.warn(`bekleyen VOD kuyruğu güncellenemedi: ${err.message} — kayıtlar tekrar denenecek`);
     }
   }
 }

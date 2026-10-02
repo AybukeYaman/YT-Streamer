@@ -186,6 +186,24 @@ test('geçersiz privacyStatus reddedilir (sessizce private yayına düşmesin)',
   assert.match(broadcastProblems({ privacyStatus: 'herkese-acik' }), /broadcast\.privacyStatus/);
 });
 
+// vodPrivacy: yayın bitince kaydın gizliliği. Varsayılan null = "dokunma" — eski
+// config'lerde alan yok ve mevcut davranış aynen sürmeli.
+test('vodPrivacy varsayılanı null (VOD gizliliğine dokunulmaz)', () => {
+  assert.equal(load().result.broadcast.vodPrivacy, null);
+});
+
+test('vodPrivacy okunur; null açıkça verilebilir; geçersiz değer reddedilir', () => {
+  const config = clone();
+  config.broadcast = { vodPrivacy: 'unlisted' };
+  assert.equal(load({ config }).result.broadcast.vodPrivacy, 'unlisted');
+
+  const explicitNull = clone();
+  explicitNull.broadcast = { vodPrivacy: null };
+  assert.equal(load({ config: explicitNull }).result.broadcast.vodPrivacy, null);
+
+  assert.match(broadcastProblems({ vodPrivacy: 'liste-disi' }), /broadcast\.vodPrivacy/);
+});
+
 test('boş broadcast.title reddedilir', () => {
   assert.match(broadcastProblems({ title: '   ' }), /broadcast\.title/);
 });
