@@ -117,6 +117,11 @@ Description=YT Streamer - %i
 After=network-online.target
 Wants=network-online.target
 
+# Sinirsiz yeniden baslatma BILINCLI — install-service.sh'teki tek yayin unit'iyle
+# ayni gerekce: ag kesintisinde yayin kendiliginden donmeli, surekli cokme alarmi
+# uygulama icinden gelir (supervisor). Ayrinti: KARARLAR.md
+StartLimitIntervalSec=0
+
 # NOT: Unit'te bilerek EnvironmentFile YOK. Uygulama .env.%i dosyasini kendisi okur
 # (ExecStart'taki --env bayragi + src/config/load-config.js, util.parseEnv) ve yolu
 # __dirname bazlı olduğu için WorkingDirectory'den bağımsızdır. systemd'nin EnvironmentFile quoting kuralları

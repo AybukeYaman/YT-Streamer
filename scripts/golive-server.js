@@ -14,6 +14,7 @@ const path = require('path');
 
 const { Logger } = require('../src/infrastructure/logger');
 const { loadConfig } = require('../src/config/load-config');
+const { instanceLabel } = require('../src/config/parse-args');
 const { loadYoutubeCredentials } = require('../src/infrastructure/youtube-credentials');
 const { buildGoLive } = require('../src/composition/go-live-wiring');
 const { GoLiveServer } = require('../src/infrastructure/golive-server');
@@ -68,8 +69,9 @@ async function main() {
   //   encoder : yt-streamer hâlâ yayın yapıyor mu? (state.json mtime = nabız)
   const healthLog = logger.child('saglik');
   // Çoklu yayında bildirimin hangi instance'tan geldiği anlaşılsın: config dosyası adı
-  // instance'ı tanımlıyor (config.stream2.json → stream2).
-  const label = args.configFile.replace(/^config\.?/, '').replace(/\.json$/, '') || 'main';
+  // instance'ı tanımlıyor (config.stream2.json → stream2). Yayın süreci (index.js) aynı
+  // etiketi üretsin diye türetme src/config/parse-args.js'te ortak.
+  const label = instanceLabel(args.configFile);
   const alerter = credentials.alertWebhookUrl
     ? new WebhookAlerter({ url: credentials.alertWebhookUrl, label, log: healthLog })
     : new NullAlerter();

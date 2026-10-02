@@ -160,7 +160,10 @@ class StreamControlService {
   // FIX: Supervisor timer bekliyorken (crash → restart arası) 'restarting' döner.
   // Önceki versiyon bu aralıkta yanlış 'stopped' dönerdi.
   #resolveState(pb, sup) {
-    if (sup.gaveUp) return 'error';
+    // Tekrarlayan çökme: yayın yeniden başlatılmaya DEVAM ediyor ama sağlıklı değil —
+    // panelde kırmızı. Supervisor 5 dk temiz çalışmadan sonra bu işareti kendisi temizler,
+    // yani ERROR kalıcı değil (eskiden 'gaveUp' ile kırmızıda kilitli kalıyordu).
+    if (sup.crashLoop) return 'error';
     // stop() istendi: encoder kapanıyor (stopping) ya da henüz uçuştaki başlatma
     // bekleniyor (stopRequested) — ikisinde de yayın bir daha başlamayacak.
     if (pb.stopping || pb.stopRequested) return 'stopped';

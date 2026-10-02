@@ -92,6 +92,14 @@ Description=YT Streamer - YouTube 7/24 muzik yayini
 After=network-online.target
 Wants=network-online.target
 
+# Sinirsiz yeniden baslatma BILINCLI. systemd'nin varsayilan baslatma limiti
+# (5 baslatma / 10 sn) RestartSec=15 yuzunden zaten hic tetiklenmiyordu; burada
+# acikca 0 yaziyoruz ki davranis kazara degil karar olsun. Gerekce: uzun bir ag
+# kesintisinde yayin kendiliginden donmeli. Surekli cokme halinde alarm uygulama
+# icinden gelir (supervisor, tekrarlayan cokme bildirimi) — unit'i failed'a
+# dusurup yayini kapatmak istenen davranis DEGIL. Ayrinti: KARARLAR.md
+StartLimitIntervalSec=0
+
 # NOT: Unit'te bilerek EnvironmentFile YOK. Uygulama .env'i kendisi okur
 # (src/config/load-config.js, util.parseEnv) ve yolu __dirname bazlı olduğu için
 # WorkingDirectory'den bağımsızdır. systemd'nin EnvironmentFile quoting kuralları

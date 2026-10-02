@@ -32,6 +32,37 @@ function readFileEnv(file) {
   }
 }
 
+function resolveCredentialsPath(rootDir, file) {
+  return path.isAbsolute(file) ? file : path.join(rootDir, file);
+}
+
+// Ortam değişkeni dosyayı ezer; boş/boşluk değer "yok" sayılır.
+function reader(credentialsPath, env) {
+  const fileEnv = readFileEnv(credentialsPath);
+  return (key) => {
+    const value = env[key] ?? fileEnv[key];
+    return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+  };
+}
+
+// Yalnızca bildirim kanalları — ZORUNLU KEY YOK, bu yüzden asla atmaz (dosya hiç yoksa da).
+//
+// Neden ayrı giriş: yayın süreci (index.js) YouTube kimliğini tanımıyor ve tanımamalı
+// (bkz. scripts/golive-server.js başlığı). loadYoutubeCredentials() ise CLIENT_ID/SECRET/
+// REFRESH_TOKEN eksikse atıyor — onu çağırmak yayını YouTube kimliğine bağımlı hale
+// getirirdi. Dosya ayrıştırması yine tek yerde (reader) kalsın diye aynı modülde duruyor.
+function loadAlertChannel({ rootDir = PROJECT_ROOT, file = CREDENTIALS_FILE, env = process.env } = {}) {
+  const credentialsPath = resolveCredentialsPath(rootDir, file);
+  let pick;
+  try {
+    pick = reader(credentialsPath, env);
+  } catch {
+    // Dosya okunamıyorsa (izin, bozuk) bildirim kanalı yok sayılır: yayın etkilenmemeli.
+    pick = () => undefined;
+  }
+  return { alertWebhookUrl: pick('ALERT_WEBHOOK_URL'), credentialsPath };
+}
+
 // requireRefreshToken: refresh token alma script'i onu henüz ÜRETMEDİĞİ için orada false.
 // Okuma/yazma yapan komutlarda (verify-access, ileride go-live) true.
 function loadYoutubeCredentials({
@@ -40,12 +71,8 @@ function loadYoutubeCredentials({
   env = process.env,
   requireRefreshToken = true,
 } = {}) {
-  const credentialsPath = path.isAbsolute(file) ? file : path.join(rootDir, file);
-  const fileEnv = readFileEnv(credentialsPath);
-  const pick = (key) => {
-    const value = env[key] ?? fileEnv[key];
-    return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
-  };
+  const credentialsPath = resolveCredentialsPath(rootDir, file);
+  const pick = reader(credentialsPath, env);
 
   const keys = requireRefreshToken ? [...REQUIRED, 'YOUTUBE_REFRESH_TOKEN'] : REQUIRED;
   const missing = keys.filter((k) => pick(k) === undefined);
@@ -83,4 +110,4 @@ function loadYoutubeCredentials({
   };
 }
 
-module.exports = { loadYoutubeCredentials, CredentialsError, CREDENTIALS_FILE };
+module.exports = { loadYoutubeCredentials, loadAlertChannel, CredentialsError, CREDENTIALS_FILE };

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { parseArgs, DEFAULTS } = require('../../src/config/parse-args');
+const { parseArgs, instanceLabel, DEFAULTS } = require('../../src/config/parse-args');
 
 test('argümansız: varsayılanlar (mevcut tek-yayın davranışı korunur)', () => {
   assert.deepEqual(parseArgs([]), { tui: false, configFile: 'config.json', envFile: '.env' });
@@ -45,4 +45,17 @@ test('değer eksikse hata (sessizce yanlış config ile başlamasın)', () => {
 test('bilinmeyen argüman hata verir (yazım hatası fark edilsin)', () => {
   assert.throws(() => parseArgs(['--confg', 'x.json']), /bilinmeyen argüman: --confg/);
   assert.throws(() => parseArgs(['fazladan']), /bilinmeyen argüman: fazladan/);
+});
+
+// instanceLabel: bildirimlerde hangi yayından geldiğini göstermek için. Yayın süreci ve
+// go-live servisi aynı etiketi üretmek zorunda — ikisi de bu fonksiyonu kullanıyor.
+test('instanceLabel: config dosyası adından instance etiketi', () => {
+  assert.equal(instanceLabel('config.json'), 'main');
+  assert.equal(instanceLabel('config.stream2.json'), 'stream2');
+  assert.equal(instanceLabel('config.lofi-gece.json'), 'lofi-gece');
+});
+
+test('instanceLabel: yol verilse de yalnızca dosya adı kullanılır', () => {
+  assert.equal(instanceLabel('/srv/yt/config.stream2.json'), 'stream2');
+  assert.equal(instanceLabel(String.raw`C:\yt\config.json`), 'main');
 });

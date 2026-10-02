@@ -48,7 +48,7 @@ function fakeOrchestrator(overrides = {}) {
 function fakeSupervisor(overrides = {}) {
   return {
     lastStartAt: null,
-    gaveUp: false,
+    crashLoop: false,
     pendingRestart: false, // test senaryolarında ayarlanır
     calls: [],
     async start() { this.calls.push('start'); },
@@ -56,7 +56,7 @@ function fakeSupervisor(overrides = {}) {
     getSnapshot() {
       return Object.freeze({
         lastStartAt: this.lastStartAt,
-        gaveUp: this.gaveUp,
+        crashLoop: this.crashLoop,
         pendingRestart: this.pendingRestart,
       });
     },
@@ -135,10 +135,10 @@ test('getStatus: ilk kare gelmeden restarting döner', () => {
   assert.equal(svc.getStatus().state, 'restarting');
 });
 
-test('getStatus: supervisor vazgeçmişse error döner', () => {
+test('getStatus: tekrarlayan çökme halinde error döner (yayın yeniden başlatılıyor olsa da)', () => {
   const { svc } = setup({
     orchOverrides: { running: false },
-    supOverrides: { gaveUp: true },
+    supOverrides: { crashLoop: true },
   });
   assert.equal(svc.getStatus().state, 'error');
 });
@@ -186,7 +186,7 @@ test('getStatus: crash sonrası supervisor timer bekliyorken restarting döner (
   // supervisor 3 sn timer kurdu (pendingRestart=true)
   const { svc } = setup({
     orchOverrides: { running: false, stopping: false },
-    supOverrides: { gaveUp: false, pendingRestart: true },
+    supOverrides: { crashLoop: false, pendingRestart: true },
   });
   assert.equal(svc.getStatus().state, 'restarting');
 });
@@ -194,15 +194,15 @@ test('getStatus: crash sonrası supervisor timer bekliyorken restarting döner (
 test('getStatus: supervisor timer yoksa ve running=false ise stopped döner', () => {
   const { svc } = setup({
     orchOverrides: { running: false, stopping: false },
-    supOverrides: { gaveUp: false, pendingRestart: false },
+    supOverrides: { crashLoop: false, pendingRestart: false },
   });
   assert.equal(svc.getStatus().state, 'stopped');
 });
 
-test('getStatus: gaveUp true iken pendingRestart true olsa bile error döner (gaveUp öncelikli)', () => {
+test('getStatus: crashLoop true iken pendingRestart true olsa bile error döner (crashLoop öncelikli)', () => {
   const { svc } = setup({
     orchOverrides: { running: false },
-    supOverrides: { gaveUp: true, pendingRestart: true },
+    supOverrides: { crashLoop: true, pendingRestart: true },
   });
   assert.equal(svc.getStatus().state, 'error');
 });
@@ -425,13 +425,13 @@ test('start: supervisor.start() hata fırlatırsa hata iletilir', async () => {
   const { svc } = setup({
     supOverrides: {
       lastStartAt: null,
-      gaveUp: false,
+      crashLoop: false,
       pendingRestart: false,
       calls: [],
       async start() { throw new Error('zaten çalışıyor'); },
       async stop() {},
       getSnapshot() {
-        return Object.freeze({ lastStartAt: this.lastStartAt, gaveUp: this.gaveUp, pendingRestart: false });
+        return Object.freeze({ lastStartAt: this.lastStartAt, crashLoop: this.crashLoop, pendingRestart: false });
       },
     },
   });
@@ -470,7 +470,7 @@ test('stop: supervisor.stop() bekleme sırasında gelen progress yoksayılır', 
   const orchestrator = fakeOrchestrator({ running: true, playStartedAt: 990000 });
   const supervisor = {
     lastStartAt: 980000,
-    gaveUp: false,
+    crashLoop: false,
     pendingRestart: false,
     calls: [],
     async start() { this.calls.push('start'); },
@@ -482,7 +482,7 @@ test('stop: supervisor.stop() bekleme sırasında gelen progress yoksayılır', 
       encoder.emitProgress({ fps: 27, bitrateKbps: 3100, speed: 0.97 });
     },
     getSnapshot() {
-      return Object.freeze({ lastStartAt: this.lastStartAt, gaveUp: false, pendingRestart: false });
+      return Object.freeze({ lastStartAt: this.lastStartAt, crashLoop: false, pendingRestart: false });
     },
   };
   const log = fakeLog();
@@ -529,10 +529,10 @@ test('restart: lastProgress temizlenir ve suppressProgress false döner', async 
 test('restart: stop hata fırlatırsa start çağrılmaz ve hata iletilir', async () => {
   const { svc, supervisor } = setup({
     supOverrides: {
-      lastStartAt: null, gaveUp: false, pendingRestart: false, calls: [],
+      lastStartAt: null, crashLoop: false, pendingRestart: false, calls: [],
       async start() { this.calls.push('start'); },
       async stop() { this.calls.push('stop'); throw new Error('durdurma hatası'); },
-      getSnapshot() { return Object.freeze({ lastStartAt: null, gaveUp: false, pendingRestart: false }); },
+      getSnapshot() { return Object.freeze({ lastStartAt: null, crashLoop: false, pendingRestart: false }); },
     },
   });
   await assert.rejects(() => svc.restart(), { message: 'durdurma hatası' });
@@ -623,7 +623,7 @@ test('tam akış: start → progress → getCurrentTrack → getUpcomingQueue �
 
   const supervisor = {
     lastStartAt: null,
-    gaveUp: false,
+    crashLoop: false,
     pendingRestart: false,
     calls: [],
     async start() {
@@ -642,7 +642,7 @@ test('tam akış: start → progress → getCurrentTrack → getUpcomingQueue �
     },
     getSnapshot() {
       return Object.freeze({
-        lastStartAt: this.lastStartAt, gaveUp: this.gaveUp, pendingRestart: this.pendingRestart,
+        lastStartAt: this.lastStartAt, crashLoop: this.crashLoop, pendingRestart: this.pendingRestart,
       });
     },
   };

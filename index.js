@@ -2,7 +2,7 @@
 // birbirine bağlar, Ctrl+C'de temiz kapanışı başlatır. Uygulama mantığı burada değil.
 const path = require('path');
 const { loadConfig } = require('./src/config/load-config');
-const { parseArgs } = require('./src/config/parse-args');
+const { parseArgs, instanceLabel } = require('./src/config/parse-args');
 const { acquireLock } = require('./src/infrastructure/instance-lock');
 const { StreamProfile } = require('./src/domain/stream-profile');
 const { SpeedWindow } = require('./src/domain/speed-window');
@@ -10,7 +10,10 @@ const { StreamOrchestrator } = require('./src/application/stream-orchestrator');
 const { NowPlayingWriter } = require('./src/application/now-playing-writer');
 const { Supervisor } = require('./src/application/supervisor');
 const { StreamControlService } = require('./src/application/stream-control-service');
+const { NullAlerter } = require('./src/application/alerter');
 const { FfmpegEncoder } = require('./src/infrastructure/ffmpeg-encoder');
+const { WebhookAlerter } = require('./src/infrastructure/webhook-alerter');
+const { loadAlertChannel } = require('./src/infrastructure/youtube-credentials');
 const { AlbumRepository, SingleAlbumRepository } = require('./src/infrastructure/album-repository');
 const { writeFileAtomic } = require('./src/infrastructure/atomic-file');
 const { Logger } = require('./src/infrastructure/logger');
@@ -75,9 +78,21 @@ async function main() {
     }),
   });
 
-  // Çökmede yeniden başlatma kararı supervisor'da; crash loop'ta vazgeçerse hata koduyla çık.
-  const supervisor = new Supervisor({ orchestrator, log: logger.child('supervisor') });
-  supervisor.on('gave-up', () => { process.exitCode = 1; });
+  // Tekrarlayan çökme bildirimi. Kanal yoksa NullAlerter: her şey yalnızca log'a gider
+  // (bugünkü davranış). URL go-live servisiyle AYNI yerden (.env.youtube) okunur ama
+  // YouTube kimliği İSTENMEZ — yayın süreci OAuth'a bağımlı olmamalı.
+  const alertLog = logger.child('bildirim');
+  const { alertWebhookUrl } = loadAlertChannel();
+  const alerter = alertWebhookUrl
+    ? new WebhookAlerter({ url: alertWebhookUrl, label: instanceLabel(args.configFile), log: alertLog })
+    : new NullAlerter();
+  if (!alertWebhookUrl) {
+    alertLog.warn('ALERT_WEBHOOK_URL boş — tekrarlayan çökme yalnızca loga yazılacak, telefona bildirim GİTMEYECEK');
+  }
+
+  // Çökmede yeniden başlatma kararı supervisor'da. Vazgeçme YOK: eşik aşılınca alarm verir
+  // ama yeniden başlatmayı sürdürür (bkz. supervisor.js başlığı, KARARLAR.md 2 Ekim 2026).
+  const supervisor = new Supervisor({ orchestrator, log: logger.child('supervisor'), alerter });
 
   // Tek kontrol katmanı: start/stop bundan sonra buradan geçer, durum/parça sorguları da.
   // Aynı (tek) supervisor/orchestrator/encoder örneklerini sarar — ikinci engine kurmaz.

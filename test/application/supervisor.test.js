@@ -39,16 +39,32 @@ function fakeClock() {
   };
 }
 
+// Sahte alerter: gönderilen bildirimleri kaydeder. failNext ile bir kez hata atar
+// (bozuk bildirim kanalının gözetmeni etkilemediğini sınamak için).
+function fakeAlerter() {
+  const sent = [];
+  return {
+    sent,
+    failNext: 0,
+    async alert(payload) {
+      sent.push(payload);
+      if (this.failNext-- > 0) throw new Error('webhook 500');
+    },
+  };
+}
+
 function setup(opts = {}) {
   const orch = new FakeOrchestrator();
   const clock = fakeClock();
   const lines = [];
+  const alerter = fakeAlerter();
   const rec = (level) => (m) => lines.push({ level, m });
   const sup = new Supervisor({
     orchestrator: orch, log: { info: rec('info'), warn: rec('warn'), error: rec('error') },
+    alerter,
     now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, ...opts,
   });
-  return { orch, clock, lines, sup };
+  return { orch, clock, lines, alerter, sup };
 }
 
 test('üstel geri çekilme: 3 → 6 → 12 → 24 → 48 → 60 sn tavan (crash loop kapalıyken)', async () => {
@@ -79,24 +95,115 @@ test('yeterince uzun (5 dk) çökmeden çalışınca sayaç sıfırlanır', asyn
   assert.ok(lines.some((l) => l.level === 'warn' && /3 sn sonra yeniden başlatılacak \(deneme 1/.test(l.m)));
 });
 
-test('crash loop: 5 dk içinde 5 çökme → vazgeçer, alarm loglar, gave-up yayar, yeniden başlatmaz', async () => {
-  const { orch, clock, sup, lines } = setup();
-  const gaveUp = [];
-  sup.on('gave-up', (e) => gaveUp.push(e));
-  await sup.start();
+// Bildirim bilerek await edilmiyor (çökme anında webhook backoff'u geciktirmesin),
+// bu yüzden kontrolden önce mikro görev kuyruğu boşaltılır.
+const flush = () => new Promise((r) => setImmediate(r));
+
+// Eşiğe kadar çökertir (maxCrashes kadar çökme), son çökmeden sonra yeniden başlatır.
+async function pushIntoCrashLoop({ orch, clock }) {
   for (let i = 0; i < 4; i++) {
     orch.crash();
     await clock.advance(clock.pending()[0]);
   }
   orch.crash(); // 5. çökme (3+6+12+24 = 45 sn içinde)
-  assert.deepEqual(clock.pending(), []);
-  assert.deepEqual(gaveUp, [{ crashes: 5 }]);
-  assert.equal(sup.gaveUp, true);
-  assert.ok(lines.some((l) => l.level === 'error' && /CRASH LOOP: 300 sn içinde 5 çökme/.test(l.m)));
-  assert.equal(orch.calls.filter((c) => c === 'resume').length, 4);
+  await flush();
+}
+
+test('tekrarlayan çökme: 5 dk içinde 5 çökme → alarm verir AMA yeniden başlatmaya devam eder', async () => {
+  const { orch, clock, sup, lines, alerter } = setup();
+  const events = [];
+  sup.on('crash-loop', (e) => events.push(e));
+  await sup.start();
+  await pushIntoCrashLoop({ orch, clock });
+
+  assert.equal(sup.crashLoop, true);
+  assert.deepEqual(events, [{ crashes: 5 }]);
+  assert.ok(lines.some((l) => l.level === 'error' && /TEKRARLAYAN ÇÖKME: 300 sn içinde 5 çökme/.test(l.m)));
+  // Kritik fark: vazgeçmek yerine sıradaki gecikmeyle (48 sn) yeniden başlatma kuruldu.
+  assert.deepEqual(clock.pending(), [48000]);
+  await clock.advance(48000);
+  assert.equal(orch.calls.filter((c) => c === 'resume').length, 5);
+  assert.equal(alerter.sent.length, 1);
+  assert.equal(alerter.sent[0].level, 'error');
+  assert.match(alerter.sent[0].title, /tekrarlayan çökme/);
 });
 
-test('crash loop penceresi kayar: 5 dk\'dan eski çökmeler sayılmaz', async () => {
+test('tekrarlayan çökme sürerken alarm TEKRARLANMAZ, yeniden başlatma yine sürer', async () => {
+  const { orch, clock, sup, lines, alerter } = setup();
+  await sup.start();
+  await pushIntoCrashLoop({ orch, clock });
+  await clock.advance(clock.pending()[0]);
+
+  for (let i = 0; i < 2; i++) {
+    orch.crash();
+    await flush();
+    assert.equal(clock.pending().length, 1); // her çökmede yine yeniden başlatma kuruldu
+    await clock.advance(clock.pending()[0]);
+  }
+  assert.equal(alerter.sent.length, 1); // 6. ve 7. çökme bildirim ÜRETMEDİ
+  assert.ok(lines.some((l) => l.level === 'warn' && /alarm tekrarlanmıyor/.test(l.m)));
+  assert.equal(orch.calls.filter((c) => c === 'resume').length, 7);
+});
+
+test('5 dk çökmeden çalışınca durum temizlenir ve "düzeldi" bildirimi gider', async () => {
+  const { orch, clock, sup, lines, alerter } = setup();
+  await sup.start();
+  await pushIntoCrashLoop({ orch, clock });
+  await clock.advance(clock.pending()[0]); // yeniden başladı → toparlanma kontrolü kuruldu
+
+  assert.deepEqual(clock.pending(), [5 * 60 * 1000]);
+  await clock.advance(5 * 60 * 1000);
+  await flush();
+
+  assert.equal(sup.crashLoop, false);
+  assert.equal(sup.attempt, 0);
+  assert.equal(alerter.sent.length, 2);
+  assert.equal(alerter.sent[1].level, 'info');
+  assert.ok(lines.some((l) => l.level === 'info' && /tekrarlayan çökme bitti/.test(l.m)));
+  // Temizlendikten sonra sayaç sıfırdan: sonraki çökme yine 3 sn ile başlar.
+  orch.crash();
+  assert.deepEqual(clock.pending(), [3000]);
+});
+
+test('toparlanma beklenirken gelen yeni çökme kontrolü iptal eder (düzeldi denmez)', async () => {
+  const { orch, clock, sup, alerter } = setup();
+  await sup.start();
+  await pushIntoCrashLoop({ orch, clock });
+  await clock.advance(clock.pending()[0]);
+  assert.deepEqual(clock.pending(), [5 * 60 * 1000]);
+
+  orch.crash(); // toparlanma dolmadan yeni çökme
+  await flush();
+  assert.deepEqual(clock.pending(), [60000]); // yalnızca yeniden başlatma timer'ı kaldı
+  await clock.advance(10 * 60 * 1000);
+  assert.equal(sup.crashLoop, true);
+  assert.ok(!alerter.sent.some((a) => a.level === 'info'));
+});
+
+test('stop: bekleyen toparlanma kontrolünü de iptal eder', async () => {
+  const { orch, clock, sup, alerter } = setup();
+  await sup.start();
+  await pushIntoCrashLoop({ orch, clock });
+  await clock.advance(clock.pending()[0]);
+
+  await sup.stop();
+  assert.deepEqual(clock.pending(), []);
+  await clock.advance(10 * 60 * 1000);
+  assert.ok(!alerter.sent.some((a) => a.level === 'info'));
+});
+
+test('bozuk bildirim kanalı yeniden başlatmayı etkilemez', async () => {
+  const { orch, clock, sup, lines, alerter } = setup();
+  alerter.failNext = 1;
+  await sup.start();
+  await pushIntoCrashLoop({ orch, clock });
+  await clock.advance(clock.pending()[0]);
+
+  assert.equal(orch.calls.filter((c) => c === 'resume').length, 5);
+  assert.ok(lines.some((l) => l.level === 'warn' && /bildirim gönderilemedi \(webhook 500\)/.test(l.m)));
+});
+
+test('tekrarlayan çökme penceresi kayar: 5 dk\'dan eski çökmeler sayılmaz', async () => {
   const { orch, clock, sup, lines } = setup();
   await sup.start();
   for (let i = 0; i < 4; i++) {
@@ -105,7 +212,7 @@ test('crash loop penceresi kayar: 5 dk\'dan eski çökmeler sayılmaz', async ()
     await clock.advance(80 * 1000); // aralarda 80 sn çalışıyor
   }
   orch.crash(); // ilk çökme artık 5 dk'dan eski → pencerede 4
-  assert.equal(sup.gaveUp, false);
+  assert.equal(sup.crashLoop, false);
   assert.equal(clock.pending().length, 1);
   assert.ok(lines.some((l) => /4\/5 çökme/.test(l.m)));
 });

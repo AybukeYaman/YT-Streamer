@@ -5,7 +5,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { loadYoutubeCredentials, CredentialsError } = require('../../src/infrastructure/youtube-credentials');
+const {
+  loadYoutubeCredentials, loadAlertChannel, CredentialsError,
+} = require('../../src/infrastructure/youtube-credentials');
 
 function tempRoot(contents) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yt-cred-'));
@@ -67,4 +69,25 @@ test('refresh token eksikse mesaj get-refresh-token.js\'i gösterir', () => {
 test('değerlerin kenar boşlukları kırpılır', () => {
   const rootDir = tempRoot('YOUTUBE_CLIENT_ID=  cid  \nYOUTUBE_CLIENT_SECRET=sec\nYOUTUBE_REFRESH_TOKEN=rt\n');
   assert.equal(loadYoutubeCredentials({ rootDir, env: {} }).clientId, 'cid');
+});
+
+// loadAlertChannel: yayın süreci (index.js) bildirim URL'sini buradan okuyor. YouTube
+// kimliğini ZORUNLU tutmamalı — aksi halde yayın OAuth'a bağımlı hale gelirdi.
+test('loadAlertChannel: YouTube kimliği hiç yokken de çalışır, atmaz', () => {
+  const rootDir = tempRoot('ALERT_WEBHOOK_URL=https://ntfy.sh/gizli\n');
+  assert.equal(loadAlertChannel({ rootDir, env: {} }).alertWebhookUrl, 'https://ntfy.sh/gizli');
+});
+
+test('loadAlertChannel: dosya hiç yoksa undefined döner (bildirim kanalı kapalı)', () => {
+  const rootDir = tempRoot(); // .env.youtube yazılmadı
+  assert.equal(loadAlertChannel({ rootDir, env: {} }).alertWebhookUrl, undefined);
+});
+
+test('loadAlertChannel: ortam değişkeni dosyayı ezer, boş değer "yok" sayılır', () => {
+  const rootDir = tempRoot('ALERT_WEBHOOK_URL=https://ntfy.sh/dosya\n');
+  assert.equal(
+    loadAlertChannel({ rootDir, env: { ALERT_WEBHOOK_URL: 'https://ntfy.sh/ortam' } }).alertWebhookUrl,
+    'https://ntfy.sh/ortam',
+  );
+  assert.equal(loadAlertChannel({ rootDir: tempRoot('ALERT_WEBHOOK_URL=   \n'), env: {} }).alertWebhookUrl, undefined);
 });

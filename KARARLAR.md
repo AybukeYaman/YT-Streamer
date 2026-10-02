@@ -216,6 +216,14 @@ onlara daha toleranslı bir eşik/pencere uygulamak.
 **Etki:** Üretimde (VPS'te) izlenmesi gereken bir nokta; uzun bir kesinti sonrası
 yayının kendiliğinden dönmediği fark edilirse elle restart gerekecek.
 
+> **DÜZELTME (2 Ekim 2026):** Yukarıdaki "kalıcı olarak durdurabilir / otomatik
+> toparlanmaz" tespiti üretimde **doğru değildi**: unit'te `Restart=always` +
+> `RestartSec=15` var ve `StartLimit*` ayarlanmamıştı, yani süreç vazgeçip çıkınca
+> systemd 15 sn sonra yenisini açıyordu — yayın dönüyordu ama supervisor'ın backoff'u
+> ve crash penceresi her yeni süreçte sıfırdan başlıyordu. Bu madde artık geçersiz:
+> vazgeçme davranışı tamamen kaldırıldı, bkz. aşağıdaki
+> *[Faz A] Tekrarlayan çökmede vazgeçme kaldırıldı*.
+
 ---
 
 ## [Faz 8] Çoklu albüm düzeni — 27 Eylül 2026
@@ -1172,3 +1180,64 @@ private, **6 public complete** cevrildi.
 acilacak. Canli yayinin public olmasi isteniyorsa `broadcast.privacyStatus: "public"`
 ayrica eklenmeli; bu Faz 5'te BILEREK degistirilmedi (dis dunyaya donuk bir degisiklik,
 karar kullanicinin).
+
+---
+
+## [Faz A] Tekrarlayan çökmede vazgeçme kaldırıldı — 2 Ekim 2026
+
+**Soru:** Crash loop koruması (5 dk'da 5 çökme → `gave-up`, yayını bırak) gerçekten
+istediğimiz şeyi mi yapıyor?
+
+**Bulgu — koruma üretimde hiç devreye girmiyordu.** `Supervisor` vazgeçince `index.js`
+yalnızca `process.exitCode = 1` yapıyordu. Logger tamamen senkron (`appendFileSync`),
+başka açık handle da yok → event loop boşalıyor ve süreç gerçekten çıkıyordu. Unit'te ise
+`Restart=always` + `RestartSec=15` var ve `StartLimit*` **yoktu**. systemd'nin varsayılan
+limiti (5 başlatma / 10 sn) `RestartSec=15` yüzünden hiç tetiklenmiyor. Sonuç:
+
+- "Yayın kalıcı olarak durur" **olmuyordu**: systemd 15 sn'de bir yeni süreç açıyordu.
+- Ama supervisor'ın frenleri de boşa çıkıyordu: her yeni süreçte `crashTimes` boş,
+  `attempt = 0`, yani backoff sürekli 3 sn'den başlıyordu.
+- `KARARLAR.md`'deki Faz 1 "bilinen risk" notu (26 Eylül) bu yüzden yanlıştı; düzeltme
+  notu o bloğa eklendi.
+
+**Karar — vazgeçme tamamen kaldırıldı, hız korunarak.** İstenen davranış zaten bunun
+tersiydi: uzun bir ağ kesintisinde (modem reseti) yayın kendiliğinden dönmeli ve
+toparlanma hızından ödün verilmemeli.
+
+- `gaveUp` / `'gave-up'` → `crashLoop` / `'crash-loop'`. Eşik aşımı artık yeniden
+  başlatmayı **durdurmuyor**, yalnızca "bu yayın sağlıklı değil" işareti.
+- Gecikme dizisi ve 60 sn tavanı **değişmedi**. Uzatmak (ör. 5 dk'ya çıkarmak)
+  düşünüldü ve bilerek reddedildi: sürekli çöken bir yayında bile dakikada bir deneme
+  olması isteniyor.
+- Alarm politikası `HealthMonitor`'daki ile aynı: eşikte **bir kez** bildirim + ERROR,
+  sonraki çökmelerde yalnızca WARN. Yeniden başlatmadan sonra `resetAfterMs` (5 dk)
+  çökmeden çalışırsa durum temizlenir ve "düzeldi" bildirimi gider — TUI de kırmızıda
+  kilitli kalmıyor (eskiden `gaveUp` bir daha asla temizlenmiyordu).
+- Bildirim **await edilmiyor** (`#notify` fire-and-forget + catch): çökme anında bir
+  webhook isteği backoff'u geciktirmemeli, bozuk kanal gözetmeni düşürmemeli.
+
+**systemd:** `StartLimitIntervalSec=0` **iki** şablona da eklendi
+(`install-service.sh` tek yayın unit'i ve `add-stream.sh` `yt-streamer@.service`
+template'i). Zaten fiilen sınırsızdı; artık kazara değil **karar**. `[Service]` değil
+`[Unit]` bölümüne yazılır. Unit'i `failed`'a düşürüp yayını kapatmak bilerek seçilmedi:
+alarm uygulama içinden geliyor, yayının kapanması istenen davranış değil.
+
+**Bildirim kanalı yayın sürecine girdi.** `index.js` artık `WebhookAlerter` kuruyor —
+`HealthMonitor`'un kullandığı AYNI sınıf, ikinci bir bildirim yolu açılmadı. URL
+`.env.youtube`'dan geliyor ama `loadYoutubeCredentials()` **kullanılamazdı**: o
+CLIENT_ID/SECRET/REFRESH_TOKEN eksikse atıyor ve yayın sürecinin YouTube kimliğine
+bağımlı olmaması bilinçli bir karar (bkz. `scripts/golive-server.js` başlığı). Bu yüzden
+aynı modüle zorunlu key istemeyen, hiç atmayan `loadAlertChannel()` eklendi — `.env.youtube`
+ayrıştırması tek yerde (`reader`) kaldı.
+
+**Yan bulgu — `[json]` etiketi.** Bildirim etiketi türetmesi (`config.stream2.json` →
+`stream2`) `golive-server.js`'te tek satırdı ve `config.json` için **`"json"`**
+üretiyordu: `^config\.?` öneki sondaki noktayı da yiyor, geriye `.json` kalmıyordu. Yani
+varsayılan instance'ın tüm bildirimleri `[json]` etiketiyle gidiyormuş. Türetme
+`src/config/parse-args.js`'e `instanceLabel()` olarak taşındı (yayın süreci ve go-live
+aynı etiketi üretmek zorunda), sıra düzeltildi (önce uzantı, sonra önek) ve test edildi.
+
+**Testler:** `supervisor.test.js`'teki "vazgeçer, yeniden başlatmaz" testi yerine 6 test:
+eşikte alarm + yeniden başlatma devam, alarm tekrarlanmıyor, 5 dk sonra "düzeldi",
+toparlanma beklenirken gelen çökme kontrolü iptal ediyor, `stop()` de iptal ediyor, bozuk
+bildirim kanalı restart'ı etkilemiyor.

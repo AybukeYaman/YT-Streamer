@@ -32,4 +32,17 @@ function parseArgs(args = []) {
   return out;
 }
 
-module.exports = { parseArgs, DEFAULTS };
+// Config dosyası adından instance etiketi: config.json → "main", config.stream2.json →
+// "stream2". Bildirimlerde hangi yayından geldiğini göstermek için (çoklu instance'ta
+// "YAYIN SORUNU" bildirimi tek başına yetersiz kalıyor). Yayın süreci ve go-live servisi
+// AYNI etiketi üretsin diye burada: iki yerde kopyalanırsa zamanla ayrışır.
+//
+// Uzantı ÖNCE atılır, önek sonra: ters sırada "config.json" → "json" oluyordu (önek
+// sondaki noktayı da yiyor, geriye ".json" kalmıyor). golive-server.js'teki eski satırın
+// sessiz hatası buydu — varsayılan instance'ın bildirimleri "[json]" etiketiyle gidiyordu.
+function instanceLabel(configFile) {
+  const base = String(configFile).replace(/^.*[\\/]/, ''); // yol verilse de dosya adı
+  return base.replace(/\.json$/, '').replace(/^config\.?/, '') || 'main';
+}
+
+module.exports = { parseArgs, instanceLabel, DEFAULTS };
