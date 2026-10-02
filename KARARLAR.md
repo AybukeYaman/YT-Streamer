@@ -808,3 +808,69 @@ Ayrıca gerçek `loadConfig` ile yüklendi: OK. 375 test geçiyor. Son satırdak
 **Hâlâ açık:** `add-stream.sh`'in tamamı (systemd template unit yazımı, `enable --now`,
 ikinci stream key ile canlı yayın) VPS'te doğrulanmadı. Bu kayıt yalnızca config üretim
 adımını kapsıyor.
+
+---
+
+## [Faz 9 A] "already-live" kararina ingest sagligi katildi (stale tespiti) — 2 Ekim 2026
+
+**Olay (1 Ekim):** yt-streamer servisi ~2 saat durmus kaldi. Tekrar baslatildiginda
+ffmpeg saglikli akti (`speed=1x`) ama go-live "already-live" demeye devam etti:
+
+```json
+{"broadcastId":"hSqzx1FiX_k","liveStatus":"live",
+ "ingest":{"streamStatus":"inactive","healthStatus":"noData"}}
+```
+
+**Sebep:** `#existingBroadcast` idempotans kararini YALNIZCA `lifeCycleStatus`
+(`live/testing/liveStarting`) uzerinden veriyordu. `getStreamStatus` kodda vardi ama
+sadece `getStatus({refresh:true})` yolunda kullaniliyordu — `goLive()` yolunda hic
+sorulmuyordu. Yayin kanalda "live" gorunurken veri almiyordu ve sistem "her sey yolunda"
+sayip hicbir sey yapmadi.
+
+**Iki emniyetin ikisi de bu koseye kordu:** process exit kontrolu (ffmpeg ayakta) ve
+`speed` guard'i (SONUC.md R1) — olu-ama-acik sokete yazan ffmpeg'in speed'i 1.00x kalir.
+
+**Karar: otomatik kurtarma YAPILMIYOR (A fazi salt-okunur).** Broadcast'i `complete`'e
+alip yenisini acmak ise yaramaz: ingest **stream'in** ozelligi, broadcast'in degil. Yeni
+broadcast de `transition('live')` edilemez (ingest hala inactive) ve kanalda biri
+`complete` biri `created` iki cop yayin kalir — ustelik `complete` geri alinamaz. Gercek
+kurtarma ffmpeg'in RTMP oturumunu yenilemeyi gerektirir, o da encoder surecinin isi.
+Otomatik kurtarma (B fazi) ayri ve sonra: stale tespit → encoder RTMP yenile → ingest
+aktif olana kadar bekle → broadcast hala `live` ise DOKUNMA, degilse insert/bind/transition.
+Eski broadcast, yeni ingest aktif oldugu dogrulanana kadar sonlandirilmaz.
+
+**Esikler ve gerekceleri:**
+- `staleGraceMs = 60000`: ingest saglikli degilse hemen stale denmez, 60 sn izlenir.
+  Neden sart: her albüm gecisinde ffmpeg yeniden basliyor (Faz 3.1 B), RTMP oturumu
+  yenileniyor ve ingest'in kisa sure `inactive` gorunmesi NORMAL. Tek ornege bakmak
+  albüm sinirina denk gelen her tetikte yanlis alarm uretirdi. Esik boylece tahmin degil
+  olcum: "encoder'a, biz izlerken, toparlanmasi icin verilen sure". 60 sn = soguk
+  baslangic butcesinin (120 sn) yarisi, gozlenen yeniden baglanma suresinin kat kat ustu.
+- `streamStatus` otorite, `healthStatus === 'noData'` saglıksız. **`bad` stale SAYILMAZ**:
+  veri geliyor ama sorunlu demektir (bitrate/keyframe); bunun icin calisan bir yayini
+  reddetmek yanlis olurdu — yalnizca `warn`.
+- Periyodik kontrol (A′) `60 sn`, **3 ardisik** saglıksız ornekte alarm (~3 dk). Tek
+  ornek yetmez (albüm gecisi dipleri, API teklemesi). API HATASI saglıksızlık kaniti
+  SAYILMAZ: sayac artmaz, yoksa kota/ag teklemesi olu olmayan yayin icin alarm uretir.
+
+**Kota:** yoklama basina 1 birim (`liveStreams.list`), 60 sn ile 1440 birim/gun —
+10.000'lik gunluk kotanin ~%14'u, iki yayinda ~%29'u. Kayitta canli broadcast yokken
+hic API cagrisi yapilmaz (`checkIngestHealth` erken doner).
+
+**HTTP 409 (`stale_broadcast`), 200 + `action:'stale'` DEGIL:** telefon kestirmesi
+(Shortcuts) durum kodunu ozel olarak kontrol etmedikce 200'u basari gibi gosterir. Bu
+ariza elle mudahale istiyor, gorunur olmali.
+
+**Neden periyodik kontrol sart (A′):** A yalnizca TETIKLENDIGINDE calisir; 1 Ekim'de
+kimse tetiklemedi, kimse bakmadi. Tetikler arasindaki korlugu kapatan tek sey periyodik
+kontroldur. `IngestHealthMonitor` go-live HTTP surecinde yasar (YouTube API ve broadcast
+kaydi orada); `setInterval` degil `setTimeout` zinciri — yavas bir yoklama cagrilari
+ust uste bindirmesin.
+
+**Kapsam disi:** TUI/dashboard broadcast durumunu hic bilmiyor (ayri surec, `index.js`
+YouTube API'yi tanimaz) — saglik gostergesi oraya eklenmedi, surecler arasi tesisat
+kurmak bu fazin isi degil. Durum `GET /status` (health, unhealthySince, healthy) ve
+loglardan izlenir.
+
+**Dogrulama:** 389 test gecer (14 yeni). VPS'te dogrulanmadi: gercek stale senaryosu
+(Studio'dan elle sonlandirip tetikleme) ve periyodik kontrolun canli yayinda davranisi.

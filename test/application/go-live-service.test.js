@@ -151,6 +151,110 @@ test('testing durumu da canlı sayılır (insert yapılmaz)', async () => {
   assert.ok(!names(api.calls).includes('insertBroadcast'));
 });
 
+// STALE TESPİTİ (1 Ekim olayı): broadcast YouTube'da "live" ama ingest veri almıyordu;
+// eski kod yalnızca lifeCycleStatus'a baktığı için "zaten canlı" deyip hiçbir şey yapmadı
+// ve yayın ~2 saat ölü kaldı.
+test('broadcast live ama ingest inactive: already-live DEĞİL, stale_broadcast ile reddedilir', async () => {
+  const stateStore = fakeStateStore({
+    broadcastId: 'hSqzx1FiX_k', streamId: STREAM_ID, status: 'live', title: 't',
+    createdAt: '2026-09-30T10:00:00.000Z',
+  });
+  const api = fakeApi({
+    broadcasts: { hSqzx1FiX_k: { id: 'hSqzx1FiX_k', status: { lifeCycleStatus: 'live' } } },
+    streams: [{ streamStatus: 'inactive', healthStatus: 'noData' }],
+  });
+  let t = 0;
+  const { service, lines } = setup({ api, stateStore, staleGraceMs: 10, now: () => (t += 10) });
+
+  const caught = await service.goLive().then(() => null, (e) => e);
+  assert.ok(caught instanceof GoLiveError);
+  assert.equal(caught.code, 'stale_broadcast');
+  assert.equal(caught.details.broadcastId, 'hSqzx1FiX_k');
+  assert.deepEqual(caught.details.ingest, { streamStatus: 'inactive', healthStatus: 'noData' });
+  // Hiçbir YouTube YAZMA çağrısı yapılmaz: broadcast'i complete'e almak ingest'i
+  // diriltmez, yalnızca kanalda çöp bırakır (A fazı bilerek salt-okunur).
+  assert.ok(!names(api.calls).includes('insertBroadcast'));
+  assert.ok(!names(api.calls).includes('transitionBroadcast'));
+  assert.ok(!names(api.calls).includes('bindBroadcast'));
+  // Kayıtta iz bırakır ki getStatus() refresh olmadan da gösterebilsin.
+  assert.equal(stateStore.state.health, 'stale');
+  assert.ok(stateStore.state.unhealthySince);
+  // Broadcast'in gerçek yaşı korunur (createdAt "şimdi" ile ezilmez).
+  assert.equal(stateStore.state.createdAt, '2026-09-30T10:00:00.000Z');
+  assert.ok(lines.some((l) => l.level === 'error' && /ÖLÜ/.test(l.m)));
+});
+
+test('ingest grace penceresinde toparlanırsa already-live (albüm geçişi yanlış alarm vermez)', async () => {
+  const stateStore = fakeStateStore({ broadcastId: 'b', streamId: STREAM_ID, status: 'live' });
+  const api = fakeApi({
+    broadcasts: { b: { id: 'b', status: { lifeCycleStatus: 'live' } } },
+    // ffmpeg albüm geçişinde yeniden bağlanıyor: iki yoklama inactive, sonra active.
+    streams: [
+      { streamStatus: 'inactive', healthStatus: 'noData' },
+      { streamStatus: 'inactive', healthStatus: 'noData' },
+      { streamStatus: 'active', healthStatus: 'good' },
+    ],
+  });
+  let t = 0;
+  const { service, lines } = setup({ api, stateStore, staleGraceMs: 10_000, now: () => (t += 10) });
+
+  const result = await service.goLive();
+  assert.equal(result.action, 'already-live');
+  assert.ok(!names(api.calls).includes('insertBroadcast'));
+  assert.ok(lines.some((l) => /ingest geri döndü/.test(l.m)));
+});
+
+// 'bad' veri GELİYOR ama sorunlu demek — bunun için canlı yayını reddetmek yanlış olur.
+test('ingest active + healthStatus bad: canlı sayılır, yalnızca uyarı', async () => {
+  const stateStore = fakeStateStore({ broadcastId: 'b', streamId: STREAM_ID, status: 'live' });
+  const api = fakeApi({
+    broadcasts: { b: { id: 'b', status: { lifeCycleStatus: 'live' } } },
+    streams: [{ streamStatus: 'active', healthStatus: 'bad' }],
+  });
+  const { service, lines } = setup({ api, stateStore });
+
+  assert.equal((await service.goLive()).action, 'already-live');
+  assert.ok(lines.some((l) => l.level === 'warn' && /bad/.test(l.m)));
+});
+
+test('getStatus(refresh): broadcast live + ingest inactive → healthy false', async () => {
+  const stateStore = fakeStateStore({ broadcastId: 'b', streamId: STREAM_ID, status: 'live' });
+  const api = fakeApi({
+    broadcasts: { b: { id: 'b', status: { lifeCycleStatus: 'live' } } },
+    streams: [{ streamStatus: 'inactive', healthStatus: 'noData' }],
+  });
+  const { service } = setup({ api, stateStore });
+
+  const status = await service.getStatus({ refresh: true });
+  assert.equal(status.liveStatus, 'live');
+  assert.equal(status.healthy, false);
+  assert.deepEqual(status.ingest, { streamStatus: 'inactive', healthStatus: 'noData' });
+});
+
+test('checkIngestHealth: yalnız liveStreams sorgulanır (broadcast çekilmez)', async () => {
+  const stateStore = fakeStateStore({ broadcastId: 'b', streamId: STREAM_ID, status: 'live' });
+  const api = fakeApi({
+    broadcasts: { b: { id: 'b', status: { lifeCycleStatus: 'live' } } },
+    streams: [{ streamStatus: 'active', healthStatus: 'good' }],
+  });
+  const { service } = setup({ api, stateStore });
+
+  const result = await service.checkIngestHealth();
+  assert.equal(result.healthy, true);
+  assert.equal(result.broadcastId, 'b');
+  assert.deepEqual(names(api.calls), ['getAccessToken', 'getStreamStatus']);
+});
+
+test('checkIngestHealth: kayıt canlı değilse hiç API çağrısı yapılmaz (kota)', async () => {
+  const stateStore = fakeStateStore({ broadcastId: 'b', streamId: STREAM_ID, status: 'complete' });
+  const api = fakeApi();
+  const { service } = setup({ api, stateStore });
+
+  const result = await service.checkIngestHealth();
+  assert.equal(result.skipped, true);
+  assert.deepEqual(api.calls, []);
+});
+
 test('kayıtlı broadcast YouTube\'da yoksa kayıt temizlenir ve yenisi açılır', async () => {
   const stateStore = fakeStateStore({ broadcastId: 'silinmis', status: 'live' });
   const api = fakeApi({ broadcasts: {} }); // getBroadcast → null
@@ -430,4 +534,18 @@ test('zaten canlıysa küçük resim yüklenmez', async () => {
 
   assert.equal((await service.goLive()).action, 'already-live');
   assert.ok(!names(api.calls).includes('setThumbnail'));
+});
+
+test('getStatus(refresh=false): stale izi API’ye gitmeden görünür', async () => {
+  const stateStore = fakeStateStore({
+    broadcastId: 'b', streamId: STREAM_ID, status: 'live',
+    health: 'stale', unhealthySince: '2026-10-01T12:00:00.000Z',
+  });
+  const api = fakeApi();
+  const { service } = setup({ api, stateStore });
+
+  const status = await service.getStatus();
+  assert.equal(status.health, 'stale');
+  assert.equal(status.unhealthySince, '2026-10-01T12:00:00.000Z');
+  assert.deepEqual(api.calls, []); // kota harcanmaz
 });

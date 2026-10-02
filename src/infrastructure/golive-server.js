@@ -158,6 +158,15 @@ class GoLiveServer {
           return this.#json(res, 200, { ok: true, ...result });
         } catch (err) {
           if (err.code === 'busy') return this.#json(res, 409, { error: 'busy', message: err.message });
+          // stale_broadcast 409: 200 + action:'stale' dönmek telefon kestirmesinde
+          // (Shortcuts durum kodunu özel olarak kontrol etmedikçe) başarı gibi görünür.
+          // Bu arıza elle müdahale istiyor, görünür olmalı.
+          if (err.code === 'stale_broadcast') {
+            this.log.error(`go-live reddedildi: ${err.message}`);
+            return this.#json(res, 409, {
+              error: 'stale_broadcast', message: err.message, details: err.details ?? null,
+            });
+          }
           this.log.error(`go-live başarısız: ${err.message}`);
           return this.#json(res, 502, { error: err.code ?? 'go_live_failed', message: err.message });
         }

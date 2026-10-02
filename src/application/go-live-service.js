@@ -15,11 +15,33 @@
 // akışı görmesi saniyeler alır; 2 dk, yavaş bir bağlantı için bile bol.
 const DEFAULT_INGEST_TIMEOUT_MS = 120000;
 const DEFAULT_POLL_INTERVAL_MS = 3000;
+// Broadcast YouTube'da canlı görünüyor ama ingest veri almıyorsa, "stale" demeden önce
+// tanınan süre. Neden gerekli: her albüm geçişinde ffmpeg yeniden başlıyor (Faz 3.1 B
+// yaklaşımı), yani RTMP oturumu yenileniyor ve ingest'in kısa süre 'inactive' görünmesi
+// NORMAL. Tek örneğe bakıp stale demek, albüm sınırına denk gelen her tetikte yanlış
+// alarm üretir. 60 sn: çalışmakta olan bir encoder'ın yeniden bağlanması + YouTube'un
+// akışı görmesi saniyeler mertebesinde (Faz 9 gözlemi); soğuk başlangıç için tanınan
+// süre zaten 120 sn, bu onun yarısı ve gözlenenin kat kat üstü.
+const DEFAULT_STALE_GRACE_MS = 60000;
 // Canlı sayılan durumlar: bunlardan biri varsa yeni broadcast açılmaz.
 const ACTIVE_STATUSES = new Set(['live', 'testing', 'liveStarting']);
 // Oluşturulmuş ama canlıya alınamamış broadcast: yenisini açmak yerine YENİDEN KULLANILIR
 // (yarım kalan denemeler kanalda çöp yayın bırakmasın).
 const REUSABLE_STATUSES = new Set(['created', 'ready']);
+
+// ingest sağlıklı mı? streamStatus OTORİTEDİR ("veri geliyor mu"); healthStatus yalnızca
+// 'noData' olduğunda sağlıksız sayılır.
+//
+// 'bad' BİLEREK sağlıksız sayılmaz: 'bad' veri geliyor ama sorunlu demektir (bitrate,
+// keyframe aralığı). Bunun için bir yayını stale ilan edip tetiği reddetmek, çalışan bir
+// yayını durdurmak olurdu — 'bad' yalnızca uyarı konusudur.
+function ingestHealthy(status) {
+  return status?.streamStatus === 'active' && status?.healthStatus !== 'noData';
+}
+
+function describeIngest(status) {
+  return `${status?.streamStatus ?? 'bilinmiyor'}/${status?.healthStatus ?? 'bilinmiyor'}`;
+}
 
 class GoLiveError extends Error {
   constructor(message, { code = 'go_live_failed', details = null } = {}) {
@@ -39,6 +61,7 @@ class GoLiveService {
     api, stateStore, log, broadcastConfig, streamKey,
     ingestTimeoutMs = DEFAULT_INGEST_TIMEOUT_MS,
     pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
+    staleGraceMs = DEFAULT_STALE_GRACE_MS,
     now = () => Date.now(),
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   }) {
@@ -49,6 +72,7 @@ class GoLiveService {
     this.streamKey = streamKey;
     this.ingestTimeoutMs = ingestTimeoutMs;
     this.pollIntervalMs = pollIntervalMs;
+    this.staleGraceMs = staleGraceMs;
     this.now = now;
     this.sleep = sleep;
     // Tek-uçuş kilidi: iOS'ta çift dokunma iki broadcast yaratmasın.
@@ -70,18 +94,46 @@ class GoLiveService {
       title: state?.title ?? null,
       createdAt: state?.createdAt ?? null,
       wentLiveAt: state?.wentLiveAt ?? null,
+      // Son stale tespitinin izi: refresh=false çağrısında (telefonun sık yokladığı
+      // ucuz yol) da görünür olsun — API'ye gitmeden "bir şey yanlış" sinyali.
+      health: state?.health ?? null,
+      unhealthySince: state?.unhealthySince ?? null,
       busy: this.busy,
     };
     if (!refresh || !state?.broadcastId) return base;
 
     const { accessToken } = await this.api.getAccessToken();
     const broadcast = await this.api.getBroadcast({ accessToken, broadcastId: state.broadcastId });
-    if (!broadcast) return { ...base, status: 'missing', liveStatus: null };
+    if (!broadcast) return { ...base, status: 'missing', liveStatus: null, healthy: false };
     const liveStatus = broadcast.status?.lifeCycleStatus ?? null;
     const ingest = state.streamId
       ? await this.api.getStreamStatus({ accessToken, streamId: state.streamId })
       : { streamStatus: null, healthStatus: null };
-    return { ...base, status: liveStatus ?? base.status, liveStatus, ingest };
+    // healthy = "yayın gerçekten akıyor": broadcast canlı VE ingest veri alıyor.
+    // Bu ikisini ayrı tutmanın sebebi 1 Ekim olayı: broadcast 'live', ingest
+    // 'inactive/noData' — eski kod buna "her şey yolunda" diyordu.
+    const healthy = ACTIVE_STATUSES.has(liveStatus) && ingestHealthy(ingest);
+    return { ...base, status: liveStatus ?? base.status, liveStatus, ingest, healthy };
+  }
+
+  // Periyodik sağlık kontrolünün (IngestHealthMonitor) tek API dokunuşu: YALNIZCA
+  // liveStreams sorgulanır (1 kota birimi), broadcast çekilmez. Kayıtta canlı bir
+  // broadcast yoksa hiç API çağrısı yapılmaz — yayın yokken kota harcanmaz.
+  async checkIngestHealth() {
+    const state = this.stateStore.load();
+    if (!state?.broadcastId || !state?.streamId) return { skipped: true, reason: 'kayıtlı yayın yok' };
+    if (!ACTIVE_STATUSES.has(state.status)) {
+      return { skipped: true, reason: `kayıtlı durum canlı değil (${state.status ?? 'yok'})` };
+    }
+    const { accessToken } = await this.api.getAccessToken();
+    const ingest = await this.api.getStreamStatus({ accessToken, streamId: state.streamId });
+    return {
+      skipped: false,
+      healthy: ingestHealthy(ingest),
+      ingest,
+      broadcastId: state.broadcastId,
+      streamId: state.streamId,
+    };
   }
 
   // Tek giriş noktası. Eşzamanlı ikinci çağrı aynı promise'i beklemez, açıkça reddedilir:
@@ -98,10 +150,41 @@ class GoLiveService {
     const { accessToken } = await this.api.getAccessToken();
     const streamId = await this.#resolveStreamId(accessToken);
 
-    const existing = await this.#existingBroadcast(accessToken);
+    const existing = await this.#existingBroadcast(accessToken, streamId);
     if (existing?.kind === 'live') {
       this.log.info(`broadcast zaten canlı (${existing.broadcastId}, ${existing.status}) — yeni insert yapılmadı`);
-      return { action: 'already-live', ...existing, kind: undefined };
+      return { action: 'already-live', ...existing, kind: undefined, ingest: existing.ingest };
+    }
+    // Broadcast YouTube'da canlı ama ingest ölü: otomatik düzeltme BİLEREK yapılmıyor.
+    // Broadcast'i complete'e alıp yenisini açmak işe yaramaz — ingest stream'in özelliği,
+    // broadcast'in değil; yeni broadcast de transition edilemez (ingest hâlâ inactive) ve
+    // kanalda biri 'complete' biri 'created' iki çöp yayın kalır. Gerçek kurtarma ffmpeg'in
+    // RTMP oturumunu yenilemeyi gerektirir, o da encoder sürecinin işi. Ayrıntı: KARARLAR.md
+    if (existing?.kind === 'stale') {
+      this.log.error(
+        `broadcast ${existing.broadcastId} YouTube'da "${existing.status}" ama ingest ` +
+        `${Math.round(this.staleGraceMs / 1000)} sn boyunca veri almadı (${describeIngest(existing.ingest)}) — ` +
+        'yayın ÖLÜ. Düzeltme: Studio\'dan yayını sonlandır VE encoder\'ı yeniden başlat ' +
+        '(systemctl restart yt-streamer), sonra go-live\'ı tekrar tetikle.',
+      );
+      // Kayda yazılır: bundan sonra getStatus() refresh olmadan da durumu gösterir.
+      this.#saveState({
+        broadcastId: existing.broadcastId,
+        streamId: existing.streamId ?? streamId,
+        status: existing.status,
+        title: existing.title,
+        wentLiveAt: existing.wentLiveAt,
+        // Kaydın yaşı korunur: #saveState verilmeyen createdAt'i "şimdi" yapar ve
+        // broadcast'in gerçek oluşma zamanı kaybolurdu.
+        createdAt: this.stateStore.load()?.createdAt,
+        health: 'stale',
+        unhealthySince: new Date(this.now()).toISOString(),
+      });
+      throw new GoLiveError(
+        `broadcast canlı görünüyor ama ingest veri almıyor (${describeIngest(existing.ingest)}) — ` +
+        'elle müdahale gerekiyor: Studio\'dan yayını sonlandır ve encoder\'ı yeniden başlat',
+        { code: 'stale_broadcast', details: { ...existing, kind: undefined } },
+      );
     }
 
     // ingest kontrolü insert'ten ÖNCE: ffmpeg basmıyorken broadcast oluşturmak, kanalda
@@ -193,10 +276,11 @@ class GoLiveService {
   // broadcast yüzünden go-live sonsuza kadar "zaten canlı" demesin.
   //
   // Üç sonuç:
-  //   { kind: 'live' }      → zaten canlı, hiçbir şey yapılmayacak
+  //   { kind: 'live' }      → gerçekten akıyor (broadcast canlı VE ingest veri alıyor)
+  //   { kind: 'stale' }     → broadcast canlı ama ingest ölü; "zaten canlı" SAYILMAZ
   //   { kind: 'reusable' }  → oluşturulmuş ama canlıya alınamamış; yeniden kullanılacak
   //   null                  → kullanılabilir kayıt yok, yeni insert gerekiyor
-  async #existingBroadcast(accessToken) {
+  async #existingBroadcast(accessToken, streamId) {
     const state = this.stateStore.load();
     if (!state?.broadcastId) return null;
     const broadcast = await this.api.getBroadcast({ accessToken, broadcastId: state.broadcastId });
@@ -213,12 +297,48 @@ class GoLiveService {
       title: state.title ?? broadcast.snippet?.title ?? null,
       wentLiveAt: state.wentLiveAt ?? null,
     };
-    if (ACTIVE_STATUSES.has(lifeCycle)) return { kind: 'live', ...base };
+    if (ACTIVE_STATUSES.has(lifeCycle)) {
+      // "Canlı" kararı ARTIK ingest'e de bakıyor: 1 Ekim olayında broadcast 'live',
+      // ingest 'inactive/noData' idi ve sistem hiçbir şey yapmadan "zaten canlı" dedi.
+      const ingest = await this.#ingestWithGrace({ accessToken, streamId: base.streamId ?? streamId });
+      if (ingestHealthy(ingest)) {
+        if (ingest.healthStatus === 'bad') {
+          this.log.warn(`ingest sağlığı "bad" (veri geliyor ama sorunlu) — yayın canlı sayıldı`);
+        }
+        return { kind: 'live', ...base, ingest };
+      }
+      return { kind: 'stale', ...base, ingest };
+    }
     if (REUSABLE_STATUSES.has(lifeCycle)) return { kind: 'reusable', ...base };
     // complete / revoked: bir daha canlıya alınamaz, yenisi gerekiyor.
     this.log.warn(`kayıtlı broadcast ${state.broadcastId} kullanılamaz durumda (${lifeCycle}) — kayıt temizlendi`);
     this.stateStore.clear();
     return null;
+  }
+
+  // Canlı görünen bir broadcast'in ingest'i: ilk bakışta sağlıklıysa tek çağrı yeter.
+  // Değilse stale demeden önce staleGraceMs boyunca izlenir — albüm geçişindeki RTMP
+  // yeniden bağlanması bu pencerede toparlanır ve yanlış alarm üretmez. Eşik böylece
+  // tahmin değil ölçüm olur: "encoder'a, biz izlerken, toparlanması için verilen süre".
+  async #ingestWithGrace({ accessToken, streamId }) {
+    if (!streamId) return { streamStatus: null, healthStatus: null };
+    let status = await this.api.getStreamStatus({ accessToken, streamId });
+    if (ingestHealthy(status)) return status;
+
+    const deadline = this.now() + this.staleGraceMs;
+    this.log.warn(
+      `broadcast canlı ama ingest veri almıyor (${describeIngest(status)}) — ` +
+      `${Math.round(this.staleGraceMs / 1000)} sn boyunca toparlanması bekleniyor`,
+    );
+    while (this.now() < deadline) {
+      await this.sleep(this.pollIntervalMs);
+      status = await this.api.getStreamStatus({ accessToken, streamId });
+      if (ingestHealthy(status)) {
+        this.log.info(`ingest geri döndü (${describeIngest(status)}) — geçici kesintiydi, yayın canlı`);
+        return status;
+      }
+    }
+    return status;
   }
 
   // ingest 'active' olmadan transition('live') hata verir; ffmpeg'in akışı YouTube'a

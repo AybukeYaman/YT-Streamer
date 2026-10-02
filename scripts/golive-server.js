@@ -17,6 +17,7 @@ const { loadConfig } = require('../src/config/load-config');
 const { loadYoutubeCredentials } = require('../src/infrastructure/youtube-credentials');
 const { buildGoLive } = require('../src/composition/go-live-wiring');
 const { GoLiveServer } = require('../src/infrastructure/golive-server');
+const { IngestHealthMonitor } = require('../src/application/ingest-health-monitor');
 
 const DEFAULT_PORT = 8787;
 
@@ -67,6 +68,14 @@ async function main() {
   log.info(`yayın başlığı: "${config.broadcast.title}" (${config.broadcast.privacyStatus})`);
   log.info('POST /go-live · GET /status · GET /healthz');
 
+  // Periyodik ingest sağlık kontrolü: tetikler arasındaki körlüğü kapatır (1 Ekim olayı —
+  // yayın ~2 saat ölü kaldı, kimse tetiklemediği için kimse fark etmedi).
+  const monitor = new IngestHealthMonitor({
+    goLiveService: service,
+    log: logger.child('ingest-saglik'),
+  });
+  monitor.start();
+
   let shuttingDown = false;
   const shutdown = async (reason) => {
     if (shuttingDown) {
@@ -75,6 +84,7 @@ async function main() {
     }
     shuttingDown = true;
     log.info(`${reason} alındı, sunucu kapatılıyor`);
+    monitor.stop();
     await server.close();
     log.info('temiz kapanış tamamlandı');
     process.exitCode = 0;
