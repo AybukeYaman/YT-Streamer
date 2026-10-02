@@ -12,4 +12,15 @@ function readMtimeMs(file) {
   }
 }
 
-module.exports = { readMtimeMs };
+// Park işareti (.env.<isim>.disabled) gibi "var mı?" sorularına cevap. Hata YUTULUR:
+// işareti okuyamamak izlemeyi durdurmamalı, en kötü hâlde park edilmemiş sayılır.
+function fileExists(file) {
+  try {
+    fs.accessSync(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+module.exports = { readMtimeMs, fileExists };

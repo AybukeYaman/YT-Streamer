@@ -25,6 +25,10 @@ class HealthMonitor {
     checks, log,
     alerter = null, // { alert({ level, title, message }) } — yoksa yalnızca log
     pingAlive = null, // async () => void — ölü adam anahtarı; yoksa atlanır
+    // paused: () => boolean — true ise bu tur hiçbir kontrol ÇALIŞTIRILMAZ (hepsi
+    // 'skipped' sayılır). Yayın bilerek park edildiğinde (.env.<isim>.disabled) alarm
+    // üretmemek için: aksi halde kapattığın yayın için her 3 dakikada bildirim gelirdi.
+    paused = null,
     intervalMs = DEFAULT_INTERVAL_MS,
     unhealthyThreshold = DEFAULT_UNHEALTHY_THRESHOLD,
     setTimeoutFn = setTimeout,
@@ -35,6 +39,7 @@ class HealthMonitor {
     this.log = log;
     this.alerter = alerter;
     this.pingAlive = pingAlive;
+    this.paused = paused;
     this.intervalMs = intervalMs;
     this.unhealthyThreshold = unhealthyThreshold;
     this.setTimeoutFn = setTimeoutFn;
@@ -98,6 +103,20 @@ class HealthMonitor {
   // Tek tur: tüm kontroller çalışır. Dışarıya açık — testler timer kurmadan çağırabiliyor.
   async tick() {
     const results = {};
+    // Park edilmiş yayın: kontrol çalıştırmanın anlamı yok (encoder bilerek kapalı,
+    // broadcast kaydı eski olabilir). Sayaçlar sıfırlanır ve ping ATILIR — park etmek
+    // bilinçli bir karar, dış izleme servisi de alarm çalmasın.
+    if (this.paused && this.paused()) {
+      for (const check of this.checks) {
+        results[check.name] = { status: 'skipped', message: 'yayın park edilmiş (izleme duraklatıldı)' };
+        const s = this.state.get(check.name);
+        s.last = results[check.name];
+        s.consecutive = 0;
+        s.alerted = false;
+      }
+      await this.#ping();
+      return results;
+    }
     for (const check of this.checks) {
       results[check.name] = await this.#runCheck(check);
     }

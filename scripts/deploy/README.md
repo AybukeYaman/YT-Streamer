@@ -144,6 +144,40 @@ systemctl restart yt-streamer@stream2
 systemctl disable --now yt-streamer@stream2   # yayını kaldır
 ```
 
+### Bir yayını bilerek kapatma (park etme)
+
+`systemctl disable --now` **yetmez**: `add-stream.sh`'ın tekrar çalıştırılması (ör. config
+güncellemek için) `enable --now` ile yayını geri açar — 1 Ekim'de olan tam buydu. Niyeti
+**repoda kaydetmek** gerekiyor:
+
+```bash
+sudo systemctl disable --now yt-streamer@stream2
+touch .env.stream2.disabled                  # PARK İŞARETİ
+```
+
+İşaret dosyası varken:
+
+| Komut | Davranış |
+|---|---|
+| `bash deploy.sh` | Instance'a **dokunmaz**, özette "BİLEREK PARK EDİLMİŞ" diye raporlar |
+| `add-stream.sh stream2` | Yapılandırmayı günceller ama **başlatmaz**; `--force` ister |
+| `yt-golive` sağlık izlemesi | O instance için **duraklar** (alarm/bildirim göndermez) |
+
+Geri açmak:
+```bash
+rm .env.stream2.disabled
+sudo bash scripts/deploy/add-stream.sh stream2
+```
+
+İşaret dosyası makineye özel; `.gitignore` zaten `.env.*` kalıbını kapsıyor, git'e girmez.
+Ana yayın için aynı sözleşme: `.env.disabled`.
+
+**Neden `is-enabled` yerine `UnitFileState` beyaz listesi:** `systemctl is-enabled --quiet`
+çıkış kodu `static`, `indirect`, `generated` ve `transient` durumlarında da **0** döner.
+Unit bunlardan birine düşerse eski kod onu "enable edilmiş" sayıp restart ediyordu. Artık
+yalnızca `enabled` ve `enabled-runtime` restart edilir; tanımadığımız durumda **dokunulmaz**
+(karar: `scripts/deploy/lib/instance-state.sh`, testleri `test/scripts/instance-state.test.js`).
+
 > İlk (ana) yayın `yt-streamer.service` olarak `config.json` + `.env` ile çalışmaya devam eder; ek yayınlar `yt-streamer@<isim>` template'ini kullanır.
 
 ### Çift-instance koruması

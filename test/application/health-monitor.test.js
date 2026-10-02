@@ -220,3 +220,50 @@ test('bildirim kanalı yoksa uyarı loglanır ve tur çalışır', async () => {
   assert.ok(lines.some((l) => /bildirim kanalı yok/.test(l.m)));
   assert.ok(lines.some((l) => l.level === 'error'));
 });
+
+// ── Park edilmiş yayın: izleme duraklar ─────────────────────────────────────
+// Bilerek kapatılmış bir yayın için her 3 dakikada bildirim göndermek gürültüden
+// başka bir şey değil (.env.<isim>.disabled işareti — deploy.sh ile aynı sözleşme).
+test('paused() true ise kontroller HİÇ çalıştırılmaz, hepsi skipped', async () => {
+  let ran = 0;
+  const check = { name: 'encoder', run: async () => { ran += 1; return UNHEALTHY; } };
+  const { monitor, lines, alerter } = setup([check], { paused: () => true, unhealthyThreshold: 1 });
+
+  const results = await monitor.tick();
+  assert.equal(ran, 0, 'park edilmişken kontrol çalışmamalı');
+  assert.equal(results.encoder.status, 'skipped');
+  assert.match(results.encoder.message, /park edilmiş/);
+  assert.ok(!lines.some((l) => l.level === 'error'));
+  assert.deepEqual(alerter.sent, []);
+});
+
+test('park edilmişken ping ATILIR (dış izleme servisi alarm çalmasın)', async () => {
+  let pings = 0;
+  const { monitor } = setup([fakeCheck('encoder', [UNHEALTHY])], {
+    paused: () => true,
+    pingAlive: async () => { pings += 1; },
+  });
+  await monitor.tick();
+  assert.equal(pings, 1);
+});
+
+test('park edilmek birikmiş sayacı sıfırlar (geri açılınca sıfırdan başlar)', async () => {
+  let parked = false;
+  const { monitor, alerter } = setup([fakeCheck('encoder', [UNHEALTHY])], {
+    paused: () => parked, unhealthyThreshold: 3,
+  });
+
+  await monitor.tick();
+  await monitor.tick();
+  assert.equal(monitor.snapshot().encoder.consecutiveUnhealthy, 2);
+  parked = true;
+  await monitor.tick();
+  assert.equal(monitor.snapshot().encoder.consecutiveUnhealthy, 0);
+  assert.deepEqual(alerter.sent, []);
+});
+
+test('paused() false ise normal akış (varsayılan davranış korunur)', async () => {
+  const { monitor } = setup([fakeCheck('encoder', [HEALTHY])], { paused: () => false });
+  const results = await monitor.tick();
+  assert.equal(results.encoder.status, 'healthy');
+});

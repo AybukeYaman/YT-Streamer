@@ -11,10 +11,19 @@
 # gönderilemez (YouTube ikinciyi reddeder). Bu script key'i asla kopyalamaz/yazdırmaz.
 set -euo pipefail
 
-NAME="${1:-}"
+NAME=""
+FORCE=no
+for arg in "$@"; do
+  case "$arg" in
+    --force) FORCE=yes ;;
+    -*) echo "HATA: bilinmeyen secenek: $arg" >&2; exit 1 ;;
+    *) [ -z "$NAME" ] || { echo "HATA: birden fazla isim verildi" >&2; exit 1; }; NAME="$arg" ;;
+  esac
+done
 if [ -z "$NAME" ] || ! printf '%s' "$NAME" | grep -Eq '^[a-zA-Z0-9][a-zA-Z0-9_-]*$'; then
-  echo "Kullanim: sudo bash scripts/deploy/add-stream.sh <isim>" >&2
+  echo "Kullanim: sudo bash scripts/deploy/add-stream.sh <isim> [--force]" >&2
   echo "  <isim>: harf/rakam/-/_ (ornek: stream2)" >&2
+  echo "  --force: park edilmis (.env.<isim>.disabled) bir yayini yine de baslat" >&2
   exit 1
 fi
 
@@ -23,6 +32,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TEMPLATE_UNIT="/etc/systemd/system/yt-streamer@.service"
 CONFIG_FILE="$REPO_ROOT/config.$NAME.json"
 ENV_FILE="$REPO_ROOT/.env.$NAME"
+MARKER_FILE="$ENV_FILE.disabled"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "HATA: root gerekli (sudo bash scripts/deploy/add-stream.sh $NAME)" >&2
@@ -128,6 +138,24 @@ if [ "$KEY_SET" != "yes" ]; then
   echo "     sudo bash scripts/deploy/add-stream.sh $NAME"
   echo "====================================================="
   exit 0
+fi
+
+# ── Park isareti: bilerek kapatilmis yayini sessizce geri acma ──────────────
+# 1 Ekim olayi: stream2 stop+disable edilmisti, bu script tekrar calistirilinca
+# `enable --now` onu geri actı ve sonraki deploy'da "active running" gorundu. Isaret
+# dosyasi niyeti REPODA kaydediyor; buradan gecmek icin --force gerekiyor.
+if [ -e "$MARKER_FILE" ] && [ "$FORCE" != "yes" ]; then
+  echo ""
+  echo "DURDURULDU: bu yayin bilerek PARK EDILMIS ($(basename "$MARKER_FILE") var)."
+  echo "  Yapilandirma guncellendi ama servis BASLATILMADI."
+  echo "  Geri acmak icin sunlardan birini sec:"
+  echo "    rm $MARKER_FILE  &&  sudo bash scripts/deploy/add-stream.sh $NAME"
+  echo "    sudo bash scripts/deploy/add-stream.sh $NAME --force   # isareti birakir"
+  exit 0
+fi
+if [ -e "$MARKER_FILE" ]; then
+  echo "UYARI: park isareti var ama --force verildi — yayin baslatiliyor, isaret dosyasi KALDI."
+  echo "       (Sonraki deploy'da yine atlanir; kalici acmak icin: rm $MARKER_FILE)" >&2
 fi
 
 # ── Baslat / yeniden baslat ─────────────────────────────────────────────────

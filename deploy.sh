@@ -27,6 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 REPO_ROOT="$SCRIPT_DIR"
 CHECK_ENV="$REPO_ROOT/scripts/deploy/check-env.sh"
+INSTANCE_STATE_LIB="$REPO_ROOT/scripts/deploy/lib/instance-state.sh"
 SWEEP_ORPHANS="$REPO_ROOT/scripts/deploy/sweep-orphan-ffmpeg.sh"
 MAIN_SERVICE="yt-streamer"
 GOLIVE_SERVICE="yt-golive"
@@ -63,6 +64,9 @@ if [ "$DRY_RUN" = "yes" ]; then
 fi
 
 [ -f "$CHECK_ENV" ] || { echo "HATA: $CHECK_ENV yok." >&2; exit 1; }
+[ -f "$INSTANCE_STATE_LIB" ] || { echo "HATA: $INSTANCE_STATE_LIB yok." >&2; exit 1; }
+# shellcheck source=scripts/deploy/lib/instance-state.sh
+. "$INSTANCE_STATE_LIB"
 
 # Dry-run'da erken çıkmak yerine tüm sorunlar toplanır: tek tur bütün tabloyu göstersin.
 PROBLEMS=""
@@ -254,21 +258,41 @@ fi
 # ── 7) Ek yayınlar (.env.<isim> -> yt-streamer@<isim>) ──────────────────────
 # Her instance'ın env'i ayrı doğrulanır; eksikse SADECE o instance atlanır.
 SKIPPED=""
+PARKED=""
 shopt -s nullglob
 for env_file in "$REPO_ROOT"/.env.*; do
   base="$(basename "$env_file")"
   name="${base#.env.}"
   # .env.example sözleşme dosyası, bir instance değil.
   [ "$name" = "example" ] && continue
+  # .env.<isim>.disabled bir PARK İŞARETİ, kendi başına bir instance değil — yoksa
+  # glob onu "stream2.disabled" adlı bir yayın sanardı.
+  case "$name" in *.disabled) continue ;; esac
   unit="yt-streamer@$name.service"
+  marker="$env_file.disabled"
 
-  # Kurulu olmayan (add-stream.sh ile hiç enable edilmemiş) instance'ı restart etmeye
-  # çalışmak anlamsız — env dosyası elde kalmış olabilir.
-  if ! systemctl is-enabled --quiet "$unit" 2>/dev/null; then
-    echo ""
-    echo "bilgi: $name — $unit enable değil, atlandı (kurulum: sudo bash scripts/deploy/add-stream.sh $name)"
-    continue
-  fi
+  # Dokunulmalı mı? Karar scripts/deploy/lib/instance-state.sh'ta (test edilebilir).
+  # Park işareti systemd durumunu EZER; durum beyaz listesi ise `is-enabled --quiet`in
+  # 'static'/'indirect'/'generated' durumlarında da 0 dönmesi tuzağını kapatır.
+  action="$(instance_action "$unit" "$marker")"
+  case "$action" in
+    restart) ;;
+    skip:parked)
+      echo ""
+      echo "bilgi: $name — BİLEREK PARK EDİLMİŞ ($(basename "$marker") var), dokunulmadı."
+      echo "       Geri açmak için:  rm $marker  &&  sudo systemctl enable --now $unit"
+      PARKED="$PARKED $name"
+      continue ;;
+    skip:state=*)
+      echo ""
+      echo "bilgi: $name — $unit restart edilebilir durumda değil (UnitFileState=${action#skip:state=}), atlandı."
+      echo "       Kurulum/açma:  sudo bash scripts/deploy/add-stream.sh $name"
+      continue ;;
+    *)
+      echo ""
+      echo "UYARI: $name — beklenmeyen karar '$action', güvenli tarafta kalındı (dokunulmadı)." >&2
+      continue ;;
+  esac
 
   echo ""
   echo "== env doğrulama: $base =="
@@ -286,6 +310,11 @@ echo ""
 echo "=================== ÖZET ==================="
 echo "commit: $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
 systemctl list-units --type=service "yt-streamer*" "yt-golive*" --no-pager 2>/dev/null || true
+
+if [ -n "$PARKED" ]; then
+  echo ""
+  echo "BİLEREK PARK EDİLMİŞ YAYIN(LAR):$PARKED  (deploy dokunmadı)"
+fi
 
 if [ -n "$SKIPPED" ]; then
   echo ""

@@ -981,3 +981,49 @@ VPS'te dogrulanmadi: Shortcuts'tan gercek tetik, 202 sonrasi `/status` ile sonuc
 
 **Kapsam disi:** deploy'un disabled instance'a dokunmamasi (SORUN 3), maskelemenin tum
 scriptlere yayilmasi (SORUN 4).
+
+---
+
+## [Faz 3 / SORUN 3] Park edilmis instance'a deploy dokunmuyor — 2 Ekim 2026
+
+**Olay:** `yt-streamer@stream2` stop+disable edildi, sonraki deploy'da "active running"
+oldu. VPS kaniti (`UnitFileState=disabled`, `multi-user.target.wants/` icinde yok) bugun
+gercekten disabled oldugunu gosterdi; sebep deploy.sh DEGIL, ENOENT duzeltmesini test
+ederken `add-stream.sh stream2`'nin tekrar calistirilmasiydi — script sonunda
+`systemctl enable --now` var. Yani kapatma niyeti hicbir yerde KAYITLI DEGILDI, yalnizca
+systemd durumunda yasiyordu ve bir komut onu sessizce geri cevirdi.
+
+**Iki ayri duzeltme:**
+
+**1) Niyeti repoda kaydet — park isareti `.env.<isim>.disabled`.** Dosya varsa deploy
+dokunmuyor, `add-stream.sh` yapilandirmayi guncelliyor ama baslatmiyor (`--force` ister),
+saglik izlemesi o instance icin durakliyor. Isaret systemd durumunu EZIYOR: niyet
+dosyada oldugu icin `systemctl enable` ya da scriptin tekrar calistirilmasi gibi kazalar
+karari bozamiyor. Ana yayin icin ayni sozlesme (`.env.disabled`).
+
+**2) `is-enabled --quiet` yerine UnitFileState beyaz listesi.** Bugunun sebebi olmasa da
+gercek bir kusurdu: `systemctl is-enabled --quiet` cikis kodu 'static', 'indirect',
+'generated' ve 'transient' durumlarinda da 0 doner. Unit bunlardan birine duserse eski
+kod onu "enable edilmis" sayip restart ederdi. Artik yalnizca `enabled` ve
+`enabled-runtime` restart edilir; **tanimadigimiz durumda dokunulmuyor** (fail-safe).
+
+**Karar ayri dosyada (`scripts/deploy/lib/instance-state.sh`):** deploy.sh git pull/npm ci
+yaptigi icin uctan uca test edilemez. Karar bir fonksiyona cikinca sahte systemctl ile
+test edilebilir oldu — 'static'/'indirect'/'generated'/'transient' tuzaklarinin her biri
+icin ayri test var (test/scripts/instance-state.test.js).
+
+**Glob tuzagi:** `.env.*` dongusu `.env.stream2.disabled`'i "stream2.disabled" adli bir
+yayin sanardi — `*.disabled` acikca atlaniyor.
+
+**Izleme duraklatmasi monitor seviyesinde, kontrol seviyesinde DEGIL:** `paused()` true
+iken HICBIR kontrol calismiyor (hepsi 'skipped', sayaclar sifirlaniyor). Yalnizca encoder
+kontrolunu muaf tutmak yetmezdi: park edilmis bir yayinin `broadcast.json` kaydi 'live'
+kalmis olabilir ve ingest kontrolu alarm uretirdi. Tek kavram, iki kontrolu birlikte
+kapsiyor. **Ping ATILMAYA DEVAM EDIYOR**: park etmek bilincli bir karar, healthchecks.io
+da alarm calmasin.
+
+**Dogrulama:** 449 test gecer (20 yeni: 11 kabuk karari + 4 duraklatma + 5 file-stat).
+VPS'te dogrulanmadi: gercek deploy'da park edilmis instance'in atlanmasi ve add-stream.sh
+--force yolu.
+
+**Kapsam disi:** maskelemenin tum scriptlere yayilmasi (SORUN 4, siradaki faz).

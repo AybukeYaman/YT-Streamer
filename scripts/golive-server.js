@@ -22,9 +22,12 @@ const { IngestCheck } = require('../src/application/checks/ingest-check');
 const { EncoderHeartbeatCheck } = require('../src/application/checks/encoder-heartbeat-check');
 const { NullAlerter } = require('../src/application/alerter');
 const { WebhookAlerter, createAlivePinger } = require('../src/infrastructure/webhook-alerter');
-const { readMtimeMs } = require('../src/infrastructure/file-stat');
+const { readMtimeMs, fileExists } = require('../src/infrastructure/file-stat');
 
 const DEFAULT_PORT = 8787;
+// Park işareti ve .env yolları repo köküne göre çözülür (çalışma dizininden bağımsız,
+// systemd WorkingDirectory'si değişse de doğru).
+const REPO_ROOT = path.resolve(__dirname, '..');
 
 function parseArgs(argv) {
   const args = { configFile: 'config.json', envFile: '.env' };
@@ -73,6 +76,9 @@ async function main() {
   if (!credentials.alertWebhookUrl) {
     healthLog.warn('ALERT_WEBHOOK_URL boş — sorunlar yalnızca loga yazılacak, telefona bildirim GİTMEYECEK');
   }
+  // Park işareti yolu: .env → .env.disabled, .env.stream2 → .env.stream2.disabled.
+  // deploy.sh/add-stream.sh ile tek sözleşme (bkz. scripts/deploy/lib/instance-state.sh).
+  const parkMarkerPath = path.join(REPO_ROOT, `${args.envFile}.disabled`);
   // Encoder kalp atışı kontrolü İKİ yerde kullanılıyor: periyodik izleme ve go-live'ın
   // hızlı ön kontrolü (ffmpeg basmıyorken ingest beklemek boşuna). Tek nesne, tek eşik.
   const encoderCheck = new EncoderHeartbeatCheck({
@@ -90,6 +96,9 @@ async function main() {
     log: healthLog,
     alerter,
     pingAlive: createAlivePinger({ url: credentials.heartbeatPingUrl, log: healthLog }),
+    // Park işareti: deploy.sh ve add-stream.sh ile AYNI dosya (.env.<isim>.disabled).
+    // Bilerek kapatılmış bir yayın için alarm üretmek gürültüden başka bir şey değil.
+    paused: () => fileExists(parkMarkerPath),
   });
   const server = new GoLiveServer({
     goLiveService: service,
