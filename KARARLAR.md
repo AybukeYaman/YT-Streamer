@@ -1241,3 +1241,47 @@ aynı etiketi üretmek zorunda), sıra düzeltildi (önce uzantı, sonra önek) 
 eşikte alarm + yeniden başlatma devam, alarm tekrarlanmıyor, 5 dk sonra "düzeldi",
 toparlanma beklenirken gelen çökme kontrolü iptal ediyor, `stop()` de iptal ediyor, bozuk
 bildirim kanalı restart'ı etkilemiyor.
+
+---
+
+## [Faz B] Orphan sweep restart yoluna girdi (ExecStartPre) — 2 Ekim 2026
+
+**Soru:** Faz 7'de kapatılan "aynı key'e iki ffmpeg" deliği gerçekten kapandı mı?
+
+**Bulgu — hayır, yalnızca deploy yolunda kapandı.** `sweep-orphan-ffmpeg.sh`'in tek
+çağıranı `deploy.sh` idi. Oysa yetim bırakan yol tam olarak **systemd restart**: ffmpeg
+kesilemez bir I/O'da takılırsa `TimeoutStopSec=30` doluyor, systemd node'u SIGKILL ediyor,
+ffmpeg PPID=1'e düşüp yayına bağlı kalıyor. Üstüne, alarm mesajlarının operatöre söylediği
+düzeltme de birebir `systemctl restart yt-streamer`
+(`encoder-heartbeat-check.js`, `ingest-check.js`) — yani sistem, deliği açan komutu
+çözüm olarak öneriyordu. Faz A'daki sınırsız otomatik restart bunu birleştiriyor: SIGKILL →
+15 sn → süpürülmemiş restart.
+
+**Karar:** her iki unit şablonuna (`install-service.sh` tek yayın unit'i ve
+`add-stream.sh` `yt-streamer@.service` template'i) tek satır:
+
+```
+ExecStartPre=-/bin/bash $REPO_ROOT/scripts/deploy/sweep-orphan-ffmpeg.sh
+```
+
+- `-` öneki **bilinçli**: sweep başarısız olsa bile yayın başlar. Script'in kendi "deploy'u
+  durdurmaz, amaç restart'ın önünü temizlemek" ilkesinin (bkz. script başlığı) unit
+  karşılığı.
+- `/bin/bash <yol>` biçimi şart: script `100644` (çalıştırma biti yok), systemd de
+  `ExecStartPre`'da mutlak bir ikili bekliyor. `deploy.sh` de aynı şekilde `bash` ile
+  çağırıyor.
+- **Çoklu instance güvenli:** sweep repo genelinde tarıyor ama "meşru = ebeveyni bu
+  repodan çalışan CANLI bir `node .../index.js`" tanımı diğer instance'ların ve elle
+  başlatılmış yayınların ffmpeg'ini koruyor. ExecStartPre anında bizim node'umuz henüz
+  doğmadığı için yalnızca gerçek yetimler orphan sayılıyor. (Yanlış pozitif, Faz 7'de de
+  "en kritik risk" diye işaretlenmişti ve ayrı testi var.)
+- `deploy.sh`'teki çağrı **kaldırılmadı**: idempotent, exit 0 ve systemd dışı yolları da
+  (elle `node index.js`) kapsıyor. İki yerde olması zarar değil, kapsam farkı.
+
+Bu karar, Faz 7'deki "`install-service.sh` de ileride aynı kontrolü çağırabilsin"
+notunu kapatıyor.
+
+**Doğrulama:** heredoc'lar aynı değişkenlerle render edilip üretilen iki unit metni
+gözle kontrol edildi (`%i` korunuyor, satır `[Service]` bölümünde ve `ExecStart`'tan
+önce). VPS tarafı: `systemctl cat yt-streamer` + node'u `kill -9` edip restart sonrası
+`ps -C ffmpeg -o pid,ppid,etime` tek süreç göstermeli.

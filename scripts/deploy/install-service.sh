@@ -108,6 +108,16 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 WorkingDirectory=$REPO_ROOT
+# Restart'in onunu temizle: onceki node SIGKILL'lenmisse (TimeoutStopSec doldu,
+# elle kill -9, elektrik) ffmpeg PPID=1'e dusup yayina bagli kalir; yeni node
+# ayni stream key'ine IKINCI bir ffmpeg baglar. Sweep'in tek cagirani deploy.sh
+# idi, ama yetim birakan yol tam olarak systemd restart'i — ustelik alarm
+# mesajlarinin operatore soyledigi duzeltme de "systemctl restart yt-streamer".
+# "-" oneki bilincli: sweep basarisiz olsa bile yayin BASLAR (script'in kendi
+# "deploy'u durdurmaz" ilkesiyle ayni). Script yanlis pozitif vermez: mesru
+# ffmpeg = ebeveyni bu repodan calisan CANLI bir node, yani diger instance'lara
+# ve elle baslatilmis yayinlara dokunmaz. Ayrinti: KARARLAR.md
+ExecStartPre=-/bin/bash $REPO_ROOT/scripts/deploy/sweep-orphan-ffmpeg.sh
 ExecStart=$NODE_BIN $REPO_ROOT/index.js
 Restart=always
 RestartSec=15

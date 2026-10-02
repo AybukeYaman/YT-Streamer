@@ -130,6 +130,11 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 WorkingDirectory=$REPO_ROOT
+# Yetim ffmpeg temizligi — install-service.sh'teki tek yayin unit'iyle ayni gerekce.
+# Sweep repo genelinde tarar ama mesru olani (canli node ebeveyni olan ffmpeg)
+# oldurmez, yani BIR instance'in restart'i digerlerinin yayinini bozmaz.
+# "-" oneki: sweep basarisiz olsa bile yayin baslar. Ayrinti: KARARLAR.md
+ExecStartPre=-/bin/bash $REPO_ROOT/scripts/deploy/sweep-orphan-ffmpeg.sh
 ExecStart=$NODE_BIN $REPO_ROOT/index.js --config config.%i.json --env .env.%i
 Restart=always
 RestartSec=15

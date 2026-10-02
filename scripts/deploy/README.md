@@ -225,6 +225,10 @@ journalctl -u yt-streamer -n 200 | bash scripts/deploy/status.sh --filter
 ## Neden systemd (orphan sorunu)
 Uygulama elle (`node index.js &`) çalıştırılıp terminal/ssh oturumu kapanınca ya da süreç `kill -9`/OOM ile ölünce, spawn ettiği ffmpeg **orphan** (PPID=1) kalabilir — bir CPU çekirdeğini boşa yer ve aynı YouTube stream key'e ikinci bir bağlantı denediği için canlı yayınla çakışır. systemd `KillSignal=SIGINT` ile uygulamaya graceful kapanış sinyali gönderir (bizim shutdown zinciri → `supervisor.stop()` → ffmpeg `q`) ve cgroup temizliği sayesinde orphan kalmaz. `enable` sayesinde VPS reboot olsa da yayın kendiliğinden döner.
 
+Graceful kapanış **her zaman** işlemez: ffmpeg kesilemez bir I/O'da takılırsa `TimeoutStopSec=30` dolar, systemd node'u SIGKILL eder ve ffmpeg yetim kalır. Bu yüzden unit'te ayrıca `ExecStartPre=-/bin/bash .../sweep-orphan-ffmpeg.sh` var: **her** başlatmada (`systemctl restart` dahil, yalnızca `deploy.sh`'te değil) yetim taraması yapılır. Sweep meşru ffmpeg'e (ebeveyni bu repodan çalışan canlı bir `node`) dokunmaz, yani diğer instance'ların ve elle başlatılmış yayınların ffmpeg'i güvende. `-` öneki: tarama başarısız olsa bile yayın başlar.
+
+Unit'te `StartLimitIntervalSec=0` da var: yeniden başlatma bilerek **sınırsız**. Sürekli çöken bir yayında alarm uygulama içinden gelir (`supervisor` → tekrarlayan çökme bildirimi); unit'i `failed`'a düşürüp yayını kapatmak istenen davranış değil.
+
 ---
 
 ## go-live: YouTube yayınını otomatik canlıya alma (Faz 9 Aşama 2)
