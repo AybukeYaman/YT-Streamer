@@ -230,8 +230,10 @@ health uyarısı) kaydet.
 - **5.5 ağ kopması geçti:** 30+ sn Wi-Fi kesintisinde ffmpeg net hatayla çıktı
   (`-10054` WSAECONNRESET, DNS çözümleme hatası), askıda kalmadı; supervisor 3/6/12 sn
   geri çekilmeyle toparladı, kaldığı parçadan devam etti; YouTube yayını sonlandırmadı.
-  **Bilinen risk:** ~45–60 sn'den uzun kesintide crash loop yayını kalıcı durdurur
-  (→ `KARARLAR.md`, kabul edilen risk)
+  ~~**Bilinen risk:** ~45–60 sn'den uzun kesintide crash loop yayını kalıcı durdurur~~
+  → **2 Ekim 2026'da kapandı:** tespit zaten yanlıştı (`Restart=always` toparlıyordu) ve
+  vazgeçme davranışı tamamen kaldırıldı — eşiğin tek etkisi artık alarm vermek. Kesinti ne
+  kadar sürerse sürsün yayın yeniden başlatılmaya devam ediyor (→ `KARARLAR.md`, Faz A)
 - Faz 5'teki gibi açıklanamayan hız duraksaması görülmedi; tek `< 0.95` uyarısı ağ
   kopmasının hemen öncesindeydi (nedeni belli)
 - Stream key hiçbir log/çıktıda geçmedi (sayıyla doğrulandı); `config.json`'a dokunulmadı

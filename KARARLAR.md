@@ -223,6 +223,16 @@ yayının kendiliğinden dönmediği fark edilirse elle restart gerekecek.
 > ve crash penceresi her yeni süreçte sıfırdan başlıyordu. Bu madde artık geçersiz:
 > vazgeçme davranışı tamamen kaldırıldı, bkz. aşağıdaki
 > *[Faz A] Tekrarlayan çökmede vazgeçme kaldırıldı*.
+>
+> **"İleride ele alınabilir" maddesi KAPANDI.** Ağ hatalarını (ECONNRESET, DNS)
+> diğer çökme türlerinden ayırıp onlara ayrı bir eşik/pencere uygulama fikri artık
+> gereksiz: eşiğin tek etkisi *alarm vermek*, yayını durdurmak değil. Yani ağ
+> kesintisi ne kadar sürerse sürsün yayın yeniden başlatılmaya devam ediyor ve ağ
+> gelince kaldığı parçadan toparlanıyor — ayrıştırmanın koruyacağı bir şey kalmadı.
+> Ayrıştırmanın tek getirisi "uzun kesintide gereksiz alarm göndermemek" olurdu;
+> buna karşılık ffmpeg stderr'inde desen eşleme (kırılgan, ffmpeg sürümüne bağlı)
+> gerekiyordu. Takas kabul edilmedi: uzun bir ağ kesintisi **haber verilmesi gereken**
+> bir olay, alarm orada gürültü değil. Bu fikir bir daha açılmayacak.
 
 ---
 
