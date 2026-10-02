@@ -549,3 +549,164 @@ test('getStatus(refresh=false): stale izi API’ye gitmeden görünür', async (
   assert.equal(status.unhealthySince, '2026-10-01T12:00:00.000Z');
   assert.deepEqual(api.calls, []); // kota harcanmaz
 });
+
+// ── Faz 2: requestGoLive — hızlı dönüş + arka plan ─────────────────────────
+// iOS Shortcuts'ın HTTP timeout'u 120 sn'lik ingest beklemesinden kısa: istek zaman
+// aşımına uğruyordu, oysa iş doğru çalışıyordu. Artık uzun kısım arka planda.
+
+const fakeEncoderCheck = (status, message = 'test') => ({
+  name: 'encoder',
+  run: async () => ({ status, message, detail: { ageSeconds: 7200 } }),
+});
+
+function fakeAlerter() {
+  const sent = [];
+  return { sent, alert: async (p) => { sent.push(p); } };
+}
+
+test('requestGoLive: uzun iş arka planda, çağrı hemen accepted döner', async () => {
+  const api = fakeApi();
+  const { service } = setup({ api });
+
+  const result = await service.requestGoLive();
+  assert.equal(result.action, 'accepted');
+  assert.ok(result.startedAt);
+  // Arka plan henüz bitmiş olmayabilir: lastRun 'running' ile başlar.
+  const during = await service.getStatus();
+  assert.ok(['running', 'done'].includes(during.lastRun.phase));
+
+  await service.inFlight; // arka planı bekle
+  const after = await service.getStatus();
+  assert.equal(after.lastRun.phase, 'done');
+  assert.equal(after.lastRun.action, 'went-live');
+  assert.ok(names(api.calls).includes('transitionBroadcast'));
+});
+
+test('requestGoLive: arka plan hatası lastRun’a yazılır ve BİLDİRİM gönderilir', async () => {
+  // 202 döndükten sonra hatayı gören kimse olmayabilir: bildirim bu yüzden şart.
+  const api = fakeApi({ failOn: { insertBroadcast: new Error('kota doldu') } });
+  const alerter = fakeAlerter();
+  const { service } = setup({ api, alerter });
+
+  assert.equal((await service.requestGoLive()).action, 'accepted');
+  await service.inFlight;
+
+  const status = await service.getStatus();
+  assert.equal(status.lastRun.phase, 'failed');
+  assert.match(status.lastRun.error.message, /kota doldu/);
+  assert.equal(alerter.sent.length, 1);
+  assert.equal(alerter.sent[0].level, 'error');
+  assert.match(alerter.sent[0].title, /go-live başarısız/);
+});
+
+// ÖN KONTROL 1: encoder basmıyorsa ingest beklemek boşuna — senkron, görünür ret.
+test('requestGoLive: encoder kalp atışı durmuşsa encoder_not_streaming (API’ye hiç gitmez)', async () => {
+  const api = fakeApi();
+  const { service } = setup({ api, encoderCheck: fakeEncoderCheck('unhealthy', 'ENCODER DURMUŞ: 120 dk') });
+
+  const err = await service.requestGoLive().then(() => null, (e) => e);
+  assert.ok(err instanceof GoLiveError);
+  assert.equal(err.code, 'encoder_not_streaming');
+  assert.match(err.message, /ENCODER DURMUŞ/);
+  assert.match(err.message, /systemctl restart yt-streamer/);
+  assert.deepEqual(api.calls, [], 'encoder ölüyken kota harcanmamalı');
+  assert.equal(service.busy, false);
+});
+
+test('requestGoLive: encoder sağlıklıysa akış sürer', async () => {
+  const api = fakeApi();
+  const { service } = setup({ api, encoderCheck: fakeEncoderCheck('healthy') });
+  assert.equal((await service.requestGoLive()).action, 'accepted');
+  await service.inFlight;
+});
+
+test('requestGoLive: encoder ‘skipped’ ise (yayın hiç başlamamış) akış sürer', async () => {
+  const api = fakeApi();
+  const { service } = setup({ api, encoderCheck: fakeEncoderCheck('skipped') });
+  assert.equal((await service.requestGoLive()).action, 'accepted');
+  await service.inFlight;
+});
+
+// ÖN KONTROL 2: kayıtta stale izi varsa grace önceki turda harcandı, tekrar beklenmez.
+test('requestGoLive: kayıtta stale izi + ingest hâlâ ölü → senkron stale_broadcast', async () => {
+  const stateStore = fakeStateStore({
+    broadcastId: 'b', streamId: STREAM_ID, status: 'live', health: 'stale',
+    unhealthySince: '2026-10-01T12:00:00.000Z',
+  });
+  const api = fakeApi({ streams: [{ streamStatus: 'inactive', healthStatus: 'noData' }] });
+  const { service } = setup({ api, stateStore });
+
+  const err = await service.requestGoLive().then(() => null, (e) => e);
+  assert.equal(err.code, 'stale_broadcast');
+  // Tek örnek yeter: grace beklenmedi (uzun yola girilmedi).
+  assert.ok(!names(api.calls).includes('insertBroadcast'));
+  assert.equal(names(api.calls).filter((n) => n === 'getStreamStatus').length, 1);
+});
+
+test('requestGoLive: stale izi var ama ingest toparlanmışsa akış sürer', async () => {
+  const stateStore = fakeStateStore({
+    broadcastId: 'b', streamId: STREAM_ID, status: 'live', health: 'stale',
+  });
+  const api = fakeApi({
+    broadcasts: { b: { id: 'b', status: { lifeCycleStatus: 'live' } } },
+    streams: [{ streamStatus: 'active', healthStatus: 'good' }],
+  });
+  const { service, lines } = setup({ api, stateStore });
+
+  const result = await service.requestGoLive();
+  assert.equal(result.action, 'already-live');
+  assert.ok(lines.some((l) => /stale izi geçersiz/.test(l.m)));
+});
+
+// ÖN KONTROL 3: zaten sağlıklı akıyorsa telefon arka planı beklemesin.
+test('requestGoLive: zaten canlı + ingest sağlıklı → senkron already-live', async () => {
+  const stateStore = fakeStateStore({ broadcastId: 'b', streamId: STREAM_ID, status: 'live', title: 't' });
+  const api = fakeApi({
+    broadcasts: { b: { id: 'b', status: { lifeCycleStatus: 'live' } } },
+    streams: [{ streamStatus: 'active', healthStatus: 'good' }],
+  });
+  const { service } = setup({ api, stateStore });
+
+  const result = await service.requestGoLive();
+  assert.equal(result.action, 'already-live');
+  assert.equal(result.broadcastId, 'b');
+  assert.ok(!names(api.calls).includes('insertBroadcast'));
+  assert.equal(service.busy, false);
+});
+
+// Tek örnek sağlıksızsa KARAR VERİLMEZ: albüm geçişinde ingest kısa süre inactive
+// görünür, senkron ret yanlış alarm olurdu — uzun yol grace ile bakar.
+test('requestGoLive: canlı + ilk örnek sağlıksız (stale izi yok) → accepted, grace arka planda', async () => {
+  const stateStore = fakeStateStore({ broadcastId: 'b', streamId: STREAM_ID, status: 'live' });
+  const api = fakeApi({
+    broadcasts: { b: { id: 'b', status: { lifeCycleStatus: 'live' } } },
+    streams: [
+      { streamStatus: 'inactive', healthStatus: 'noData' }, // ön kontrol örneği
+      { streamStatus: 'active', healthStatus: 'good' }, // grace içinde toparlandı
+    ],
+  });
+  let t = 0;
+  const { service } = setup({ api, stateStore, staleGraceMs: 10_000, now: () => (t += 10) });
+
+  assert.equal((await service.requestGoLive()).action, 'accepted');
+  await service.inFlight;
+  const status = await service.getStatus();
+  assert.equal(status.lastRun.action, 'already-live');
+});
+
+test('requestGoLive: sürerken ikinci istek busy ile reddedilir (çift dokunma)', async () => {
+  const api = fakeApi();
+  const { service } = setup({ api });
+
+  await service.requestGoLive();
+  const err = await service.requestGoLive().then(() => null, (e) => e);
+  assert.equal(err.code, 'busy');
+  await service.inFlight;
+});
+
+test('goLive (CLI yolu) hâlâ senkron: sonucu bekler', async () => {
+  const api = fakeApi();
+  const { service } = setup({ api });
+  const result = await service.goLive();
+  assert.equal(result.action, 'went-live');
+});

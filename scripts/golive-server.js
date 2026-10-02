@@ -59,8 +59,6 @@ async function main() {
   const port = args.port ?? credentials.goLivePort ?? DEFAULT_PORT;
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`--port geçersiz: ${port}`);
 
-  const { service } = buildGoLive({ configFile: args.configFile, envFile: args.envFile, logger });
-
   // Periyodik sağlık izleme: tetikler arasındaki körlüğü kapatır (1 Ekim olayları —
   // yayın ~2 saat ölü kaldı, kimse tetiklemediği için kimse fark etmedi).
   //   ingest  : broadcast canlı ama veri akmıyor mu?
@@ -75,13 +73,19 @@ async function main() {
   if (!credentials.alertWebhookUrl) {
     healthLog.warn('ALERT_WEBHOOK_URL boş — sorunlar yalnızca loga yazılacak, telefona bildirim GİTMEYECEK');
   }
+  // Encoder kalp atışı kontrolü İKİ yerde kullanılıyor: periyodik izleme ve go-live'ın
+  // hızlı ön kontrolü (ffmpeg basmıyorken ingest beklemek boşuna). Tek nesne, tek eşik.
+  const encoderCheck = new EncoderHeartbeatCheck({
+    statePath: path.join(config.paths.runtime, 'state.json'),
+    readMtimeMs,
+  });
+  const { service } = buildGoLive({
+    configFile: args.configFile, envFile: args.envFile, logger, encoderCheck, alerter,
+  });
   const monitor = new HealthMonitor({
     checks: [
       new IngestCheck({ goLiveService: service }),
-      new EncoderHeartbeatCheck({
-        statePath: path.join(config.paths.runtime, 'state.json'),
-        readMtimeMs,
-      }),
+      encoderCheck,
     ],
     log: healthLog,
     alerter,

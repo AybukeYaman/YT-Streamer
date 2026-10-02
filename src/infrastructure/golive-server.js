@@ -158,10 +158,21 @@ class GoLiveServer {
         }
         await drainBody(req);
         try {
-          const result = await this.goLiveService.goLive();
-          return this.#json(res, 200, { ok: true, ...result });
+          // requestGoLive: uzun ingest beklemesi ARKA PLANDA sürer, istek hemen döner.
+          // iOS Shortcuts'ın HTTP timeout'u 120 sn'lik beklemeden kısa — senkron akış
+          // zaman aşımına uğruyordu, oysa iş doğru çalışıyordu. Sonuç: /status → lastRun.
+          const result = await this.goLiveService.requestGoLive();
+          const code = result.action === 'accepted' ? 202 : 200;
+          return this.#json(res, code, { ok: true, ...result });
         } catch (err) {
           if (err.code === 'busy') return this.#json(res, 409, { error: 'busy', message: err.message });
+          // Encoder basmıyorken ingest beklemek boşuna: hemen ve GÖRÜNÜR şekilde reddet.
+          if (err.code === 'encoder_not_streaming') {
+            this.log.error(`go-live reddedildi: ${err.message}`);
+            return this.#json(res, 409, {
+              error: 'encoder_not_streaming', message: err.message, details: err.details ?? null,
+            });
+          }
           // stale_broadcast 409: 200 + action:'stale' dönmek telefon kestirmesinde
           // (Shortcuts durum kodunu özel olarak kontrol etmedikçe) başarı gibi görünür.
           // Bu arıza elle müdahale istiyor, görünür olmalı.

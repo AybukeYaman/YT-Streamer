@@ -205,6 +205,44 @@ komut broadcast **oluşturmadan** hata verir (kanalda çöp yayın bırakmaz).
 Yarım kalmış bir broadcast varsa (oluşturulmuş ama canlıya alınamamış) o **yeniden
 kullanılır**. Eşzamanlı ikinci istek `409` alır.
 
+### HTTP yanıt kodları — `POST /go-live` hemen döner
+
+ingest `active` olana kadar beklemek 120 sn'ye kadar sürebiliyor; iOS Shortcuts'ın HTTP
+timeout'u bundan kısa olduğu için istek zaman aşımına uğruyordu (oysa iş arka planda
+doğru çalışıyordu). Artık **uzun kısım arka planda sürüyor** ve istek hemen yanıtlanıyor:
+
+| Kod | `action` / `error` | Anlamı |
+|---|---|---|
+| **202** | `accepted` | İş başladı, arka planda sürüyor. Sonuç: `/status` → `lastRun` |
+| **200** | `already-live` | Zaten sağlıklı şekilde akıyor, yapılacak bir şey yok |
+| **409** | `encoder_not_streaming` | ffmpeg basmıyor (kalp atışı durmuş) — ingest beklemek boşuna, önce `systemctl restart yt-streamer` |
+| **409** | `stale_broadcast` | Broadcast canlı görünüyor ama ingest ölü — Studio'dan sonlandır + encoder'ı yeniden başlat |
+| **409** | `busy` | Başka bir go-live sürüyor (çift dokunma) |
+| **502** | diğer | Beklenmeyen hata |
+
+Senkron reddedilenler yalnızca **kesin** bilinenlerdir. Tek bir ingest örneğine bakıp
+"stale" demek yanlış olurdu: albüm geçişinde ffmpeg yeniden bağlanırken ingest kısa süre
+`inactive` görünür. O yüzden belirsiz durumda 202 dönülür ve grace penceresi arka planda
+beklenir.
+
+**Arka planda bitenin sonucu iki yerden öğrenilir:**
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" localhost:8787/status | jq '.lastRun, .health'
+```
+```json
+{ "phase": "done", "startedAt": "...", "finishedAt": "...", "action": "went-live" }
+```
+`phase`: `running` | `done` | `failed`. **Başarısızlıkta ntfy bildirimi de gider** —
+202'den sonra hatayı gören kimse olmayabilir, bu yüzden bildirim kanalı (yukarıdaki
+sağlık izleme bölümü) bu akışın ön koşuludur.
+
+**Shortcuts tarafı:** kestirme artık beklemeden dönüyor. Sonucu görmek istersen 30-60 sn
+sonra `/status` çağıran ikinci bir adım ekle ve `lastRun.phase`'e bak; hata olursa
+telefona bildirim zaten gelir.
+
+**CLI değişmedi:** `node scripts/youtube/go-live.js` hâlâ **senkron** çalışır ve sonucu
+bekler — terminalde timeout sorunu yok, sonucu görmek doğru davranıştır.
+
 ### iOS'tan tetikleme (Tailscale)
 
 Servis internete **açılmaz**; erişim tailnet üzerinden olur.

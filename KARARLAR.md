@@ -932,3 +932,52 @@ gercek ntfy teslimi, healthchecks ping'i ve canli yayinda esiklerin davranisi.
 **Kapsam disi (sonraki fazlar):** go-live'in 202 ile hemen donmesi (SORUN 2 — bu bildirim
 kanali ona onkosul), deploy'un disabled instance'a dokunmamasi (SORUN 3), maskelemenin
 tum scriptlere yayilmasi (SORUN 4).
+
+---
+
+## [Faz 2 / SORUN 2] go-live istegi hemen doner: 202 + hizli on kontrol — 2 Ekim 2026
+
+**Sorun:** `yt-streamer` durup tekrar basladiginda ingest 'active' olana kadar go-live
+120 sn'ye kadar bekliyor (3 sn araliklarla yoklama). iOS Shortcuts'in HTTP timeout'u
+bundan kisa: istek zaman asimina ugruyor, oysa arka planda surec DOGRU calisiyordu.
+
+**Karar:** `requestGoLive()` HTTP'nin yeni giris noktasi — uzun kismi arka planda surdurur,
+**202 `accepted`** ile hemen doner. Sonuc `/status` → `lastRun` ({phase, startedAt,
+finishedAt, action, error}). `goLive()` (senkron tam akis) DEGISMEDI: CLI onu kullanmaya
+devam ediyor, terminalde timeout sorunu yok ve sonucu beklemek dogru davranis.
+
+**Plandaki "on kontrolde stale yakalanirsa 409" DUZELTILDI.** Tek bir ingest ornegine
+bakip stale demek YANLIS olur: albüm gecisinde ffmpeg yeniden baglanirken ingest kisa
+sure 'inactive' gorunur — zaten `staleGraceMs` bunun icin var. Grace olmadan 409 donmek,
+albüm sinirina denk gelen her tetikte yanlis ret uretirdi. Senkron reddedilenler yalnizca
+KESIN bilinebilenler:
+
+1. **`encoder_not_streaming`** — `state.json` kalp atisi 120 sn'den eski. ffmpeg basmiyor,
+   ingest beklemek bosuna; dahasi en sik sebep bu (1 Ekim olayi). Maliyet: 1 stat, SIFIR
+   API cagrisi. Ayni `EncoderHeartbeatCheck` nesnesi hem periyodik izlemede hem burada
+   kullaniliyor — iki esik / iki politika olusmasin.
+2. **`stale_broadcast`** — kayitta zaten `health:'stale'` izi var VE taze ornek de olu.
+   Grace bir onceki turda harcandigi icin tekrar beklenmez. Iz varken ingest toparlanmissa
+   iz gecersiz sayilir ve akis normal yoluna devam eder.
+3. **`already-live`** (200) — kayitli broadcast aktif VE ilk ingest ornegi sagliklı.
+   Ucuz (2 kota birimi) ve kesin; telefon arka plani beklemesin.
+
+Belirsiz her durumda 202 donulur ve karar arka planda, grace penceresiyle verilir.
+
+**Arka plan hatasi BILDIRIM gonderir:** 202 dondukten sonra hatayi gorecek kimse
+olmayabilir. Bu yuzden Faz 1'in bildirim kanali bu fazin ON KOSULUDUR — kanal olmadan
+202'ye gecmek gorunurlugu dusururdu. `GoLiveService` opsiyonel `alerter` alir (yine
+HealthMonitor'daki ayni nesne).
+
+**Arka plan promise'i yeniden FIRLATMAZ:** onu bekleyen kimse yok, islenmeyen ret
+(unhandledRejection) sureci dusurebilir. Hata `lastRun.phase='failed'` + bildirim +
+error log ile gorunur hale gelir.
+
+**Kilit:** `inFlight` ayni kilit olarak kullaniliyor — arka plan surerken ikinci tetik
+`busy` (409) alir, cift dokunma iki broadcast yaratmaz.
+
+**Dogrulama:** 429 test gecer (11 yeni + sunucu testleri yeni sozlesmeye tasindi).
+VPS'te dogrulanmadi: Shortcuts'tan gercek tetik, 202 sonrasi `/status` ile sonuc izleme.
+
+**Kapsam disi:** deploy'un disabled instance'a dokunmamasi (SORUN 3), maskelemenin tum
+scriptlere yayilmasi (SORUN 4).

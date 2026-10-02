@@ -17,7 +17,14 @@ const { GoLiveService } = require('../application/go-live-service');
 
 // Yayın süreci değil: kilit (instance-lock) ALINMAZ. Aksi halde go-live, çalışan
 // yayının runtime kilidine çarpar ve hiç başlamaz.
-function buildGoLive({ configFile = 'config.json', envFile = '.env', logger, env = process.env }) {
+// encoderCheck / alerter: OPSİYONEL (HTTP sunucusu verir, CLI vermez). encoderCheck
+// requestGoLive'ın hızlı ön kontrolünde "ffmpeg basıyor mu" sorusunu yanıtlar; alerter
+// arka planda biten işin sonucunu bildirir. İkisi de HealthMonitor'daki AYNI nesneler —
+// iki ayrı bildirim politikası / iki ayrı eşik oluşmasın.
+function buildGoLive({
+  configFile = 'config.json', envFile = '.env', logger, env = process.env,
+  encoderCheck = null, alerter = null,
+}) {
   const config = loadConfig({ configFile, envFile, env });
   const credentials = loadYoutubeCredentials({ env });
 
@@ -43,6 +50,8 @@ function buildGoLive({ configFile = 'config.json', envFile = '.env', logger, env
     broadcastConfig: config.broadcast,
     // local modda stream key yok; o durumda streamId config'ten gelmeli.
     streamKey: config.output.mode === 'rtmp' ? config.output.streamKey : null,
+    encoderCheck,
+    alerter,
   });
 
   return { service, config, credentials };

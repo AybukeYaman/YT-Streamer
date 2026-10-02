@@ -62,6 +62,13 @@ class GoLiveService {
     ingestTimeoutMs = DEFAULT_INGEST_TIMEOUT_MS,
     pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
     staleGraceMs = DEFAULT_STALE_GRACE_MS,
+    // encoderCheck: { run() -> { status } } — ffmpeg gerçekten basıyor mu? Yalnızca
+    // requestGoLive()'ın hızlı ön kontrolünde kullanılır (HealthMonitor'daki aynı nesne).
+    // Verilmezse ön kontrolün o adımı atlanır (CLI yolu).
+    encoderCheck = null,
+    // alerter: { alert({level,title,message}) } — ARKA PLANDA biten işin sonucunu bildirir.
+    // Senkron sonuçlar HTTP yanıtında görülüyor, onlar için bildirim gönderilmez.
+    alerter = null,
     now = () => Date.now(),
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   }) {
@@ -73,10 +80,15 @@ class GoLiveService {
     this.ingestTimeoutMs = ingestTimeoutMs;
     this.pollIntervalMs = pollIntervalMs;
     this.staleGraceMs = staleGraceMs;
+    this.encoderCheck = encoderCheck;
+    this.alerter = alerter;
     this.now = now;
     this.sleep = sleep;
     // Tek-uçuş kilidi: iOS'ta çift dokunma iki broadcast yaratmasın.
     this.inFlight = null;
+    // Arka planda çalışan son işin sonucu: /status'tan okunur. İstek 202 ile hemen
+    // döndüğü için sonucun görülebileceği tek yer burası.
+    this.lastRun = null;
   }
 
   get busy() {
@@ -99,6 +111,8 @@ class GoLiveService {
       health: state?.health ?? null,
       unhealthySince: state?.unhealthySince ?? null,
       busy: this.busy,
+      // İstek 202 ile hemen döndüğü için arka planda bitenin sonucu BURADAN okunur.
+      lastRun: this.lastRun,
     };
     if (!refresh || !state?.broadcastId) return base;
 
@@ -136,7 +150,131 @@ class GoLiveService {
     };
   }
 
-  // Tek giriş noktası. Eşzamanlı ikinci çağrı aynı promise'i beklemez, açıkça reddedilir:
+  // HTTP'nin giriş noktası: HIZLI döner, uzun işi arka planda sürdürür.
+  //
+  // NEDEN: ingest 'active' olana kadar beklemek 120 sn'ye kadar sürebiliyor (3 sn
+  // aralıkla yoklama). iOS Shortcuts'ın HTTP timeout'u bundan kısa — istek zaman aşımına
+  // uğruyor, oysa arka planda süreç doğru çalışıyordu, sadece yavaştı.
+  //
+  // Dönüş:
+  //   { action: 'already-live' }  → zaten akıyor, yapılacak bir şey yok (senkron, 200)
+  //   { action: 'accepted' }      → iş arka planda başladı, sonuç /status → lastRun (202)
+  // Fırlatır: 'busy' (409), 'encoder_not_streaming' (409), 'stale_broadcast' (409)
+  //
+  // Ön kontrol yalnızca KESİN bilinebilenleri senkron reddeder. Tek bir ingest örneğine
+  // bakıp "stale" demek YANLIŞ olurdu: albüm geçişinde ffmpeg yeniden bağlanırken ingest
+  // kısa süre 'inactive' görünür (bu yüzden staleGraceMs var). Kesin olanlar:
+  //   1. encoder kalp atışı durmuş → ffmpeg basmıyor, ingest beklemek boşuna
+  //   2. kayıtta zaten health:'stale' + ingest hâlâ ölü → grace bir önceki turda harcandı
+  async requestGoLive() {
+    if (this.inFlight) {
+      throw new GoLiveError('go-live şu an sürüyor', { code: 'busy' });
+    }
+    const fast = await this.#precheck();
+    if (fast) return fast;
+
+    const startedAt = new Date(this.now()).toISOString();
+    this.lastRun = { phase: 'running', startedAt, finishedAt: null, action: null, error: null };
+    // Arka plan: inFlight kilidi aynı — ikinci tetik 'busy' alır.
+    this.inFlight = this.#goLive()
+      .then((result) => {
+        this.lastRun = {
+          phase: 'done', startedAt, finishedAt: new Date(this.now()).toISOString(),
+          action: result.action, broadcastId: result.broadcastId ?? null, error: null,
+        };
+        return result;
+      })
+      .catch(async (err) => {
+        this.lastRun = {
+          phase: 'failed', startedAt, finishedAt: new Date(this.now()).toISOString(),
+          action: null, error: { code: err.code ?? 'go_live_failed', message: err.message },
+        };
+        // İstek 202 ile çoktan döndü: hatayı gören kimse olmayabilir. Bildirim bu yüzden
+        // ŞART — Faz 1'in kanalı olmadan 202'ye geçmek görünürlüğü düşürürdü.
+        await this.#notify({
+          level: 'error',
+          title: 'go-live başarısız',
+          message: `${err.message} (kod: ${err.code ?? 'go_live_failed'})`,
+        });
+        this.log.error(`go-live arka planda başarısız: ${err.message}`);
+        // Yeniden fırlatılmıyor: bu promise'i bekleyen kimse yok, işlenmeyen ret
+        // (unhandledRejection) süreci düşürebilir.
+        return { action: 'failed', error: err.message };
+      })
+      .finally(() => { this.inFlight = null; });
+
+    return { action: 'accepted', startedAt };
+  }
+
+  // Senkron, ucuz (en fazla 1 stat + 2 API birimi) ve KESİN olan kontroller.
+  // Bir şey döndürürse istek orada biter; null dönerse uzun iş arka planda sürer.
+  async #precheck() {
+    // 1) Encoder basıyor mu? (dosya mtime — API çağrısı yok)
+    if (this.encoderCheck) {
+      const encoder = await this.encoderCheck.run();
+      if (encoder.status === 'unhealthy') {
+        throw new GoLiveError(
+          `encoder yayın yapmıyor: ${encoder.message} — YouTube ingest'i beklemek boşuna, ` +
+          'önce yayını başlat (systemctl restart yt-streamer), sonra tekrar tetikle',
+          { code: 'encoder_not_streaming', details: encoder.detail ?? null },
+        );
+      }
+    }
+
+    // 2) Kayıtta stale izi varsa: grace bir önceki turda harcandı, tekrar beklemeyiz.
+    const state = this.stateStore.load();
+    if (state?.health === 'stale' && state?.streamId) {
+      const { accessToken } = await this.api.getAccessToken();
+      const ingest = await this.api.getStreamStatus({ accessToken, streamId: state.streamId });
+      if (!ingestHealthy(ingest)) {
+        throw new GoLiveError(
+          `broadcast canlı görünüyor ama ingest veri almıyor (${describeIngest(ingest)}) — ` +
+          'elle müdahale gerekiyor: Studio\'dan yayını sonlandır ve encoder\'ı yeniden başlat',
+          { code: 'stale_broadcast', details: { broadcastId: state.broadcastId, ingest } },
+        );
+      }
+      // Toparlanmış: stale izi silinir, aşağıdaki akış normal yoluna devam eder.
+      this.log.info('önceki stale izi geçersiz — ingest tekrar veri alıyor');
+    }
+
+    // 3) Zaten sağlıklı şekilde akıyor mu? Bu da kesin ve ucuz (2 API birimi): telefon
+    // "zaten canlı" cevabını arka planı beklemeden görsün. İlk örnek sağlıksızsa karar
+    // VERİLMEZ (geçici olabilir) — uzun yol grace ile bakar.
+    if (state?.broadcastId && state?.streamId) {
+      const { accessToken } = await this.api.getAccessToken();
+      const broadcast = await this.api.getBroadcast({ accessToken, broadcastId: state.broadcastId });
+      const lifeCycle = broadcast?.status?.lifeCycleStatus ?? null;
+      if (ACTIVE_STATUSES.has(lifeCycle)) {
+        const ingest = await this.api.getStreamStatus({ accessToken, streamId: state.streamId });
+        if (ingestHealthy(ingest)) {
+          this.log.info(`broadcast zaten canlı (${state.broadcastId}, ${lifeCycle}) — yeni insert yapılmadı`);
+          return {
+            action: 'already-live',
+            broadcastId: state.broadcastId,
+            streamId: state.streamId,
+            status: lifeCycle,
+            title: state.title ?? broadcast.snippet?.title ?? null,
+            wentLiveAt: state.wentLiveAt ?? null,
+            ingest,
+          };
+        }
+      }
+    }
+    return null;
+  }
+
+  async #notify(payload) {
+    if (!this.alerter) return;
+    try {
+      await this.alerter.alert(payload);
+    } catch (err) {
+      this.log.warn(`bildirim gönderilemedi (${err.message})`);
+    }
+  }
+
+  // Senkron tam akış: CLI (scripts/youtube/go-live.js) bunu kullanır — orada HTTP
+  // timeout sorunu yok, sonucu beklemek doğru davranış.
+  // Eşzamanlı ikinci çağrı aynı promise'i beklemez, açıkça reddedilir:
   // çağıran (HTTP 409) "şu an sürüyor" bilgisini almalı, sessizce aynı sonucu almamalı.
   goLive() {
     if (this.inFlight) {

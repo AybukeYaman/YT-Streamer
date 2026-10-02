@@ -16,10 +16,11 @@ function fakeService({ goLiveResult, goLiveError, status = { broadcastId: null }
   const calls = [];
   return {
     calls,
-    goLive: async () => {
-      calls.push(['goLive']);
+    // requestGoLive: uzun is arka planda surer, istek hemen doner (Faz 2).
+    requestGoLive: async () => {
+      calls.push(['requestGoLive']);
       if (goLiveError) throw goLiveError;
-      return goLiveResult ?? { action: 'went-live', broadcastId: 'bid-1' };
+      return goLiveResult ?? { action: 'accepted', startedAt: '2026-10-02T10:00:00.000Z' };
     },
     getStatus: async (opts) => { calls.push(['getStatus', opts]); return status; },
   };
@@ -55,12 +56,56 @@ test('token yoksa ya da 32 karakterden kısaysa sunucu başlamaz (fail-closed)',
   }
 });
 
-test('POST /go-live: geçerli token ile 200 ve sonuç', () => withServer(
-  { goLiveService: fakeService({ goLiveResult: { action: 'went-live', broadcastId: 'bid-9' } }) },
+// Uzun ingest beklemesi arka planda: istek 202 ile HEMEN doner (iOS Shortcuts timeout'u).
+test('POST /go-live: kabul edilen istek 202 döner', () => withServer(
+  { goLiveService: fakeService() },
+  async ({ call }) => {
+    const res = await call('/go-live', { method: 'POST' });
+    assert.equal(res.status, 202);
+    assert.equal(res.json.action, 'accepted');
+    assert.equal(res.json.ok, true);
+  },
+));
+
+test('POST /go-live: zaten canlıysa 202 değil 200 (yapılacak iş yok)', () => withServer(
+  { goLiveService: fakeService({ goLiveResult: { action: 'already-live', broadcastId: 'bid-9' } }) },
   async ({ call }) => {
     const res = await call('/go-live', { method: 'POST' });
     assert.equal(res.status, 200);
-    assert.deepEqual(res.json, { ok: true, action: 'went-live', broadcastId: 'bid-9' });
+    assert.deepEqual(res.json, { ok: true, action: 'already-live', broadcastId: 'bid-9' });
+  },
+));
+
+// Encoder basmiyorken ingest beklemek bosuna: senkron, gorunur ret.
+test('POST /go-live: encoder yayın yapmıyorsa 409', () => withServer(
+  {
+    goLiveService: fakeService({
+      goLiveError: Object.assign(new Error('encoder yayın yapmıyor: ENCODER DURMUŞ'), {
+        code: 'encoder_not_streaming', details: { ageSeconds: 7200 },
+      }),
+    }),
+  },
+  async ({ call, lines }) => {
+    const res = await call('/go-live', { method: 'POST' });
+    assert.equal(res.status, 409);
+    assert.equal(res.json.error, 'encoder_not_streaming');
+    assert.deepEqual(res.json.details, { ageSeconds: 7200 });
+    assert.ok(lines.some((l) => l.level === 'error'));
+  },
+));
+
+test('POST /go-live: stale broadcast 409 (başarı gibi görünmesin)', () => withServer(
+  {
+    goLiveService: fakeService({
+      goLiveError: Object.assign(new Error('ingest veri almıyor'), {
+        code: 'stale_broadcast', details: { broadcastId: 'b' },
+      }),
+    }),
+  },
+  async ({ call }) => {
+    const res = await call('/go-live', { method: 'POST' });
+    assert.equal(res.status, 409);
+    assert.equal(res.json.error, 'stale_broadcast');
   },
 ));
 
@@ -88,7 +133,7 @@ test('token URL parametresiyle de kabul edilir (Safari yolu)', () => withServer(
   { goLiveService: fakeService() },
   async ({ call }) => {
     const res = await call(`/go-live?token=${TOKEN}`, { method: 'POST', token: null });
-    assert.equal(res.status, 200);
+    assert.equal(res.status, 202); // kabul edildi (Faz 2: uzun iş arka planda)
   },
 ));
 
@@ -161,7 +206,7 @@ test('bilinmeyen route → 404', () => withServer(
 test('sondaki slash yoksayılır (/go-live/ = /go-live)', () => withServer(
   { goLiveService: fakeService() },
   async ({ call }) => {
-    assert.equal((await call('/go-live/', { method: 'POST' })).status, 200);
+    assert.equal((await call('/go-live/', { method: 'POST' })).status, 202);
   },
 ));
 
