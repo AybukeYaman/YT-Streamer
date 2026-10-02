@@ -126,6 +126,27 @@ test('overlay konumları: sağ taraf metin genişliğine göre hizalanır', () =
   assert.match(at('top-right'), /:x=w-tw-40:y=40:/);
 });
 
+test('overlay.bottomOffset alt konumların y değerini belirler, üst konumları etkilemez', () => {
+  const at = (position) => vf(withOverlay({ overlay: { ...OVERLAY, position, bottomOffset: 140 } }));
+  assert.match(at('bottom-left'), /:x=40:y=h-140:/);
+  assert.match(at('bottom-right'), /:x=w-tw-40:y=h-140:/);
+  assert.match(at('top-left'), /:x=40:y=40:/);
+});
+
+test('overlay.bottomOffset yoksa (eski config) 80 — mevcut davranış korunur', () => {
+  const { bottomOffset, ...withoutOffset } = { ...OVERLAY, bottomOffset: 140 };
+  assert.match(vf(withOverlay({ overlay: withoutOffset })), /:x=40:y=h-80:/);
+});
+
+test('geçersiz bottomOffset FfmpegEncoder kurulurken reddedilir', () => {
+  for (const bad of [0, -20, 'yüz']) {
+    assert.throws(
+      () => new FfmpegEncoder({ profile, backgroundPath: BG, output: LOCAL, overlay: { ...OVERLAY, bottomOffset: bad } }),
+      /overlay.bottomOffset pozitif sayı olmalı/,
+    );
+  }
+});
+
 test('desteklenmeyen konum FfmpegEncoder kurulurken reddedilir', () => {
   assert.throws(
     () => new FfmpegEncoder({ profile, backgroundPath: BG, output: LOCAL, overlay: { ...OVERLAY, position: 'center' } }),

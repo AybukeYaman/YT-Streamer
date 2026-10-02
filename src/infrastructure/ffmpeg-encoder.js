@@ -51,18 +51,27 @@ function escapeFilterPath(filePath) {
   return `'${optionLevel.replace(/'/g, "'\\''")}'`;
 }
 
-// y=h-80 PLAN.md Faz 4'teki doğrulanmış değer (fontsize 28 için); diğerleri aynı kenar payıyla.
+// Alt konumlarda y=h-<bottomOffset>: drawtext'te y metnin ÜST kenarı, yani metin alt kenara
+// bottomOffset-fontSize kadar yaklaşır. 80 PLAN.md Faz 4'teki doğrulanmış değer (fontsize 28);
+// oynatıcı kontrol çubuğu alt bandı kapattığı için config'den yükseltilebilir.
+// Üst konumların kenar payı sabit 40 — ayarlanabilirlik şimdilik sadece alt konumlar için.
+const DEFAULT_BOTTOM_OFFSET = 80;
+
 const OVERLAY_POSITIONS = {
-  'bottom-left': { x: '40', y: 'h-80' },
-  'bottom-right': { x: 'w-tw-40', y: 'h-80' },
-  'top-left': { x: '40', y: '40' },
-  'top-right': { x: 'w-tw-40', y: '40' },
+  'bottom-left': (bottom) => ({ x: '40', y: `h-${bottom}` }),
+  'bottom-right': (bottom) => ({ x: 'w-tw-40', y: `h-${bottom}` }),
+  'top-left': () => ({ x: '40', y: '40' }),
+  'top-right': () => ({ x: 'w-tw-40', y: '40' }),
 };
 
-function overlayPosition(position) {
-  const pos = OVERLAY_POSITIONS[position];
-  if (!pos) throw new Error(`desteklenmeyen overlay.position "${position}" — ${Object.keys(OVERLAY_POSITIONS).join(', ')}`);
-  return pos;
+// bottomOffset verilmezse (eski config) 80 — mevcut davranış korunur.
+function overlayPosition(position, bottomOffset = DEFAULT_BOTTOM_OFFSET) {
+  const build = OVERLAY_POSITIONS[position];
+  if (!build) throw new Error(`desteklenmeyen overlay.position "${position}" — ${Object.keys(OVERLAY_POSITIONS).join(', ')}`);
+  if (!Number.isFinite(bottomOffset) || bottomOffset <= 0) {
+    throw new Error(`overlay.bottomOffset pozitif sayı olmalı (${bottomOffset})`);
+  }
+  return build(bottomOffset);
 }
 
 // Saniye → enable ifadesi, yarı açık aralık start ≤ t < end (end null: sona kadar).
@@ -72,14 +81,14 @@ function enableExpr(start, end) {
   return end === null ? `'gte(t\\,${s})'` : `'gte(t\\,${s})*lt(t\\,${end.toFixed(3)})'`;
 }
 
-// overlay: { fontFile, fontSize, position } ya da null (overlay kapalı → sadece scale).
+// overlay: { fontFile, fontSize, position, bottomOffset } ya da null (overlay kapalı → sadece scale).
 // overlayTexts: [{ textFile, start, end }] — parça başına bir drawtext, sadece kendi zaman
 // aralığında görünür. Zamanlama ffmpeg'in video zaman damgasına (t) bağlı: sesle senkron.
 // (textfile + reload=1 ile dosyayı Node'dan güncellemek ~12 sn geç kalıyordu — KARARLAR.md.)
 function videoFilter(profile, overlay, overlayTexts = []) {
   const scale = `scale=${profile.width}:${profile.height}`;
   if (!overlay || overlayTexts.length === 0) return scale;
-  const pos = overlayPosition(overlay.position);
+  const pos = overlayPosition(overlay.position, overlay.bottomOffset);
   const style = [
     `fontfile=${escapeFilterPath(overlay.fontFile)}`,
     `fontsize=${overlay.fontSize}`,
@@ -141,7 +150,7 @@ function parseProgressLine(line) {
 class FfmpegEncoder extends Encoder {
   constructor({
     profile, backgroundPath, output,
-    overlay = null, // { fontFile, fontSize, position } — null ise drawtext yok
+    overlay = null, // { fontFile, fontSize, position, bottomOffset } — null ise drawtext yok
     ffmpegPath = 'ffmpeg',
     stopTimeoutMs = DEFAULT_STOP_TIMEOUT_MS,
     killTimeoutMs = DEFAULT_KILL_TIMEOUT_MS,
@@ -153,7 +162,7 @@ class FfmpegEncoder extends Encoder {
     this.output = output;
     this.overlay = overlay;
     // Geçersiz konum yayın başlamadan, kurulumda yakalansın.
-    if (overlay) overlayPosition(overlay.position);
+    if (overlay) overlayPosition(overlay.position, overlay.bottomOffset);
     this.ffmpegPath = ffmpegPath;
     this.stopTimeoutMs = stopTimeoutMs;
     this.killTimeoutMs = killTimeoutMs;

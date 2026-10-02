@@ -20,7 +20,8 @@
     "enabled": true,
     "fontFile": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "fontSize": 28,
-    "position": "bottom-left"
+    "position": "bottom-left",
+    "bottomOffset": 80
   },
   "output": {
     "mode": "rtmp",

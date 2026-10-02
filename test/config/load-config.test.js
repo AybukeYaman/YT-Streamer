@@ -10,7 +10,7 @@ const BASE = {
   paths: { music: './music', background: './assets/background.mp4', runtime: './runtime' },
   profile: { width: 1280, height: 720, fps: 24, videoBitrate: '2500k', audioBitrate: '160k', preset: 'veryfast' },
   queue: { mode: 'shuffle', batchSize: 50 },
-  overlay: { enabled: true, fontFile: 'C:/Windows/Fonts/arial.ttf', fontSize: 28, position: 'bottom-left' },
+  overlay: { enabled: true, fontFile: 'C:/Windows/Fonts/arial.ttf', fontSize: 28, position: 'bottom-left', bottomOffset: 80 },
   output: { mode: 'local', localPath: './runtime/out.flv' },
 };
 const clone = () => JSON.parse(JSON.stringify(BASE));
@@ -132,6 +132,15 @@ test('overlay bölümü eksikse ya da alanlar yanlış tipteyse listelenir', () 
     '"overlay.fontFile" eksik ya da geçersiz',
     '"overlay.fontSize" eksik ya da geçersiz',
   ]);
+
+  // bottomOffset isteğe bağlı: yokken sorun değil, varken sayı olmalı.
+  const noOffset = clone();
+  delete noOffset.overlay.bottomOffset;
+  assert.equal(load({ config: noOffset }).result.overlay.bottomOffset, undefined);
+
+  const badOffset = clone();
+  badOffset.overlay.bottomOffset = '140';
+  assert.deepEqual(problemsOf({ config: badOffset }), ['"overlay.bottomOffset" sayı olmalı']);
 });
 
 test('albüm modu: paths.albums varsa music/background gerekmez, yol mutlak olur', () => {

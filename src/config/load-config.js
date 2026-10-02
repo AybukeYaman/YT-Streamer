@@ -111,13 +111,19 @@ function loadConfig({
     batchSize: isNumber,
   }, problems);
 
-  // position değer kontrolü (desteklenen konumlar) drawtext'i kuran encoder'ın işi.
+  // position ve bottomOffset değer kontrolü (desteklenen konumlar, pozitif offset)
+  // drawtext'i kuran encoder'ın işi.
   requireFields(raw.overlay, 'overlay', {
     enabled: isBoolean,
     fontFile: isNonEmptyString,
     fontSize: isNumber,
     position: isNonEmptyString,
   }, problems);
+
+  // bottomOffset isteğe bağlı: eski config'lerde yok, encoder 80'e düşer. Ama varsa sayı olmalı.
+  if (raw.overlay && raw.overlay.bottomOffset !== undefined && !isNumber(raw.overlay.bottomOffset)) {
+    problems.push('"overlay.bottomOffset" sayı olmalı');
+  }
 
   const output = raw.output || {};
   let streamKey;
