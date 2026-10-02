@@ -17,7 +17,12 @@ const { loadConfig } = require('../src/config/load-config');
 const { loadYoutubeCredentials } = require('../src/infrastructure/youtube-credentials');
 const { buildGoLive } = require('../src/composition/go-live-wiring');
 const { GoLiveServer } = require('../src/infrastructure/golive-server');
-const { IngestHealthMonitor } = require('../src/application/ingest-health-monitor');
+const { HealthMonitor } = require('../src/application/health-monitor');
+const { IngestCheck } = require('../src/application/checks/ingest-check');
+const { EncoderHeartbeatCheck } = require('../src/application/checks/encoder-heartbeat-check');
+const { NullAlerter } = require('../src/application/alerter');
+const { WebhookAlerter, createAlivePinger } = require('../src/infrastructure/webhook-alerter');
+const { readMtimeMs } = require('../src/infrastructure/file-stat');
 
 const DEFAULT_PORT = 8787;
 
@@ -56,25 +61,49 @@ async function main() {
 
   const { service } = buildGoLive({ configFile: args.configFile, envFile: args.envFile, logger });
 
+  // Periyodik sağlık izleme: tetikler arasındaki körlüğü kapatır (1 Ekim olayları —
+  // yayın ~2 saat ölü kaldı, kimse tetiklemediği için kimse fark etmedi).
+  //   ingest  : broadcast canlı ama veri akmıyor mu?
+  //   encoder : yt-streamer hâlâ yayın yapıyor mu? (state.json mtime = nabız)
+  const healthLog = logger.child('saglik');
+  // Çoklu yayında bildirimin hangi instance'tan geldiği anlaşılsın: config dosyası adı
+  // instance'ı tanımlıyor (config.stream2.json → stream2).
+  const label = args.configFile.replace(/^config\.?/, '').replace(/\.json$/, '') || 'main';
+  const alerter = credentials.alertWebhookUrl
+    ? new WebhookAlerter({ url: credentials.alertWebhookUrl, label, log: healthLog })
+    : new NullAlerter();
+  if (!credentials.alertWebhookUrl) {
+    healthLog.warn('ALERT_WEBHOOK_URL boş — sorunlar yalnızca loga yazılacak, telefona bildirim GİTMEYECEK');
+  }
+  const monitor = new HealthMonitor({
+    checks: [
+      new IngestCheck({ goLiveService: service }),
+      new EncoderHeartbeatCheck({
+        statePath: path.join(config.paths.runtime, 'state.json'),
+        readMtimeMs,
+      }),
+    ],
+    log: healthLog,
+    alerter,
+    pingAlive: createAlivePinger({ url: credentials.heartbeatPingUrl, log: healthLog }),
+  });
   const server = new GoLiveServer({
     goLiveService: service,
     authToken: credentials.goLiveAuthToken ?? '',
     log,
     host: args.host ?? '127.0.0.1',
     port,
+    // /status periyodik izlemenin son gördüğü durumu da gösterir: API'ye gitmeden
+    // (kota harcamadan) "encoder yazıyor mu, ingest akıyor mu" sorusunun cevabı.
+    healthProvider: () => monitor.snapshot(),
   });
 
   await server.listen();
   log.info(`yayın başlığı: "${config.broadcast.title}" (${config.broadcast.privacyStatus})`);
   log.info('POST /go-live · GET /status · GET /healthz');
 
-  // Periyodik ingest sağlık kontrolü: tetikler arasındaki körlüğü kapatır (1 Ekim olayı —
-  // yayın ~2 saat ölü kaldı, kimse tetiklemediği için kimse fark etmedi).
-  const monitor = new IngestHealthMonitor({
-    goLiveService: service,
-    log: logger.child('ingest-saglik'),
-  });
   monitor.start();
+
 
   let shuttingDown = false;
   const shutdown = async (reason) => {

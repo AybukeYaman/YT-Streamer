@@ -116,7 +116,7 @@ class GoLiveService {
     return { ...base, status: liveStatus ?? base.status, liveStatus, ingest, healthy };
   }
 
-  // Periyodik sağlık kontrolünün (IngestHealthMonitor) tek API dokunuşu: YALNIZCA
+  // Periyodik sağlık izlemesinin (IngestCheck) tek API dokunuşu: YALNIZCA
   // liveStreams sorgulanır (1 kota birimi), broadcast çekilmez. Kayıtta canlı bir
   // broadcast yoksa hiç API çağrısı yapılmaz — yayın yokken kota harcanmaz.
   async checkIngestHealth() {

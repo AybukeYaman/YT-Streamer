@@ -235,3 +235,55 @@ ile `POST` at. URL'deki token tarayıcı geçmişine ve sunucu loglarına düşe
 
 > Düz HTTP üzerinden bearer token göndermek onu sızdırır. Canlı yayın başlatabilen bir
 > endpoint için kabul edilemez, bu yüzden TLS'siz dışa açma **yapılmaz**.
+
+## Yayın ölürse haber alma (sağlık izleme)
+
+`yt-golive` servisi, yayın yapmanın yanında **60 saniyede bir iki şeyi yokluyor**:
+
+| Kontrol | Ne sorar | Nasıl ölçer |
+|---|---|---|
+| `ingest` | Broadcast canlı görünüyor ama veri akıyor mu? | YouTube `liveStreams.list` (1 kota birimi) |
+| `encoder` | `yt-streamer` hâlâ yayın yapıyor mu? | `runtime/state.json` mtime (yayın her 5 sn yazar) |
+
+**3 ardışık sağlıksız örnekte (~3 dk)** log'a `error` düşer ve bildirim gönderilir;
+sorun sürerken bildirim tekrarlanmaz, düzelince "düzeldi" bildirimi gelir. Kontrolün
+kendi hatası (ağ/kota) sağlıksızlık sayılmaz — sayaç artmaz.
+
+`encoder` kontrolü şunların hepsini yakalar: servisin durdurulması (`systemctl stop`),
+disable edilmesi, çökmesi/crash-loop'a girmesi, node ayakta ama ffmpeg'in ölmesi.
+systemd'nin `OnFailure=`'ı bunları yakalamaz — elle durdurma bir "failure" değildir.
+
+### Kurulum (ikisi de opsiyonel, `.env.youtube`)
+
+**1) Telefona bildirim — ntfy.sh** (hesap gerekmez):
+```bash
+# Tahmin edilemez bir konu adı üret
+node -e "console.log('yt-'+require('crypto').randomBytes(9).toString('base64url'))"
+# .env.youtube içine yaz:
+#   ALERT_WEBHOOK_URL=https://ntfy.sh/yt-<uretilen>
+```
+Telefona **ntfy** uygulamasını kur ve aynı konu adına abone ol. Konu adı bir **sırdır**:
+bilen herkes dinleyebilir ve bildirim yayınlayabilir, bu yüzden `.env.youtube` (chmod 600)
+dışına çıkmamalı. Loglara URL'nin tamamı yazılmaz, yalnızca host.
+
+**2) Ölü adam anahtarı — healthchecks.io:** sağlıklı her turda ping atılır; **ping
+susarsa** dış servis sana e-posta/bildirim gönderir. `yt-golive` süreci çökerse ya da
+VPS tamamen giderse alarm verecek **tek** mekanizma budur — yerel izleyici kendi ölümünü
+bildiremez.
+```
+healthchecks.io → yeni check → Period: 5 dakika, Grace: 5 dakika
+→ ping URL'sini .env.youtube içine:  HEARTBEAT_PING_URL=https://hc-ping.com/<uuid>
+```
+Yayını **bilerek** kapatırsan (`systemctl stop yt-streamer`) `encoder` kontrolü
+`state.json` dosyası durduğu için alarm verir. Uzun süre kapalı tutacaksan ya durum
+dosyasını taşı ya da healthchecks check'ini duraklat — yoksa her 3 dakikada bildirim alırsın.
+
+İkisi de boşsa izleme çalışır ama yalnızca log'a yazar; açılışta bunu uyaran bir satır
+basılır (`ALERT_WEBHOOK_URL boş — … telefona bildirim GİTMEYECEK`).
+
+### Durumu görmek
+
+```bash
+curl -s -H "Authorization: Bearer $GOLIVE_AUTH_TOKEN" localhost:8787/status | jq .health
+```
+`health` alanı izlemenin son turundan okunur, **YouTube API'ye gitmez** (kota harcamaz).

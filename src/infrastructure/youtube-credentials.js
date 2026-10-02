@@ -75,6 +75,10 @@ function loadYoutubeCredentials({
     refreshToken: pick('YOUTUBE_REFRESH_TOKEN'),
     goLiveAuthToken: pick('GOLIVE_AUTH_TOKEN'),
     goLivePort,
+    // Sağlık izleme kanalları — ikisi de OPSİYONEL. Yoksa izleme yalnızca log'a yazar
+    // (bugünkü davranış), hiçbir şey kırılmaz.
+    alertWebhookUrl: pick('ALERT_WEBHOOK_URL'),
+    heartbeatPingUrl: pick('HEARTBEAT_PING_URL'),
     credentialsPath,
   };
 }

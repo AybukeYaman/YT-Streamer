@@ -874,3 +874,61 @@ loglardan izlenir.
 
 **Dogrulama:** 389 test gecer (14 yeni). VPS'te dogrulanmadi: gercek stale senaryosu
 (Studio'dan elle sonlandirip tetikleme) ve periyodik kontrolun canli yayinda davranisi.
+
+---
+
+## [Faz 1 / SORUN 1] Servis durursa haber verme: HealthMonitor + kontroller + ntfy — 2 Ekim 2026
+
+**Olay:** `yt-streamer` test sirasinda durduruldu ve ~2 saat fark edilmeden oyle kaldi.
+Hicbir alarm yoktu. systemd'nin `OnFailure=`'i bunu yakalamaz: elle `stop` bir "failure"
+degildir, unit temiz sekilde inactive olur.
+
+**Kalp atisi olarak `state.json`:** `stream-orchestrator` her progress tikinde (5 sn)
+`stateStore.save()` cagiriyor — yani dosyanin mtime'i canli yayinin nabzi. **Yeni bir
+kalp atisi dosyasi EKLENMEDI**: ikinci bir yazma yolu iki yerde bakim ve sessiz
+tutarsizlik riski demekti. Bu olcumun yakaladiklari: servis durdurulmus/disable edilmis,
+surec cokmus/crash-loop, node ayakta ama ffmpeg olu (progress gelmezse save da olmaz).
+Esik **120 sn** = 24 kacan tik; albüm gecisi restart boslugu ~225 ms, soguk baslangic
+~450 ms (Faz 3.1 olcumleri) — yanlis alarm payi kat kat.
+
+**IngestHealthMonitor → HealthMonitor refactor'u (bir commit sonra):** A′'da yazilan sinif
+tek kontrolu olan ozel bir zamanlayiciydi. Ikinci kontrol eklemek ikinci timer, ikinci
+esik mantigi ve ikinci tekrar-bastirma politikasi demekti. Kontroller ayri nesneler
+(`IngestCheck`, `EncoderHeartbeatCheck`; sozlesme `{ name, run() -> {status,message,detail} }`)
+olunca yeni kontrol eklemek monitoru DEGISTIRMIYOR. Eski sinif ve testi silindi, davranis
+testleri tasindi — olu kod birakilmadi.
+
+**`status: 'skipped'` ucuncu durum olarak:** "olculecek sey yok" (yayin hic baslamamis,
+kayitta canli broadcast yok) saglıksızlık DEGILDIR. Olmasa yeni bir VPS'te ya da bilerek
+kapatilmis bir instance'ta her 3 dakikada bildirim giderdi.
+
+**Bildirim kanali — ntfy.sh:** `Alerter` arayuzu application'da, `WebhookAlerter`
+infrastructure'da (yerleşik fetch, sifir bagimlilik). Hesap gerektirmemesi ve telefonda
+tek konu adiyla calismasi secim sebebi. Konu adi bir SIRDIR: `.env.youtube` (chmod 600)
+icinde durur, loglara yalnizca host yazilir. HTTP baslıklari ASCII disi karakter
+tasiyamadigi icin baslik sadelestirilir (Turkce harfler cevrilir), govde UTF-8 kalir.
+URL bos ise `NullAlerter` devreye girer: izleme calisir, yalnizca log'a yazar (bugunku
+davranis) ve acilista bunu soyleyen bir uyari basilir.
+
+**Olu adam anahtari (healthchecks.io) SART:** yerel izleyici kendi olumunu bildiremez.
+`yt-golive` cokerse ya da VPS tamamen giderse ntfy'ye de kimse yazamaz. Cozum tersine
+cevirmek: saglikli her turda dis servise ping atilir, **ping susarsa** dis servis haber
+verir. Ping yalnizca butun kontroller saglikliyken atilir; `skipped` ping'i ENGELLEMEZ
+(yayini bilerek kapatinca dis alarm calmasin diye).
+
+**Bildirim/ping ASLA turu dusurmez:** kanal bozuksa izleme surmeli. `WebhookAlerter`
+kendi hatalarini yutar, `HealthMonitor` ayrica try/catch ile sarar. Kontrolun kendi
+hatasi (ag/kota/EACCES) ise saglıksızlık KANITI SAYILMAZ — sayac artmaz, yoksa YouTube
+API tekledikce olu olmayan yayin icin alarm verilirdi.
+
+**`/status` → `health`:** izlemenin son turundan okunur, API'ye gitmez (kota harcamaz).
+`GoLiveServer` opsiyonel `healthProvider` alir; verilmezse yanit eskisi gibi.
+
+**Dogrulama:** 415 test gecer (33 yeni; 7 eski monitor testi tasindi). Yerelde gercek
+dosya ile uctan uca duman testi: taze `state.json` → healthy + ping, 5 dk eskitilmis
+dosya → esikte unhealthy, ping susuyor, alarm ve snapshot dogru. VPS'te dogrulanmadi:
+gercek ntfy teslimi, healthchecks ping'i ve canli yayinda esiklerin davranisi.
+
+**Kapsam disi (sonraki fazlar):** go-live'in 202 ile hemen donmesi (SORUN 2 — bu bildirim
+kanali ona onkosul), deploy'un disabled instance'a dokunmamasi (SORUN 3), maskelemenin
+tum scriptlere yayilmasi (SORUN 4).

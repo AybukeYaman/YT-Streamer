@@ -51,10 +51,13 @@ function drainBody(req, limit = MAX_BODY_BYTES) {
 
 class GoLiveServer {
   // goLiveService: { goLive(), getStatus({refresh}) }; log: { info, warn, error }
+  // healthProvider: () => ({ <kontrol>: { status, message, ... } }) — periyodik izlemenin
+  // son gördüğü durum; /status'a eklenir. Verilmezse /status eskisi gibi döner.
   constructor({
     goLiveService, authToken, log,
     host = '127.0.0.1', port = 8787,
     now = () => Date.now(),
+    healthProvider = null,
   }) {
     if (typeof authToken !== 'string' || authToken.trim().length < 32) {
       // Fail-closed: auth'suz ayağa kalkmak sessiz bir güvenlik açığı olurdu.
@@ -68,6 +71,7 @@ class GoLiveServer {
     this.host = host;
     this.port = port;
     this.now = now;
+    this.healthProvider = healthProvider;
     this.hits = [];
     this.server = http.createServer((req, res) => this.#handle(req, res));
   }
@@ -176,7 +180,10 @@ class GoLiveServer {
         if (req.method !== 'GET') return this.#json(res, 405, { error: 'method_not_allowed' });
         const refresh = url.searchParams.get('refresh') === '1';
         const status = await this.goLiveService.getStatus({ refresh });
-        return this.#json(res, 200, { ok: true, ...status });
+        // Sağlık özeti hiçbir API çağrısı yapmaz (izlemenin son turundan okunur), bu
+        // yüzden refresh=0 çağrısına da eklenir — telefon sık yoklayabilsin.
+        const health = this.healthProvider ? this.healthProvider() : undefined;
+        return this.#json(res, 200, { ok: true, ...status, ...(health ? { health } : {}) });
       }
 
       return this.#json(res, 404, { error: 'not_found' });
