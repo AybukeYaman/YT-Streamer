@@ -203,6 +203,9 @@ async function main() {
   log.info(`çıkış: ${config.output.mode === 'local' ? config.output.localPath : 'rtmp'}`);
   try {
     await controlService.start(); // her iki modda da yayın otomatik başlar (24/7)
+    // Açılış taraması bitti: önbelleğin işe yarayıp yaramadığı logda görünsün.
+    // Sağlıklı tabloda isabet = kütüphane boyutu, ölçüm = yalnızca yeni/değişen dosyalar.
+    logger.child('süre').info(durationCache.summary());
   } catch (err) {
     // Başlatma (ya da bu aşamadaki başka bir hata) düşerse: TUI açıksa terminali geri yükle
     // (imleç, raw mode, stdin) — yoksa hata main().catch'te konsol yerine bozuk panele yazılırdı.
