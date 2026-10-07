@@ -267,3 +267,32 @@ test('background bölümü nesne değilse hata', () => {
   config.background = 60;
   assert.ok(problemsOf({ config }).some((p) => /"background" bölümü nesne olmalı/.test(p)));
 });
+
+// ── pomodoro bölümü ──────────────────────────────────────────────────────────
+test('pomodoro verilmezse kapalı ve varsayılanlarla gelir', () => {
+  assert.deepEqual(load().result.pomodoro, {
+    enabled: false, type: '50+10', fontSize: 56, statusPosition: 'center', labelPosition: 'top-right',
+  });
+});
+
+test('pomodoro verilen alanları ezer, kalanı varsayılandan', () => {
+  const config = clone();
+  config.pomodoro = { enabled: true, type: '30+10' };
+  const p = load({ config }).result.pomodoro;
+  assert.equal(p.enabled, true);
+  assert.equal(p.type, '30+10');
+  assert.equal(p.fontSize, 56);
+});
+
+test('bilinmeyen pomodoro türü reddedilir', () => {
+  const config = clone();
+  config.pomodoro = { enabled: true, type: '25+5' };
+  assert.ok(problemsOf({ config }).some((p) => /pomodoro\.type/.test(p)));
+});
+
+test('pomodoro.enabled ve fontSize tipi doğrulanır', () => {
+  const a = clone(); a.pomodoro = { enabled: 'evet' };
+  assert.ok(problemsOf({ config: a }).some((p) => /pomodoro\.enabled/.test(p)));
+  const b = clone(); b.pomodoro = { fontSize: 0 };
+  assert.ok(problemsOf({ config: b }).some((p) => /pomodoro\.fontSize/.test(p)));
+});

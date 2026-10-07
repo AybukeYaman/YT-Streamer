@@ -661,3 +661,51 @@ test('her playlist yeniden başlatmasında rotasyon listesi tazelenir', async ()
   assert.equal(writes.has('C:/runtime/backgrounds.txt'), true);
   assert.equal(encoder.starts[1].backgroundPlaylistPath, 'C:/runtime/backgrounds.txt');
 });
+
+// ── Pomodoro bağlantısı ──────────────────────────────────────────────────────
+test('pomodoroPlanner verilmezse encoder\'a pomodoro argümanı GİTMEZ', async () => {
+  const { encoder, orch } = setup();
+  await orch.start();
+  assert.deepEqual(Object.keys(encoder.starts[0]).sort(), ['backgroundPath', 'playlistPath', 'runNumber']);
+});
+
+test('pomodoroPlanner verilirse plan çalıştırma süresiyle çağrılır, sonucu encoder\'a geçer', async () => {
+  const calls = [];
+  const planner = {
+    plan(args) {
+      calls.push(args);
+      return { pomodoro: { statusTexts: [], labelTextFile: '/ov/l.txt' }, beepTimes: [5.5], phase: 'study' };
+    },
+  };
+  const encoder = new FakeEncoder();
+  const { log } = fakeLog();
+  const orch = new StreamOrchestrator({
+    encoder, log, albumRepository: oneAlbum(TRACKS),
+    queue: { mode: 'sequential', batchSize: 2 },
+    playlistPath: 'C:/runtime/playlist.txt', writeFile: () => {},
+    pomodoroPlanner: planner,
+  });
+  await orch.start();
+
+  // 2 parça × 60 sn = 120 sn
+  assert.deepEqual(calls, [{ durationSeconds: 120 }]);
+  assert.deepEqual(encoder.starts[0].beepTimes, [5.5]);
+  assert.equal(encoder.starts[0].pomodoro.labelTextFile, '/ov/l.txt');
+});
+
+test('her playlist yeniden başlatmasında plan tazelenir (faz gerçek zamanda ilerler)', async () => {
+  const calls = [];
+  const planner = { plan(a) { calls.push(a); return { pomodoro: {}, beepTimes: [], phase: 'study' }; } };
+  const encoder = new FakeEncoder();
+  const { log } = fakeLog();
+  const orch = new StreamOrchestrator({
+    encoder, log, albumRepository: oneAlbum(TRACKS),
+    queue: { mode: 'sequential', batchSize: 2 },
+    playlistPath: 'C:/runtime/playlist.txt', writeFile: () => {},
+    pomodoroPlanner: planner,
+  });
+  await orch.start();
+  encoder.emit('exit', 0, null);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(calls.length, 2, 'her çalıştırma için yeniden planlanmalı');
+});

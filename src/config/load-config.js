@@ -2,6 +2,7 @@
 // Eksik/geçersiz alan varsa tüm sorunları tek bir hata mesajında listeleyip düşer —
 // sessizce varsayılan değerle devam etmez.
 const fs = require('fs');
+const { POMODORO_TYPES } = require('../domain/pomodoro');
 const path = require('path');
 const { parseEnv } = require('util');
 
@@ -9,6 +10,15 @@ const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const OUTPUT_MODES = ['local', 'rtmp'];
 // Arkaplan rotasyonu periyodu (dk). Config'de background.rotationMinutes ile ezilir.
 const DEFAULT_ROTATION_MINUTES = 60;
+// Pomodoro varsayılanları. enabled=false: özellik kapalı, yayın bugünküyle aynı çalışır.
+// fontSize durum yazısı (STUDY/BREAK) için — parça başlığından büyük olsun diye ayrı.
+const POMODORO_DEFAULTS = Object.freeze({
+  enabled: false,
+  type: '50+10',
+  fontSize: 56,
+  statusPosition: 'center',
+  labelPosition: 'top-right',
+});
 const PRIVACY_STATUSES = ['public', 'unlisted', 'private'];
 
 // broadcast bölümü OPSİYONEL: yalnızca go-live otomasyonu (Faz 9 Aşama 2) kullanıyor,
@@ -143,6 +153,29 @@ function loadConfig({
     problems.push('"background.rotationMinutes" pozitif sayı olmalı');
   }
 
+  // Opsiyonel pomodoro bölümü. Tür doğrulaması domain'de (POMODORO_TYPES) — tek kaynak,
+  // yeni tür eklenince burası kendiliğinden kabul eder.
+  const rawPomodoro = raw.pomodoro === undefined ? {} : raw.pomodoro;
+  if (rawPomodoro === null || typeof rawPomodoro !== 'object') {
+    problems.push('"pomodoro" bölümü nesne olmalı (ya da hiç verilmemeli)');
+  } else {
+    if (rawPomodoro.enabled !== undefined && !isBoolean(rawPomodoro.enabled)) {
+      problems.push('"pomodoro.enabled" true ya da false olmalı');
+    }
+    if (rawPomodoro.type !== undefined && !POMODORO_TYPES[rawPomodoro.type]) {
+      problems.push(`"pomodoro.type" "${rawPomodoro.type}" — ${Object.keys(POMODORO_TYPES).map((t) => `"${t}"`).join(' ya da ')} olmalı`);
+    }
+    if (rawPomodoro.fontSize !== undefined && (!isNumber(rawPomodoro.fontSize) || rawPomodoro.fontSize <= 0)) {
+      problems.push('"pomodoro.fontSize" pozitif sayı olmalı');
+    }
+    // Konum değerlerinin geçerliliğini drawtext'i kuran encoder doğruluyor (tek kaynak).
+    for (const key of ['statusPosition', 'labelPosition']) {
+      if (rawPomodoro[key] !== undefined && !isNonEmptyString(rawPomodoro[key])) {
+        problems.push(`"pomodoro.${key}" metin olmalı`);
+      }
+    }
+  }
+
   const output = raw.output || {};
   let streamKey;
   if (!OUTPUT_MODES.includes(output.mode)) {
@@ -200,6 +233,7 @@ function loadConfig({
     queue: { mode: raw.queue.mode, batchSize: raw.queue.batchSize },
     // fontFile mutlak bir sistem yolu (C:/Windows/Fonts/...) — kök dizine göre çözülmez.
     overlay: { ...raw.overlay },
+    pomodoro: { ...POMODORO_DEFAULTS, ...rawPomodoro },
     background: { rotationMinutes: rawBackground?.rotationMinutes ?? DEFAULT_ROTATION_MINUTES },
     output: output.mode === 'local'
       ? { mode: 'local', localPath: abs(output.localPath) }

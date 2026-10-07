@@ -1391,3 +1391,46 @@ Gerçekten kıran sapmalar: çözünürlük, pix_fmt, kodek.
 **Doğrulama (uçtan uca, gerçek ffmpeg):** iki klipli geçici albüm, `rotationMinutes: 0.5`.
 `backgrounds.txt` 4+4 satır yazıldı, ffmpeg tek süreçte 1018 kare kodladı (speed 1.0x),
 çıktının 5. saniyesi birinci arkaplan, 35. saniyesi ikinci arkaplan — rotasyon döndü.
+
+## [Faz F] Pomodoro: opsiyonel çalışma/mola düzeni — 7 Ekim 2026
+
+**İstek:** Bazı yayınlarda Pomodoro (50+10 ya da 30+10): ekranda STUDY/BREAK, köşede tür
+etiketi, her geçişten önce 3 uyarı bipi. Pomodoro kapalıyken sistem aynen eskisi gibi.
+
+**Karar: Pomodoro da ÖNCEDEN HESAPLANIYOR** — parça başlıklarıyla birebir aynı yoldan.
+Fazlar ffmpeg başlamadan `drawtext ... enable='gte(t,X)*lt(t,Y)'` olarak veriliyor,
+bipler ise `adelay` ile müziğin üstüne `amix`'leniyor. Node tarafında canlı sayaç YOK.
+Gerekçe Faz 4.4'te ölçülmüştü: ffmpeg videoyu kuyrukta önden işliyor, çalışırken metin
+güncellemek ~12 sn geç kalıyor. Canlı bir Pomodoro sayacı aynı tuzağa düşerdi.
+
+**Köprü `startedAt`:** ffmpeg her playlist'te yeniden başlıyor ve `t` sıfırdan sayıyor;
+Pomodoro ise duvar saatinde akmalı. Döngünün başlangıç anı `runtime/pomodoro.json`'a
+yazılıyor, her çalıştırmada "şu an döngünün kaçıncı saniyesindeyiz" hesaplanıp çizelge
+oradan üretiliyor. Playlist bitişi, çökme, deploy — hiçbiri döngüyü kaydırmıyor.
+
+**Faz ve kalan süre KAYDEDİLMİYOR**, yalnızca `startedAt` + tür. İkisi de duvar saatinden
+türetilebiliyor; türetilebilen durumu saklamak restart'ta iki kaynağın çelişmesi demekti.
+Tür değişirse kayıt geçersiz sayılıp döngü yeniden başlıyor: yarım kalmış bir 50 dakikanın
+30'luk düzende karşılığı yok.
+
+**Bip için ayrı ses dosyası YOK:** ffmpeg'in kendi `sine` üreteci (lavfi) kısa bir bip
+üretiyor, `asplit` + `adelay` ile her geçiş anına kopyalanıyor. `amix` `normalize=0` ile —
+varsayılan davranış girdi sayısına bölüp müziği kısardı. `duration=first`: karışım müzikle
+biter, biten bip girdileri yayını kesmez.
+
+**Komut yolu ikiye ayrılıyor:** bip varsa video ve ses tek `-filter_complex`'e taşınıyor,
+yoksa bugünkü `-vf` + doğrudan map yolu aynen kalıyor. Pomodoro kapalıyken üretilen
+argümanlar bugünküyle BİREBİR aynı — bunu bir regresyon testi sabitliyor.
+
+**Durum yazısı parça başlığından ayrı drawtext:** kendi konumu (orta) ve puntosu (56).
+Böylece "Track Name / STUDY / POMODORO 50+10" aynı anda, üst üste binmeden görünüyor.
+`center` konumu OVERLAY_POSITIONS'a eklendi.
+
+**Çalıştırma ortasında yakalanan faz için bip ÇALMIYOR:** o geçiş önceki çalıştırmada
+olmuş. Bip zamanları negatif çıkıyor ve eleniyor.
+
+**Doğrulama (uçtan uca, gerçek ffmpeg):** döngü çalışmanın bitimine 15 sn kala başlatıldı.
+Çıktının 5. saniyesinde STUDY, 25. saniyesinde BREAK; ikisinde de parça adı sol altta ve
+tür etiketi sağ üstte. 880 Hz bandı 0.1 sn'lik pencerelerle tarandı: 12.8 / 13.4 / 14.0
+saniyelerde üç ayrı tepe, müzik zemininin ~17 dB üstünde — planlanan 12.812 / 13.412 /
+14.012 ile birebir, geçişten (14.612) hemen önce.

@@ -38,7 +38,7 @@ class StreamOrchestrator extends EventEmitter {
   constructor({
     encoder, log, albumRepository, queue, playlistPath, writeFile,
     nowPlayingWriter = null, speedWindow = null, speedAlarm = null, stateStore = null,
-    backgroundPlaylistWriter = null,
+    backgroundPlaylistWriter = null, pomodoroPlanner = null,
     now = () => Date.now(), random = Math.random,
   }) {
     super();
@@ -59,6 +59,9 @@ class StreamOrchestrator extends EventEmitter {
     // backgroundPlaylistWriter: BackgroundPlaylistWriter — verilmezse rotasyon hiç denenmez,
     // her albüm tek arkaplanla oynar (eski davranış).
     this.backgroundPlaylistWriter = backgroundPlaylistWriter;
+    // pomodoroPlanner: PomodoroPlanner — verilmezse Pomodoro tamamen devre dışı,
+    // encoder bugünküyle aynı argümanları alır.
+    this.pomodoroPlanner = pomodoroPlanner;
     // stateStore: { save(state), load() } — verilirse süreç ölümünden sonra kaldığı yerden devam
     this.stateStore = stateStore;
     this.now = now;
@@ -267,6 +270,11 @@ class StreamOrchestrator extends EventEmitter {
         `arkaplan rotasyonu: ${rotation.backgroundCount} klip, ${rotation.lineCount} satır`,
       );
     }
+    // Pomodoro: bu çalıştırmanın faz çizelgesi, overlay metinleri ve bip zamanları.
+    // Planner yoksa (özellik kapalı) encoder'a hiçbir ek argüman gitmez.
+    const pomodoroPlan = this.pomodoroPlanner?.plan({
+      durationSeconds: playlist.totalDurationSeconds,
+    }) ?? null;
     this.encoder.start({
       playlistPath: playlist.path,
       runNumber: this.runNumber,
@@ -274,6 +282,7 @@ class StreamOrchestrator extends EventEmitter {
         ? { backgroundPlaylistPath: rotation.path }
         : { backgroundPath: playlist.album.backgroundPath }),
       ...(overlayTexts && { overlayTexts }),
+      ...(pomodoroPlan && { pomodoro: pomodoroPlan.pomodoro, beepTimes: pomodoroPlan.beepTimes }),
     });
   }
 

@@ -9,6 +9,9 @@ const { SpeedWindow } = require('./src/domain/speed-window');
 const { StreamOrchestrator } = require('./src/application/stream-orchestrator');
 const { NowPlayingWriter } = require('./src/application/now-playing-writer');
 const { BackgroundPlaylistWriter } = require('./src/application/background-playlist-writer');
+const { PomodoroPlanner } = require('./src/application/pomodoro-planner');
+const { PomodoroOverlayWriter } = require('./src/application/pomodoro-overlay-writer');
+const { PomodoroStore } = require('./src/infrastructure/pomodoro-store');
 const { Supervisor } = require('./src/application/supervisor');
 const { StreamControlService } = require('./src/application/stream-control-service');
 const { NullAlerter } = require('./src/application/alerter');
@@ -84,6 +87,27 @@ async function main() {
     writeFile: writeFileAtomic,
     nowPlayingWriter: overlayEnabled
       ? new NowPlayingWriter({ dir: path.join(config.paths.runtime, 'overlay'), writeFile: writeFileAtomic })
+      : null,
+    // Pomodoro: kapalıysa (varsayılan) planner hiç kurulmaz ve orchestrator encoder'a
+    // bugünküyle aynı argümanları geçer. Overlay kapalıyken de kurulmaz: STUDY/BREAK
+    // yazısı drawtext'e, drawtext de overlay.fontFile'a bağlı.
+    pomodoroPlanner: (config.pomodoro.enabled && overlayEnabled)
+      ? new PomodoroPlanner({
+        type: config.pomodoro.type,
+        overlayWriter: new PomodoroOverlayWriter({
+          dir: path.join(config.paths.runtime, 'overlay'),
+          writeFile: writeFileAtomic,
+          fontSize: config.pomodoro.fontSize,
+          statusPosition: config.pomodoro.statusPosition,
+          labelPosition: config.pomodoro.labelPosition,
+        }),
+        store: new PomodoroStore({
+          file: path.join(config.paths.runtime, 'pomodoro.json'),
+          writeFile: writeFileAtomic,
+          log: logger.child('pomodoro'),
+        }),
+        log: logger.child('pomodoro'),
+      })
       : null,
     // Arkaplan rotasyonu: albümde backgrounds/ varsa klipler sırayla döner. Tek
     // arkaplanlı albümlerde writer null döndürür, hiçbir şey değişmez.

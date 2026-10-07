@@ -149,8 +149,8 @@ test('geçersiz bottomOffset FfmpegEncoder kurulurken reddedilir', () => {
 
 test('desteklenmeyen konum FfmpegEncoder kurulurken reddedilir', () => {
   assert.throws(
-    () => new FfmpegEncoder({ profile, backgroundPath: BG, output: LOCAL, overlay: { ...OVERLAY, position: 'center' } }),
-    /desteklenmeyen overlay.position "center"/,
+    () => new FfmpegEncoder({ profile, backgroundPath: BG, output: LOCAL, overlay: { ...OVERLAY, position: 'ortala' } }),
+    /desteklenmeyen overlay.position "ortala"/,
   );
 });
 
@@ -382,4 +382,66 @@ test('start: rotasyon listesi verilince kurulumdaki backgroundPath kullanılmaz'
   assert.ok(args.includes(BGLIST));
   assert.ok(!args.includes(BG), 'tek dosya yolu rotasyon modunda argümanlara girmemeli');
   assert.equal(args.filter((a) => a === '-i').length, 2, 'tam iki giriş olmalı: arkaplan + ses');
+});
+
+// ── Pomodoro ─────────────────────────────────────────────────────────────────
+const POMO = {
+  statusTexts: [{ textFile: '/ov/pomodoro-001.txt', start: 0, end: 600 }, { textFile: '/ov/pomodoro-002.txt', start: 600, end: null }],
+  labelTextFile: '/ov/pomodoro-label.txt',
+  fontSize: 56,
+  statusPosition: 'center',
+  labelPosition: 'top-right',
+};
+
+test('pomodoro kapalıyken komut bugünküyle BİREBİR aynı (regresyon kalkanı)', () => {
+  const withoutArgs = buildFfmpegArgs({ profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL, overlay: OVERLAY, overlayTexts: TEXTS });
+  const explicitOff = buildFfmpegArgs({ profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL, overlay: OVERLAY, overlayTexts: TEXTS, pomodoro: null, beepTimes: [] });
+  assert.deepEqual(explicitOff, withoutArgs);
+  assert.ok(!withoutArgs.includes('-filter_complex'), 'bip yokken filter_complex kurulmamalı');
+  assert.ok(withoutArgs.includes('-vf'));
+});
+
+test('pomodoro açık: durum yazıları kendi aralığında, tür etiketi sürekli', () => {
+  const args = buildFfmpegArgs({ profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL, overlay: OVERLAY, overlayTexts: [], pomodoro: POMO });
+  const vf = args[args.indexOf('-vf') + 1];
+  // Ters bolu iceren enable ifadesi: duz metin karsilastirmasi (regex kacisi kirilgan)
+  assert.ok(vf.includes("textfile='/ov/pomodoro-001.txt':enable='gte(t\\,0.000)*lt(t\\,600.000)'"));
+  assert.ok(vf.includes("textfile='/ov/pomodoro-002.txt':enable='gte(t\\,600.000)'"));
+  // Etiket son drawtext ve enable TASIMIYOR (hep ekranda)
+  assert.ok(vf.endsWith("textfile='/ov/pomodoro-label.txt'"));
+  assert.ok(vf.includes('fontsize=56:fontcolor=white:x=(w-tw)/2:y=(h-th)/2'), 'durum ortada ve buyuk punto');
+  assert.ok(vf.includes('fontsize=28:fontcolor=white:x=w-tw-40:y=40'), 'etiket sag ustte, normal punto');
+});
+
+test('pomodoro ve parça başlığı aynı anda, ayrı drawtext olarak', () => {
+  const args = buildFfmpegArgs({ profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL, overlay: OVERLAY, overlayTexts: TEXTS, pomodoro: POMO });
+  const vf = args[args.indexOf('-vf') + 1];
+  assert.ok(vf.includes('track-'), 'parça başlığı korunmalı');
+  assert.ok(vf.includes('pomodoro-001.txt'));
+  assert.equal((vf.match(/drawtext=/g) || []).length, TEXTS.length + 3, 'parça sayısı + 2 durum + 1 etiket');
+});
+
+test('bip varsa lavfi sine girişi eklenir ve ses amix ile karışır', () => {
+  const args = buildFfmpegArgs({
+    profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL,
+    overlay: OVERLAY, overlayTexts: [], pomodoro: POMO, beepTimes: [10.5, 11.1],
+  });
+  assert.ok(args.includes('lavfi'));
+  assert.ok(args.some((a) => a.startsWith('sine=frequency=880')));
+  const fc = args[args.indexOf('-filter_complex') + 1];
+  assert.match(fc, /asplit=2\[p0\]\[p1\]/);
+  assert.match(fc, /\[p0\]adelay=10500\|10500\[d0\]/);
+  assert.match(fc, /\[p1\]adelay=11100\|11100\[d1\]/);
+  assert.match(fc, /\[1:a\]\[d0\]\[d1\]amix=inputs=3:duration=first:normalize=0\[a\]/);
+  assert.deepEqual(args.slice(args.indexOf('-map'), args.indexOf('-map') + 4), ['-map', '[v]', '-map', '[a]']);
+  // Video zinciri de filter_complex'e taşınmış olmalı, -vf kalmamalı
+  assert.ok(!args.includes('-vf'));
+  assert.match(fc, /^\[0:v\]scale=1280:720/);
+});
+
+test('bip yokken pomodoro yazıları yine de görünür (-vf yolu korunur)', () => {
+  const args = buildFfmpegArgs({ profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL, overlay: OVERLAY, overlayTexts: [], pomodoro: POMO, beepTimes: [] });
+  assert.ok(args.includes('-vf'));
+  assert.ok(!args.includes('-filter_complex'));
+  assert.ok(args[args.indexOf('-vf') + 1].includes('pomodoro-001.txt'));
 });

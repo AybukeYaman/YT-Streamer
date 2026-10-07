@@ -62,6 +62,8 @@ const OVERLAY_POSITIONS = {
   'bottom-right': (bottom) => ({ x: 'w-tw-40', y: `h-${bottom}` }),
   'top-left': () => ({ x: '40', y: '40' }),
   'top-right': () => ({ x: 'w-tw-40', y: '40' }),
+  // Pomodoro durumu için: parça başlığıyla aynı yere düşmesin diye ortada.
+  center: () => ({ x: '(w-tw)/2', y: '(h-th)/2' }),
 };
 
 // bottomOffset verilmezse (eski config) 80 — mevcut davranış korunur.
@@ -85,21 +87,64 @@ function enableExpr(start, end) {
 // overlayTexts: [{ textFile, start, end }] — parça başına bir drawtext, sadece kendi zaman
 // aralığında görünür. Zamanlama ffmpeg'in video zaman damgasına (t) bağlı: sesle senkron.
 // (textfile + reload=1 ile dosyayı Node'dan güncellemek ~12 sn geç kalıyordu — KARARLAR.md.)
-function videoFilter(profile, overlay, overlayTexts = []) {
-  const scale = `scale=${profile.width}:${profile.height}`;
-  if (!overlay || overlayTexts.length === 0) return scale;
-  const pos = overlayPosition(overlay.position, overlay.bottomOffset);
-  const style = [
-    `fontfile=${escapeFilterPath(overlay.fontFile)}`,
-    `fontsize=${overlay.fontSize}`,
+// Ortak drawtext gövdesi: konum + yazı tipi + gölge.
+function drawtextStyle({ fontFile, fontSize, position, bottomOffset }) {
+  const pos = overlayPosition(position, bottomOffset);
+  return [
+    `fontfile=${escapeFilterPath(fontFile)}`,
+    `fontsize=${fontSize}`,
     'fontcolor=white',
     `x=${pos.x}`, `y=${pos.y}`,
     'shadowcolor=black@0.6', 'shadowx=2', 'shadowy=2',
   ].join(':');
-  // expansion=none: başlık düz metin — "100% Love" gibi başlıklarda % dizisi yorumlanmasın.
-  const drawtexts = overlayTexts.map(({ textFile, start, end }) =>
-    `drawtext=${style}:expansion=none:textfile=${escapeFilterPath(textFile)}:enable=${enableExpr(start, end)}`);
-  return [scale, ...drawtexts].join(',');
+}
+
+// expansion=none: metin düz okunur — "100% Love" gibi başlıklarda % dizisi yorumlanmasın.
+// enable verilmezse yazı tüm çalıştırma boyunca durur (Pomodoro tür etiketi böyle).
+function drawtext(style, textFile, enable) {
+  const parts = [`drawtext=${style}`, 'expansion=none', `textfile=${escapeFilterPath(textFile)}`];
+  if (enable) parts.push(`enable=${enable}`);
+  return parts.join(':');
+}
+
+// overlay: { fontFile, fontSize, position, bottomOffset } ya da null (overlay kapalı → sadece scale).
+// overlayTexts: [{ textFile, start, end }] — parça başına bir drawtext, sadece kendi zaman
+// aralığında görünür. Zamanlama ffmpeg'in video zaman damgasına (t) bağlı: sesle senkron.
+// (textfile + reload=1 ile dosyayı Node'dan güncellemek ~12 sn geç kalıyordu — KARARLAR.md.)
+//
+// pomodoro: { statusTexts: [{ textFile, start, end }], labelTextFile, fontSize,
+//             statusPosition, labelPosition } ya da null. Parça başlığından AYRI bir
+// drawtext kümesi: kendi konumu, kendi punto'su. Böylece "Track Name / STUDY /
+// POMODORO 50+10" aynı anda, üst üste binmeden görünür.
+function videoFilter(profile, overlay, overlayTexts = [], pomodoro = null) {
+  const scale = `scale=${profile.width}:${profile.height}`;
+  const filters = [];
+
+  if (overlay && overlayTexts.length > 0) {
+    const style = drawtextStyle(overlay);
+    filters.push(...overlayTexts.map(({ textFile, start, end }) =>
+      drawtext(style, textFile, enableExpr(start, end))));
+  }
+
+  if (pomodoro) {
+    // Durum (STUDY/BREAK): faz başına bir drawtext, kendi zaman aralığında.
+    const statusStyle = drawtextStyle({
+      fontFile: overlay.fontFile,
+      fontSize: pomodoro.fontSize,
+      position: pomodoro.statusPosition,
+    });
+    filters.push(...pomodoro.statusTexts.map(({ textFile, start, end }) =>
+      drawtext(statusStyle, textFile, enableExpr(start, end))));
+    // Tür etiketi: enable yok, hep ekranda.
+    const labelStyle = drawtextStyle({
+      fontFile: overlay.fontFile,
+      fontSize: overlay.fontSize,
+      position: pomodoro.labelPosition,
+    });
+    filters.push(drawtext(labelStyle, pomodoro.labelTextFile));
+  }
+
+  return [scale, ...filters].join(',');
 }
 
 // Video girişi iki moddan biri:
@@ -118,19 +163,54 @@ function videoInputArgs({ backgroundPath, backgroundPlaylistPath }) {
     : ['-stream_loop', '-1', '-i', backgroundPath];
 }
 
+// Pomodoro uyarı bipleri. Ayrı bir ses dosyası tutulmuyor: ffmpeg'in kendi sine üreteci
+// (lavfi) kısa bir bip üretiyor, o bip her geçiş anına adelay ile kopyalanıp müziğin
+// üstüne amix'leniyor. Zamanlar çalıştırmaya göreli ve ÖNCEDEN hesaplanmış — overlay
+// zamanlamasıyla aynı ilke, canlı müdahale yok.
+//
+// normalize=0: amix varsayılanı girdi sayısına bölerek sesi kısardı, müzik seviyesi düşmesin.
+// duration=first: karışım müzikle biter, bip girdilerinin bitmesi yayını kesmez.
+const BEEP_FREQUENCY_HZ = 880;
+const BEEP_DURATION_SECONDS = 0.12;
+const BEEP_VOLUME = 0.25;
+const BEEP_INPUT_ARGS = ['-f', 'lavfi', '-i', `sine=frequency=${BEEP_FREQUENCY_HZ}:duration=${BEEP_DURATION_SECONDS}`];
+
+function beepMixChain(beepTimes, musicLabel = '1:a', beepLabel = '2:a', outLabel = 'a') {
+  const splits = beepTimes.map((_, i) => `[p${i}]`).join('');
+  const chains = [
+    `[${beepLabel}]volume=${BEEP_VOLUME},aformat=sample_rates=48000:channel_layouts=stereo,`
+      + `asplit=${beepTimes.length}${splits}`,
+    ...beepTimes.map((seconds, i) => {
+      const ms = Math.round(seconds * 1000);
+      return `[p${i}]adelay=${ms}|${ms}[d${i}]`;
+    }),
+    `[${musicLabel}]${beepTimes.map((_, i) => `[d${i}]`).join('')}`
+      + `amix=inputs=${beepTimes.length + 1}:duration=first:normalize=0[${outLabel}]`,
+  ];
+  return chains.join(';');
+}
+
 // Argümanlar dizi olarak kurulur — boşluklu Windows yolları tek eleman kalır, kaçış gerekmez.
 // Sıra ve değerler Faz 1 yerel testinde doğrulanan komutla aynı.
+//
+// beepTimes boşsa (Pomodoro kapalı ya da bu çalıştırmada geçiş yok) ses zinciri HİÇ
+// kurulmaz: -vf + doğrudan map, yani bugünkü komutun birebir aynısı. Bip varsa video ve
+// ses tek -filter_complex'e taşınır (ikisini -vf ile karıştırmak kırılgan).
 function buildFfmpegArgs({
   profile, backgroundPath, backgroundPlaylistPath, audioPath, playlistPath, runNumber,
-  output, overlay = null, overlayTexts,
+  output, overlay = null, overlayTexts, pomodoro = null, beepTimes = [],
 }) {
+  const vf = videoFilter(profile, overlay, overlayTexts, pomodoro);
+  const mixing = beepTimes.length > 0;
   return [
     '-hide_banner',
     '-y', // local modda çıktının üzerine yaz; yoksa ffmpeg stdin'den onay bekler
     ...videoInputArgs({ backgroundPath, backgroundPlaylistPath }),
     ...audioInputArgs({ audioPath, playlistPath }),
-    '-map', '0:v', '-map', '1:a',
-    '-vf', videoFilter(profile, overlay, overlayTexts),
+    ...(mixing ? BEEP_INPUT_ARGS : []),
+    ...(mixing
+      ? ['-filter_complex', `[0:v]${vf}[v];${beepMixChain(beepTimes)}`, '-map', '[v]', '-map', '[a]']
+      : ['-map', '0:v', '-map', '1:a', '-vf', vf]),
     '-c:v', profile.videoCodec, '-preset', profile.preset, '-pix_fmt', profile.pixelFormat,
     '-profile:v', profile.h264Profile, '-r', String(profile.fps),
     '-g', String(profile.gopSize), '-keyint_min', String(profile.gopSize), '-sc_threshold', '0',
@@ -198,9 +278,11 @@ class FfmpegEncoder extends Encoder {
   // backgroundPlaylistPath verilirse arkaplan rotasyonu devrededir ve tek dosya yolu
   // tamamen devre dışı kalır — kurulumdaki backgroundPath'e DÜŞÜLMEZ, yoksa ffmpeg'e iki
   // video girişi birden verilmiş olur.
+  // pomodoro / beepTimes: verilmezse Pomodoro kapalı demektir ve komut bugünküyle aynı kalır.
   start({
     audioPath, playlistPath, runNumber, overlayTexts,
     backgroundPath, backgroundPlaylistPath,
+    pomodoro = null, beepTimes = [],
   }) {
     if (this.running) throw new Error('FfmpegEncoder zaten çalışıyor');
     const args = buildFfmpegArgs({
@@ -209,6 +291,7 @@ class FfmpegEncoder extends Encoder {
       backgroundPlaylistPath,
       audioPath, playlistPath, runNumber,
       output: this.output, overlay: this.overlay, overlayTexts,
+      pomodoro, beepTimes,
     });
     this.emit('log', { kind: 'command', args: args.map((a) => maskSecret(a, this.output)) });
 
