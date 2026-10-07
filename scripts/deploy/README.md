@@ -5,6 +5,7 @@
 | **İlk kurulum** (yeni VPS) | `sudo bash scripts/deploy/install-service.sh` |
 | **Kod güncellemesi** (her deploy) | `bash deploy.sh` |
 | **Yeni yayın ekleme** | `sudo bash scripts/deploy/add-stream.sh <isim>` |
+| **Albüm/müzik taşıma** (yerelden) | `bash scripts/deploy/sync-albums.sh <kullanıcı@host> <uzak-yol>` |
 
 ## Kod güncellemesi — `deploy.sh`
 
@@ -394,3 +395,27 @@ basılır (`ALERT_WEBHOOK_URL boş — … telefona bildirim GİTMEYECEK`).
 curl -s -H "Authorization: Bearer $GOLIVE_AUTH_TOKEN" localhost:8787/status | jq .health
 ```
 `health` alanı izlemenin son turundan okunur, **YouTube API'ye gitmez** (kota harcamaz).
+
+## Albüm taşıma — `sync-albums.sh`
+
+Diğer deploy script'lerinin tersine **yerelde** çalışır, VPS'te değil. `deploy.sh` yalnızca
+kodu güncelliyor; `music-source/` git'e girmediği için (`.gitignore`) albümler ayrı taşınır.
+
+```bash
+bash scripts/deploy/sync-albums.sh root@<ip> /root/yt-stream-system --dry-run
+bash scripts/deploy/sync-albums.sh root@<ip> /root/yt-stream-system
+bash scripts/deploy/sync-albums.sh root@<ip> /root/yt-stream-system --album mimi
+```
+
+- **Atomik:** aktarım uzaktaki `music-source/.staging/<albüm>/` içine yapılır, ancak
+  tamamlandığında tek `mv` ile yerine konur. Yarım aktarılmış bir albüm `background.mp4`
+  + `music/` kontrolünü geçip **eksik parçalarla yayına girerdi** — script'in asıl
+  varlık sebebi bu. Nokta ile başlayan klasörleri `AlbumRepository` taramıyor.
+- **Değişmeyeni atlar:** karşılaştırma "dosya sayısı + toplam bayt". Şüphede `--album`
+  ile zorla gönder.
+- **Silmez:** yerelde olmayan uzak albümler yalnızca raporlanır; silmek için `--delete`.
+- **rsync gerektirmez** (Windows'ta Git Bash ile gelmiyor) — `tar | ssh tar`. m4a zaten
+  sıkıştırılmış olduğu için gzip kullanılmaz.
+
+Albümler yayın sürecine **albüm geçişinde** girer (`AlbumRepository` her playlist'te
+diski yeniden tarar); hemen görmek için `sudo systemctl restart yt-streamer`.
