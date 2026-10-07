@@ -1434,3 +1434,35 @@ olmuş. Bip zamanları negatif çıkıyor ve eleniyor.
 tür etiketi sağ üstte. 880 Hz bandı 0.1 sn'lik pencerelerle tarandı: 12.8 / 13.4 / 14.0
 saniyelerde üç ayrı tepe, müzik zemininin ~17 dB üstünde — planlanan 12.812 / 13.412 /
 14.012 ile birebir, geçişten (14.612) hemen önce.
+
+## [Faz G] Parça sürelerinin disk önbelleği — 7 Ekim 2026
+
+**Sorun (üretimde ölçüldü):** Her açılışta tüm kütüphane yeniden ffprobe'dan geçiyordu.
+VPS'te 498 parça + 4 arkaplan = **2 dk 12 sn** ve bu süre boyunca yayın AKMIYOR
+(15:55:47 restart → 15:57:59 ilk playlist).
+
+Asıl tehlike kesinti değil: encoder-durdu kontrolü 2 dakikada tetikleniyor ve o deploy'da
+`1/3` uyarısı verdi. Kütüphane biraz daha büyüseydi 3/3'e ulaşıp **her deploy'da telefona
+yanlış alarm** gidecekti. Yani bu bir hız iyileştirmesi değil, bir alarm hatasının önüne
+geçme işi.
+
+**Karar: ölçüm fonksiyonunu saran bir disk önbelleği** (`runtime/durations.json`).
+Repository'ler DEĞİŞMEDİ — ikisi de zaten dışarıdan `probeDuration` alıyordu, index.js
+o fonksiyonu sarıyor. Alternatif (önbelleği TrackRepository'nin içine koymak) hem albüm
+hem arkaplan yolunda ayrı ayrı uygulanmayı gerektirirdi.
+
+**Geçerlilik anahtarı: yol + boyut + mtime.** Üçü aynıysa süre değişmiş olamaz. Paket
+yeniden üretilince mtime değişiyor ve o dosya yeniden ölçülüyor, yani "eskimiş süre"
+riski yok. Önbelleği elle temizlemek gerekmiyor.
+
+**Yazma geciktirilmiş (1 sn):** açılışta yüzlerce giriş arka arkaya ekleniyor, her birinde
+dosyayı baştan yazmak anlamsızdı. Zamanlayıcı `unref` — kapanışı geciktirmez.
+
+**Bozuk dosya yayını engellemiyor:** okunamayan/geçersiz önbellekle boş başlanır, tek kayıp
+o açılışın yavaş olmasıdır. Yazma hatası da yutulur.
+
+**Ölçüm (yerel, 502 dosya):**
+- önbelleksiz (bugünkü davranış): **24.1 sn**
+- önbellekli, boş önbellekle ilk koşum: 20.1 sn (502 ölçüm)
+- önbellekli, yeni süreç diskten okuyor: **0.0 sn** (502 isabet)
+- önbellek dosyası: 49 KB

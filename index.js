@@ -12,6 +12,8 @@ const { BackgroundPlaylistWriter } = require('./src/application/background-playl
 const { PomodoroPlanner } = require('./src/application/pomodoro-planner');
 const { PomodoroOverlayWriter } = require('./src/application/pomodoro-overlay-writer');
 const { PomodoroStore } = require('./src/infrastructure/pomodoro-store');
+const { DurationCache } = require('./src/infrastructure/duration-cache');
+const { ffprobeDuration } = require('./src/infrastructure/track-repository');
 const { Supervisor } = require('./src/application/supervisor');
 const { StreamControlService } = require('./src/application/stream-control-service');
 const { NullAlerter } = require('./src/application/alerter');
@@ -73,14 +75,23 @@ async function main() {
     alertLog.warn('ALERT_WEBHOOK_URL boş — sorunlar yalnızca loga yazılacak, telefona bildirim GİTMEYECEK');
   }
 
+  // Parça/klip süreleri disk önbelleğinden okunur: her açılışta tüm kütüphaneyi
+  // yeniden ffprobe'lamak 498 parçada 2 dk sürüyordu ve bu süre boyunca yayın akmıyor.
+  const durationCache = new DurationCache({
+    file: path.join(config.paths.runtime, 'durations.json'),
+    writeFile: writeFileAtomic,
+    log: logger.child('süre'),
+  });
+  const probeDuration = durationCache.wrap((f) => ffprobeDuration(f));
+
   const orchestrator = new StreamOrchestrator({
     encoder,
     log: logger.child('orchestrator'),
     // paths.albums: albüm düzeni (her playlist tek albüm, arkaplan albümle değişir); yoksa tek albüm
     albumRepository: config.paths.albums
-      ? new AlbumRepository({ dir: config.paths.albums, log: logger.child('albums') })
+      ? new AlbumRepository({ dir: config.paths.albums, log: logger.child('albums'), probeDuration })
       : new SingleAlbumRepository({
-        musicDir: config.paths.music, backgroundPath: config.paths.background, log: logger.child('tracks'),
+        musicDir: config.paths.music, backgroundPath: config.paths.background, log: logger.child('tracks'), probeDuration,
       }),
     queue: config.queue,
     playlistPath: path.join(config.paths.runtime, 'playlist.txt'),
