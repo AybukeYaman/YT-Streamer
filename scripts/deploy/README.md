@@ -419,3 +419,34 @@ bash scripts/deploy/sync-albums.sh root@<ip> /root/yt-stream-system --album mimi
 
 Albümler yayın sürecine **albüm geçişinde** girer (`AlbumRepository` her playlist'te
 diski yeniden tarar); hemen görmek için `sudo systemctl restart yt-streamer`.
+
+## Tek komutla yayınlama — `npm run albums:publish`
+
+Günlük akış bu: ham video/görseli kaynak klasöre at, tek komut.
+
+```bash
+npm run albums:publish                 # dönüştür + VPS'e taşı
+npm run albums:publish -- --dry-run    # hiçbir şey değiştirme, ne olacağını yaz
+npm run albums:publish -- --no-sync    # sadece dönüştür, VPS'e dokunma
+```
+
+İki adımı birleştirir: `add-backgrounds.js` (her eşleme için) ve `sync-albums.sh`.
+Dönüştürme başarısız olursa VPS'e **hiçbir şey gönderilmez**.
+
+Hedef ve eşlemeler `scripts/publish.json`'da; makineye özel, git'e girmez.
+Şablon: `scripts/publish.example.json`.
+
+```json
+{
+  "host": "root@1.2.3.4",
+  "path": "/root/YT-Streamer",
+  "albums": { "mimi": "../mimi-loops" }
+}
+```
+
+Neden `.env` değil: `check-env.sh`, `.env.example`'daki her anahtarı zorunlu sayıyor ve
+eksikse deploy'u durduruyor. VPS'in `.env`'inde bu anahtarlar olmayacağı için oraya koymak
+deploy'u kırardı.
+
+> Arkaplan klasörü her seferinde **baştan** yazılır (eklenmez): kaynak klasörde ne varsa
+> albümün arkaplanı odur. Yeni bir klip eklerken eskileri de klasörde tut.

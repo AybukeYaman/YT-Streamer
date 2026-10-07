@@ -1,0 +1,8 @@
+{
+  "_README": "Bu bir SABLONDUR. Kopyala -> scripts/publish.json (git'e dahil DEGILDIR, makineye ozel). 'host' ve 'path' VPS'in adresi ve repo yolu. 'albums' esleme: <albüm adi> -> <ham dosyalarin bulundugu klasor, repo kokune gore>. Klasore video ya da resim atip 'npm run albums:publish' demek yeterli: donusturulur, dogrulanir ve VPS'e atomik gonderilir. Arkaplan klasoru her seferinde BASTAN yazilir, bu yuzden eski dosyalari da kaynak klasorde tut.",
+  "host": "root@1.2.3.4",
+  "path": "/root/YT-Streamer",
+  "albums": {
+    "mimi": "../mimi-loops"
+  }
+}
