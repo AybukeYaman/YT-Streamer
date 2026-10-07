@@ -85,3 +85,44 @@ test('durum yazısı parça başlığından ayrı konum ve punto alır', () => {
   assert.equal(pomodoro.statusPosition, 'center');
   assert.equal(pomodoro.labelPosition, 'top-right');
 });
+
+// ── Mola arkaplanı ───────────────────────────────────────────────────────────
+test('breakClipPath verilmezse mola arkaplanı yok', () => {
+  const { planner } = setup();
+  assert.equal(planner.plan({ durationSeconds: 3700 }).breakBackground, null);
+});
+
+test('mola pencereleri BREAK segmentleriyle BİREBİR aynı (yazı ile görsel kayamaz)', () => {
+  const store = fakeStore();
+  const writes = new Map();
+  const { log } = fakeLog();
+  const planner = new PomodoroPlanner({
+    type: '50+10',
+    overlayWriter: new PomodoroOverlayWriter({ dir: '/ov', writeFile: (p, c) => writes.set(p, c), fontSize: 56 }),
+    store,
+    log,
+    breakClipPath: '/runtime/break-background.mp4',
+    now: () => T0,
+  });
+  const { pomodoro, breakBackground } = planner.plan({ durationSeconds: 3700 });
+
+  assert.equal(breakBackground.path, '/runtime/break-background.mp4');
+  // STUDY 0-3000, BREAK 3000-3600, STUDY 3600-null
+  const breakStatus = pomodoro.statusTexts.filter((_, i) => i === 1);
+  assert.deepEqual(breakBackground.windows, [{ start: 3000, end: 3600 }]);
+  assert.equal(breakStatus[0].start, breakBackground.windows[0].start);
+  assert.equal(breakStatus[0].end, breakBackground.windows[0].end);
+  assert.equal(writes.get('/ov/pomodoro-002.txt'), 'BREAK');
+});
+
+test('çalıştırmada hiç mola yoksa mola arkaplanı verilmez', () => {
+  const store = fakeStore();
+  const { log } = fakeLog();
+  const planner = new PomodoroPlanner({
+    type: '50+10',
+    overlayWriter: new PomodoroOverlayWriter({ dir: '/ov', writeFile: () => {}, fontSize: 56 }),
+    store, log, breakClipPath: '/runtime/break.mp4', now: () => T0,
+  });
+  // Yalnızca çalışma fazına sığan kısa çalıştırma
+  assert.equal(planner.plan({ durationSeconds: 600 }).breakBackground, null);
+});

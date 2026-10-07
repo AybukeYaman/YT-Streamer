@@ -445,3 +445,53 @@ test('bip yokken pomodoro yazıları yine de görünür (-vf yolu korunur)', () 
   assert.ok(!args.includes('-filter_complex'));
   assert.ok(args[args.indexOf('-vf') + 1].includes('pomodoro-001.txt'));
 });
+
+test('mola arkaplanı: ikinci video girişi overlay ile bindirilir, yazılar üstte kalır', () => {
+  const args = buildFfmpegArgs({
+    profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL,
+    overlay: OVERLAY, overlayTexts: [], pomodoro: POMO,
+    breakBackground: { path: '/runtime/break.mp4', windows: [{ start: 600, end: null }] },
+  });
+  // Giriş sırası: 0 arkaplan, 1 müzik, 2 mola klibi (sonsuz döngüde)
+  assert.deepEqual(args.slice(args.lastIndexOf('-stream_loop'), args.lastIndexOf('-stream_loop') + 4),
+    ['-stream_loop', '-1', '-i', '/runtime/break.mp4']);
+  const fc = args[args.indexOf('-filter_complex') + 1];
+  assert.ok(fc.startsWith('[2:v]scale=1280:720,setsar=1[brk];'), 'mola klibi ölçeklenip SAR sabitlenmeli');
+  assert.ok(fc.includes("[bg][brk]overlay=enable='gte(t\\,600.000)'[comp]"));
+  // Yazılar overlay'den SONRA: mola görselinin üstünde görünsünler
+  assert.ok(fc.indexOf('[comp]drawtext') > fc.indexOf('overlay='));
+  // Bip yoksa ses doğrudan müzikten map'lenir
+  assert.deepEqual(args.slice(args.indexOf('-map'), args.indexOf('-map') + 4), ['-map', '[v]', '-map', '1:a']);
+});
+
+test('mola arkaplanı + bip birlikte: giriş indeksleri kaymaz', () => {
+  const args = buildFfmpegArgs({
+    profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL,
+    overlay: OVERLAY, overlayTexts: [], pomodoro: POMO, beepTimes: [12.5],
+    breakBackground: { path: '/runtime/break.mp4', windows: [{ start: 600, end: null }] },
+  });
+  const fc = args[args.indexOf('-filter_complex') + 1];
+  assert.ok(fc.includes('[2:v]scale'), 'mola klibi 2. giriş');
+  assert.ok(fc.includes('[3:a]volume='), 'bip 3. giriş');
+  assert.deepEqual(args.slice(args.indexOf('-map'), args.indexOf('-map') + 4), ['-map', '[v]', '-map', '[a]']);
+});
+
+test('mola penceresi yoksa mola girişi hiç eklenmez', () => {
+  const args = buildFfmpegArgs({
+    profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL,
+    overlay: OVERLAY, overlayTexts: [], pomodoro: POMO,
+    breakBackground: { path: '/runtime/break.mp4', windows: [] },
+  });
+  assert.ok(!args.includes('/runtime/break.mp4'));
+  assert.ok(args.includes('-vf'), 'ek giriş yoksa eski -vf yolu korunur');
+});
+
+test('iki mola penceresi tek enable ifadesinde toplanır', () => {
+  const args = buildFfmpegArgs({
+    profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL,
+    overlay: OVERLAY, overlayTexts: [], pomodoro: POMO,
+    breakBackground: { path: '/b.mp4', windows: [{ start: 600, end: 1200 }, { start: 4200, end: null }] },
+  });
+  const fc = args[args.indexOf('-filter_complex') + 1];
+  assert.ok(fc.includes("overlay=enable='gte(t\\,600.000)*lt(t\\,1200.000)+gte(t\\,4200.000)'"));
+});

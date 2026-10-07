@@ -116,6 +116,14 @@ function drawtext(style, textFile, enable) {
 //             statusPosition, labelPosition } ya da null. Parça başlığından AYRI bir
 // drawtext kümesi: kendi konumu, kendi punto'su. Böylece "Track Name / STUDY /
 // POMODORO 50+10" aynı anda, üst üste binmeden görünür.
+// Birden çok zaman aralığını tek enable ifadesinde birleştirir: (a1)+(a2)+… — ffmpeg'de
+// toplama mantıksal VEYA gibi davranır (sıfırdan büyük = etkin).
+function enableAny(windows) {
+  return windows.length === 1
+    ? enableExpr(windows[0].start, windows[0].end)
+    : `'${windows.map((w) => enableExpr(w.start, w.end).slice(1, -1)).join('+')}'`;
+}
+
 function videoFilter(profile, overlay, overlayTexts = [], pomodoro = null) {
   const scale = `scale=${profile.width}:${profile.height}`;
   const filters = [];
@@ -199,17 +207,43 @@ function beepMixChain(beepTimes, musicLabel = '1:a', beepLabel = '2:a', outLabel
 function buildFfmpegArgs({
   profile, backgroundPath, backgroundPlaylistPath, audioPath, playlistPath, runNumber,
   output, overlay = null, overlayTexts, pomodoro = null, beepTimes = [],
+  breakBackground = null,
 }) {
   const vf = videoFilter(profile, overlay, overlayTexts, pomodoro);
   const mixing = beepTimes.length > 0;
+  // Mola arkaplanı: yalnızca bu çalıştırmada mola penceresi varsa giriş eklenir.
+  const breaking = Boolean(breakBackground && breakBackground.windows.length > 0);
+  // Giriş sırası: 0 arkaplan, 1 müzik, sonra (varsa) mola klibi, sonra (varsa) bip.
+  const breakIndex = breaking ? 2 : null;
+  const beepIndex = mixing ? (breaking ? 3 : 2) : null;
+  const complex = mixing || breaking;
+
+  // Video zinciri: önce mola klibi ana arkaplanın ÜSTÜNE bindirilir, yazılar en sona
+  // kalır — STUDY/BREAK ve tür etiketi mola görselinin de üstünde görünsün.
+  // overlay'in enable'ı, BREAK yazısının enable'ıyla aynı zaman ifadesinden üretiliyor:
+  // ikisi tek kaynaktan geldiği için görsel ile yazı asla birbirinden kayamaz.
+  let videoChain;
+  if (breaking) {
+    const brk = `[${breakIndex}:v]scale=${profile.width}:${profile.height},setsar=1[brk]`;
+    const comp = `[0:v]scale=${profile.width}:${profile.height}[bg];[bg][brk]overlay=enable=${enableAny(breakBackground.windows)}[comp]`;
+    // vf'in başındaki scale zaten uygulandı; kalan filtreleri (drawtext'ler) comp'a bağla.
+    const rest = vf.split(',').slice(1).join(',');
+    videoChain = `${brk};${comp}` + (rest ? `;[comp]${rest}[v]` : ';[comp]null[v]');
+  } else {
+    videoChain = `[0:v]${vf}[v]`;
+  }
+
   return [
     '-hide_banner',
     '-y', // local modda çıktının üzerine yaz; yoksa ffmpeg stdin'den onay bekler
     ...videoInputArgs({ backgroundPath, backgroundPlaylistPath }),
     ...audioInputArgs({ audioPath, playlistPath }),
+    ...(breaking ? ['-stream_loop', '-1', '-i', breakBackground.path] : []),
     ...(mixing ? BEEP_INPUT_ARGS : []),
-    ...(mixing
-      ? ['-filter_complex', `[0:v]${vf}[v];${beepMixChain(beepTimes)}`, '-map', '[v]', '-map', '[a]']
+    ...(complex
+      ? ['-filter_complex',
+        videoChain + (mixing ? `;${beepMixChain(beepTimes, '1:a', `${beepIndex}:a`)}` : ''),
+        '-map', '[v]', '-map', mixing ? '[a]' : '1:a']
       : ['-map', '0:v', '-map', '1:a', '-vf', vf]),
     '-c:v', profile.videoCodec, '-preset', profile.preset, '-pix_fmt', profile.pixelFormat,
     '-profile:v', profile.h264Profile, '-r', String(profile.fps),
@@ -282,7 +316,7 @@ class FfmpegEncoder extends Encoder {
   start({
     audioPath, playlistPath, runNumber, overlayTexts,
     backgroundPath, backgroundPlaylistPath,
-    pomodoro = null, beepTimes = [],
+    pomodoro = null, beepTimes = [], breakBackground = null,
   }) {
     if (this.running) throw new Error('FfmpegEncoder zaten çalışıyor');
     const args = buildFfmpegArgs({
@@ -291,7 +325,7 @@ class FfmpegEncoder extends Encoder {
       backgroundPlaylistPath,
       audioPath, playlistPath, runNumber,
       output: this.output, overlay: this.overlay, overlayTexts,
-      pomodoro, beepTimes,
+      pomodoro, beepTimes, breakBackground,
     });
     this.emit('log', { kind: 'command', args: args.map((a) => maskSecret(a, this.output)) });
 

@@ -271,7 +271,8 @@ test('background bölümü nesne değilse hata', () => {
 // ── pomodoro bölümü ──────────────────────────────────────────────────────────
 test('pomodoro verilmezse kapalı ve varsayılanlarla gelir', () => {
   assert.deepEqual(load().result.pomodoro, {
-    enabled: false, type: '50+10', fontSize: 56, statusPosition: 'center', labelPosition: 'top-right',
+    enabled: false, type: '50+10', breakBackground: null,
+    fontSize: 56, statusPosition: 'center', labelPosition: 'top-right',
   });
 });
 
@@ -295,4 +296,17 @@ test('pomodoro.enabled ve fontSize tipi doğrulanır', () => {
   assert.ok(problemsOf({ config: a }).some((p) => /pomodoro\.enabled/.test(p)));
   const b = clone(); b.pomodoro = { fontSize: 0 };
   assert.ok(problemsOf({ config: b }).some((p) => /pomodoro\.fontSize/.test(p)));
+});
+
+test('pomodoro.breakBackground kök dizine göre mutlak yola çevrilir', () => {
+  const config = clone();
+  config.pomodoro = { enabled: true, breakBackground: './assets/mola.png' };
+  const { dir, result } = load({ config });
+  assert.equal(result.pomodoro.breakBackground, path.resolve(dir, 'assets/mola.png'));
+});
+
+test('pomodoro.breakBackground metin ya da null olmalı', () => {
+  const config = clone();
+  config.pomodoro = { breakBackground: 42 };
+  assert.ok(problemsOf({ config }).some((p) => /breakBackground/.test(p)));
 });

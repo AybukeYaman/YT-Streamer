@@ -1466,3 +1466,38 @@ o açılışın yavaş olmasıdır. Yazma hatası da yutulur.
 - önbellekli, boş önbellekle ilk koşum: 20.1 sn (502 ölçüm)
 - önbellekli, yeni süreç diskten okuyor: **0.0 sn** (502 isabet)
 - önbellek dosyası: 49 KB
+
+## [Faz I] Pomodoro mola arkaplanı — 7 Ekim 2026
+
+**İstek:** Mola başlayınca önceden seçilmiş TEK bir görsel ekrana gelsin, çalışmada normal
+arkaplan rotasyonu sürsün. Mola görseli çalışma fazında hiç kullanılmasın.
+
+**Reddedilen yol: mola klibini arkaplan concat listesine sıkıştırmak.** Rotasyon listesi
+klip sürelerinin TOPLAMIYLA ilerliyor; tekrar sayıları yuvarlandığı için her faz sınırında
+birkaç saniye kayar ve bu kayma çalıştırma boyunca BİRİKİR. 2,5 saatlik bir çalıştırmada
+~40 sn sapma demek: ekranda BREAK yazarken arka planın hâlâ çalışma görseli olması.
+
+**Seçilen yol: ikinci video girişi + overlay.** Mola klibi `-stream_loop -1` ile ayrı bir
+giriş olarak açılıyor, ana arkaplanın üstüne `overlay=enable=<mola pencereleri>` ile
+bindiriliyor. Kritik nokta: overlay'in enable ifadesi, BREAK yazısının enable ifadesiyle
+AYNI segmentlerden üretiliyor (PomodoroPlanner tek kaynak). İkisi tanım gereği birlikte
+değişiyor, birbirinden kayması imkânsız.
+
+**Sıra: önce overlay, sonra drawtext.** Yazılar mola görselinin de üstünde kalsın.
+
+**Ham dosya kabul ediliyor, ön işleme otomatik:** config'e jpg/png/mp4 ne verilirse
+verilsin açılışta `runtime/break-background.mp4` olarak yayın formatına çevriliyor ve
+kaynağın boyut+mtime'ıyla önbellekleniyor. "Mola görselini değiştir" = config'de yolu
+değiştir. Görsel verilirse Ken Burns uygulanıyor — 10 dakika donuk kare ölü ekran olurdu.
+
+**Dönüşüm mantığı ortak modüle alındı** (`src/infrastructure/clip-normalizer.js`):
+`add-backgrounds.js` ve mola klibi aynı kodu kullanıyor. İki ayrı kopya, bir gün birinin
+SAR'ının ya da fps'inin kaymasına ve concat'in sessizce bozulmasına yol açardı.
+
+**Hazırlanamazsa yayın durmuyor:** dosya yoksa/desteklenmiyorsa/ffmpeg düşerse uyarı
+loglanıp molada normal arkaplan bırakılıyor.
+
+**Doğrulama (uçtan uca, gerçek ffmpeg):** çalışmanın bitimine 12 sn kala başlatıldı.
+Çıktının 5. saniyesinde normal arkaplan + STUDY, 25. saniyesinde mutfak görseli + BREAK;
+ikisinde de parça adı ve tür etiketi yerinde. Geçiş anı kare kare tarandı: 8.04 sn'de
+hâlâ çalışma arkaplanı, 8.08 sn'de mola arkaplanı — 24 fps'de TEK kare (41 ms).

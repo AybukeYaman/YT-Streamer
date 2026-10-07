@@ -15,6 +15,9 @@ const DEFAULT_ROTATION_MINUTES = 60;
 const POMODORO_DEFAULTS = Object.freeze({
   enabled: false,
   type: '50+10',
+  // Molada gösterilecek görsel/video (ham dosya — açılışta klibe çevrilir).
+  // null: mola boyunca normal arkaplan rotasyonu devam eder.
+  breakBackground: null,
   fontSize: 56,
   statusPosition: 'center',
   labelPosition: 'top-right',
@@ -168,6 +171,10 @@ function loadConfig({
     if (rawPomodoro.fontSize !== undefined && (!isNumber(rawPomodoro.fontSize) || rawPomodoro.fontSize <= 0)) {
       problems.push('"pomodoro.fontSize" pozitif sayı olmalı');
     }
+    if (rawPomodoro.breakBackground !== undefined && rawPomodoro.breakBackground !== null
+      && !isNonEmptyString(rawPomodoro.breakBackground)) {
+      problems.push('"pomodoro.breakBackground" dosya yolu (metin) ya da null olmalı');
+    }
     // Konum değerlerinin geçerliliğini drawtext'i kuran encoder doğruluyor (tek kaynak).
     for (const key of ['statusPosition', 'labelPosition']) {
       if (rawPomodoro[key] !== undefined && !isNonEmptyString(rawPomodoro[key])) {
@@ -233,7 +240,11 @@ function loadConfig({
     queue: { mode: raw.queue.mode, batchSize: raw.queue.batchSize },
     // fontFile mutlak bir sistem yolu (C:/Windows/Fonts/...) — kök dizine göre çözülmez.
     overlay: { ...raw.overlay },
-    pomodoro: { ...POMODORO_DEFAULTS, ...rawPomodoro },
+    pomodoro: (() => {
+      const merged = { ...POMODORO_DEFAULTS, ...rawPomodoro };
+      // Görsel yolu kök dizine göre çözülür: servis cwd'den bağımsız çalışıyor.
+      return { ...merged, breakBackground: merged.breakBackground ? abs(merged.breakBackground) : null };
+    })(),
     background: { rotationMinutes: rawBackground?.rotationMinutes ?? DEFAULT_ROTATION_MINUTES },
     output: output.mode === 'local'
       ? { mode: 'local', localPath: abs(output.localPath) }

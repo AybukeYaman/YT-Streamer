@@ -282,7 +282,11 @@ class StreamOrchestrator extends EventEmitter {
         ? { backgroundPlaylistPath: rotation.path }
         : { backgroundPath: playlist.album.backgroundPath }),
       ...(overlayTexts && { overlayTexts }),
-      ...(pomodoroPlan && { pomodoro: pomodoroPlan.pomodoro, beepTimes: pomodoroPlan.beepTimes }),
+      ...(pomodoroPlan && {
+        pomodoro: pomodoroPlan.pomodoro,
+        beepTimes: pomodoroPlan.beepTimes,
+        ...(pomodoroPlan.breakBackground && { breakBackground: pomodoroPlan.breakBackground }),
+      }),
     });
   }
 

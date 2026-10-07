@@ -13,6 +13,7 @@ const { PomodoroPlanner } = require('./src/application/pomodoro-planner');
 const { PomodoroOverlayWriter } = require('./src/application/pomodoro-overlay-writer');
 const { PomodoroStore } = require('./src/infrastructure/pomodoro-store');
 const { DurationCache } = require('./src/infrastructure/duration-cache');
+const { ensureBreakClip } = require('./src/infrastructure/break-clip');
 const { ffprobeDuration } = require('./src/infrastructure/track-repository');
 const { Supervisor } = require('./src/application/supervisor');
 const { StreamControlService } = require('./src/application/stream-control-service');
@@ -75,6 +76,16 @@ async function main() {
     alertLog.warn('ALERT_WEBHOOK_URL boş — sorunlar yalnızca loga yazılacak, telefona bildirim GİTMEYECEK');
   }
 
+  // Mola görseli: ham dosya açılışta bir kez klibe çevrilir, sonucu önbelleğe alınır.
+  // Hazırlanamazsa null döner ve molada normal arkaplan kalır — yayın durmaz.
+  const breakClipPath = (config.pomodoro.enabled && overlayEnabled)
+    ? await ensureBreakClip({
+      sourcePath: config.pomodoro.breakBackground,
+      runtimeDir: config.paths.runtime,
+      log: logger.child('pomodoro'),
+    })
+    : null;
+
   // Parça/klip süreleri disk önbelleğinden okunur: her açılışta tüm kütüphaneyi
   // yeniden ffprobe'lamak 498 parçada 2 dk sürüyordu ve bu süre boyunca yayın akmıyor.
   const durationCache = new DurationCache({
@@ -118,6 +129,7 @@ async function main() {
           log: logger.child('pomodoro'),
         }),
         log: logger.child('pomodoro'),
+        breakClipPath,
       })
       : null,
     // Arkaplan rotasyonu: albümde backgrounds/ varsa klipler sırayla döner. Tek
