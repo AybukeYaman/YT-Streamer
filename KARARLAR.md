@@ -1341,3 +1341,53 @@ değmedi.
 
 Bu koşum Faz A'nın `WebhookAlerter` kurulumunu ve `instanceLabel` türetmesini de canlı
 doğruladı (etiket `[smoke]`, config.smoke.json'dan).
+
+## [Faz D] Arkaplan rotasyonu: tek albümde saatlik değişen arkaplan — 7 Ekim 2026
+
+**Sorun:** Tek albümde arkaplan sabitti (`background.mp4`, sonsuz döngü). İstenen: aynı
+albümde birden çok kısa klip (video ya da resimden üretilmiş) ve bunların saatlik sırayla
+dönmesi, 7/24.
+
+**Karar: video girişi de concat demuxer'a geçti** — ses tarafında Faz 3.1'den beri
+kullanılan yaklaşımın aynısı:
+
+```
+-stream_loop -1 -f concat -safe 0 -i runtime/backgrounds.txt
+```
+
+`backgrounds.txt` TEK bir tur içerir: her klip `rotationMinutes`'i dolduracak kadar
+tekrar edilir (16 sn klip, 60 dk → 225 satır). Turu sonsuza uzatmayı `-stream_loop -1`
+yapıyor, bu yüzden yayının ne kadar süreceğini bilmeye gerek yok. Aynı dosya tekrar
+tekrar gösterildiği için **diskte çoğaltma yok**: 4 arkaplan hâlâ 4 dosya.
+
+**Neden ffmpeg'i saat başı yeniden başlatmak değil:** restart RTMP oturumunu koparır,
+YouTube tarafında "yeniden bağlanıyor" görünür. Günde 24 kez bunu yaşamanın karşılığı
+yok. concat ile ffmpeg hiç durmuyor, geçiş akışın içinde oluyor.
+
+**Tekrar sayısı yuvarlanıyor** (`Math.round`), aşağı/yukarı yuvarlama değil: geçişin
+klibin ORTASINA değil döngü sınırına düşmesi için. Ortada kesilen döngü göze batıyor.
+Geçiş sert kesme — yumuşak geçiş concat ile yapılamaz, filtre zinciri gerektirir ve
+2 vCPU'luk VPS'te encode maliyeti riskli.
+
+**Klip başına tavan 2000 tekrar:** çok kısa bir klip (0.5 sn) saatlik rotasyonda binlerce
+satır üretirdi. Tavana vuran klip saatini tam doldurmaz, yayın bozulmaz.
+
+**Geriye uyumluluk:** `backgrounds/` klasörü varsa çoğul, yoksa `background.mp4` — ikisi
+birden varsa `backgrounds/` kazanır. `Album.backgroundPath` hâlâ ilk klibe işaret ediyor,
+tek arkaplan bekleyen kod yolları değişmedi. Rotasyon yalnızca birden çok klipte devreye
+girer (`Album.rotates`), tek klipte liste hiç yazılmaz.
+
+**concat'in sözleşmesi:** girdilerin kodek/çözünürlük/fps/pix_fmt/timebase'i aynı olmalı.
+Yayın paketini üreten taraf (Automaion System) bunları zaten sabitliyor; sözleşmeye
+`setsar=1` de eklendi.
+
+**SAR ölçümü — abartılmış risk:** eldeki paketlerde SAR iki değerde (eski 4 albüm `1:1`,
+yeni mimiLickin paketleri `2481:2480`). Gerçek ffmpeg ile karıştırılarak denendi:
+**kırmıyor.** ffmpeg ilk dosyanın SAR'ını alıp çıktıyı `SAR=1/1`'e kilitliyor, filtre
+grafiği yeniden kurulmuyor, uyarı bile çıkmıyor (fark %0.04 — görünmez). `setsar=1` yine
+doğru standart ama "sapan tek dosya yayını bozar" ifadesi SAR için fazla sertti.
+Gerçekten kıran sapmalar: çözünürlük, pix_fmt, kodek.
+
+**Doğrulama (uçtan uca, gerçek ffmpeg):** iki klipli geçici albüm, `rotationMinutes: 0.5`.
+`backgrounds.txt` 4+4 satır yazıldı, ffmpeg tek süreçte 1018 kare kodladı (speed 1.0x),
+çıktının 5. saniyesi birinci arkaplan, 35. saniyesi ikinci arkaplan — rotasyon döndü.

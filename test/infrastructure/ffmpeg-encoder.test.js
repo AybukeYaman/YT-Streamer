@@ -346,3 +346,40 @@ test('FfmpegEncoder start\'ta verilen backgroundPath kurulumdakini ezer (albüm 
   enc.start({ playlistPath: 'p', runNumber: 1, backgroundPath: 'C:/ms/A/background.mp4' });
   assert.equal(calls[0].args[calls[0].args.indexOf('-stream_loop') + 3], 'C:/ms/A/background.mp4');
 });
+
+// ── Arkaplan rotasyonu (çoğul arkaplan) ──────────────────────────────────────
+const BGLIST = 'C:/Users/Aybuke Yeni/Desktop/Youtube/YT Stream System/runtime/backgrounds.txt';
+
+test('rotasyon modu: video girişi -stream_loop -1 -f concat -safe 0 -i <liste>', () => {
+  const args = buildFfmpegArgs({
+    profile, backgroundPlaylistPath: BGLIST, playlistPath: 'p', output: LOCAL,
+  });
+  assert.deepEqual(args.slice(0, 10), [
+    '-hide_banner', '-y',
+    '-stream_loop', '-1', '-f', 'concat', '-safe', '0', '-i', BGLIST,
+  ]);
+});
+
+test('rotasyon modu encode parametrelerini değiştirmez', () => {
+  const single = buildFfmpegArgs({ profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL });
+  const rotated = buildFfmpegArgs({ profile, backgroundPlaylistPath: BGLIST, playlistPath: 'p', output: LOCAL });
+  const encodePart = (a) => a.slice(a.indexOf('-map'));
+  assert.deepEqual(encodePart(rotated), encodePart(single));
+});
+
+test('video girişi olarak tek dosya ve liste birlikte verilemez', () => {
+  assert.throws(() => buildFfmpegArgs({
+    profile, backgroundPath: BG, backgroundPlaylistPath: BGLIST, playlistPath: 'p', output: LOCAL,
+  }), /tam olarak biri/);
+  assert.throws(() => buildFfmpegArgs({ profile, playlistPath: 'p', output: LOCAL }), /tam olarak biri/);
+});
+
+test('start: rotasyon listesi verilince kurulumdaki backgroundPath kullanılmaz', () => {
+  const { spawnFn, calls } = fakeSpawn();
+  const encoder = new FfmpegEncoder({ profile, backgroundPath: BG, output: LOCAL, spawnFn });
+  encoder.start({ playlistPath: 'p', runNumber: 1, backgroundPlaylistPath: BGLIST });
+  const { args } = calls[0];
+  assert.ok(args.includes(BGLIST));
+  assert.ok(!args.includes(BG), 'tek dosya yolu rotasyon modunda argümanlara girmemeli');
+  assert.equal(args.filter((a) => a === '-i').length, 2, 'tam iki giriş olmalı: arkaplan + ses');
+});

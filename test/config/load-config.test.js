@@ -238,3 +238,32 @@ test('broadcast.thumbnailPath metin ya da null olmalı', () => {
   const { dir, result } = load({ config });
   assert.equal(result.broadcast.thumbnailPath, path.join(dir, 'assets', 'ozel.png'));
 });
+
+// ── background bölümü (arkaplan rotasyonu) ───────────────────────────────────
+test('background bölümü hiç verilmezse rotationMinutes 60', () => {
+  const { result } = load();
+  assert.deepEqual(result.background, { rotationMinutes: 60 });
+});
+
+test('background.rotationMinutes verilirse o kullanılır', () => {
+  const config = clone();
+  config.background = { rotationMinutes: 30 };
+  assert.equal(load({ config }).result.background.rotationMinutes, 30);
+});
+
+test('background.rotationMinutes pozitif sayı olmalı', () => {
+  for (const bad of [0, -5, '60', null]) {
+    const config = clone();
+    config.background = { rotationMinutes: bad };
+    assert.ok(
+      problemsOf({ config }).some((p) => /background\.rotationMinutes/.test(p)),
+      `${bad} için hata beklenirdi`,
+    );
+  }
+});
+
+test('background bölümü nesne değilse hata', () => {
+  const config = clone();
+  config.background = 60;
+  assert.ok(problemsOf({ config }).some((p) => /"background" bölümü nesne olmalı/.test(p)));
+});

@@ -8,6 +8,7 @@ const { StreamProfile } = require('./src/domain/stream-profile');
 const { SpeedWindow } = require('./src/domain/speed-window');
 const { StreamOrchestrator } = require('./src/application/stream-orchestrator');
 const { NowPlayingWriter } = require('./src/application/now-playing-writer');
+const { BackgroundPlaylistWriter } = require('./src/application/background-playlist-writer');
 const { Supervisor } = require('./src/application/supervisor');
 const { StreamControlService } = require('./src/application/stream-control-service');
 const { NullAlerter } = require('./src/application/alerter');
@@ -84,6 +85,13 @@ async function main() {
     nowPlayingWriter: overlayEnabled
       ? new NowPlayingWriter({ dir: path.join(config.paths.runtime, 'overlay'), writeFile: writeFileAtomic })
       : null,
+    // Arkaplan rotasyonu: albümde backgrounds/ varsa klipler sırayla döner. Tek
+    // arkaplanlı albümlerde writer null döndürür, hiçbir şey değişmez.
+    backgroundPlaylistWriter: new BackgroundPlaylistWriter({
+      playlistPath: path.join(config.paths.runtime, 'backgrounds.txt'),
+      writeFile: writeFileAtomic,
+      rotationSeconds: config.background.rotationMinutes * 60,
+    }),
     speedWindow: new SpeedWindow({ fps: profile.fps }),
     // Hız eşiğinin dışına çıkıp orada KALMAK bildirim üretir. Diğer kontroller bu durumu
     // göremiyor: ffmpeg ilerleme basmaya devam ettiği için kalp atışı ve ingest sağlıklı.

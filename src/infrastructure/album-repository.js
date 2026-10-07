@@ -6,10 +6,41 @@
 const fs = require('fs');
 const path = require('path');
 const { Album } = require('../domain/album');
-const { TrackRepository } = require('./track-repository');
+const { TrackRepository, ffprobeDuration } = require('./track-repository');
 
 const BACKGROUND_FILE = 'background.mp4';
+const BACKGROUNDS_DIR = 'backgrounds';
 const MUSIC_DIR = 'music';
+const BACKGROUND_EXT = '.mp4';
+
+// Arkaplan kaynağı: backgrounds/ klasörü varsa çoğul (yayında rotasyon), yoksa tek
+// background.mp4 (eski düzen). İkisi birden varsa backgrounds/ kazanır — geçiş döneminde
+// eski dosya albümde kalmış olabilir, yeni düzen açıkça tercih edilir.
+// Çoğul düzende her klibin süresi okunur: rotasyon tekrar sayısını süreden hesaplıyor.
+// Tek düzende ffprobe HİÇ çağrılmaz, süre gerekmiyor.
+async function readBackgrounds({ albumDir, probe, log, name }) {
+  const dir = path.join(albumDir, BACKGROUNDS_DIR);
+  if (fs.existsSync(dir)) {
+    const files = fs.readdirSync(dir)
+      .filter((f) => path.extname(f).toLowerCase() === BACKGROUND_EXT)
+      .sort((a, b) => a.localeCompare(b))
+      .map((f) => path.join(dir, f));
+    const backgrounds = [];
+    for (const file of files) {
+      try {
+        backgrounds.push({ path: file, durationSeconds: await probe(file) });
+      } catch (err) {
+        // Okunamayan klip listeye girmez: rotasyon süresi hesaplanamayan bir klip
+        // yüzünden albümün tamamını atlamak gereğinden sert olur.
+        log.warn(`${name}: arkaplan atlandı — ${path.basename(file)}: ${err.message}`);
+      }
+    }
+    if (backgrounds.length) return { backgrounds };
+    log.warn(`${name}: ${BACKGROUNDS_DIR}/ içinde okunabilir arkaplan yok — ${BACKGROUND_FILE}'a düşülüyor`);
+  }
+  const single = path.join(albumDir, BACKGROUND_FILE);
+  return fs.existsSync(single) ? { backgroundPath: single } : null;
+}
 
 class AlbumRepository {
   // probeDuration: TrackRepository'ye geçer — testlerde sahte verilir
@@ -17,6 +48,8 @@ class AlbumRepository {
     this.dir = dir;
     this.log = log;
     this.probeDuration = probeDuration;
+    // Arkaplan sürelerini okumak için: parçalarla aynı ffprobe yolu, testlerde sahte verilir.
+    this.probe = probeDuration || ((f) => ffprobeDuration(f));
     this.trackRepos = new Map(); // albüm adı → TrackRepository (önbellek albüm başına)
   }
 
@@ -29,10 +62,12 @@ class AlbumRepository {
     const albums = [];
     for (const name of names) {
       const albumDir = path.join(this.dir, name);
-      const backgroundPath = path.join(albumDir, BACKGROUND_FILE);
       const musicDir = path.join(albumDir, MUSIC_DIR);
-      if (!fs.existsSync(backgroundPath) || !fs.existsSync(musicDir)) {
-        this.log.warn(`albüm atlandı: ${name} — ${BACKGROUND_FILE} ya da ${MUSIC_DIR}/ yok`);
+      const background = fs.existsSync(musicDir)
+        ? await readBackgrounds({ albumDir, probe: this.probe, log: this.log, name })
+        : null;
+      if (!background) {
+        this.log.warn(`albüm atlandı: ${name} — ${BACKGROUND_FILE}/${BACKGROUNDS_DIR}/ ya da ${MUSIC_DIR}/ yok`);
         continue;
       }
       if (!this.trackRepos.has(name)) {
@@ -45,7 +80,7 @@ class AlbumRepository {
         this.log.warn(`albüm atlandı: ${name} — okunabilir parça yok`);
         continue;
       }
-      albums.push(new Album({ name, backgroundPath, tracks }));
+      albums.push(new Album({ name, ...background, tracks }));
     }
     this.log.info(`${albums.length}/${names.length} albüm yüklendi (${this.dir})`);
     return albums;

@@ -7,6 +7,8 @@ const { parseEnv } = require('util');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const OUTPUT_MODES = ['local', 'rtmp'];
+// Arkaplan rotasyonu periyodu (dk). Config'de background.rotationMinutes ile ezilir.
+const DEFAULT_ROTATION_MINUTES = 60;
 const PRIVACY_STATUSES = ['public', 'unlisted', 'private'];
 
 // broadcast bölümü OPSİYONEL: yalnızca go-live otomasyonu (Faz 9 Aşama 2) kullanıyor,
@@ -131,6 +133,16 @@ function loadConfig({
     problems.push('"overlay.bottomOffset" sayı olmalı');
   }
 
+  // Opsiyonel background bölümü: arkaplan rotasyonunun periyodu. Hiç verilmezse 60 dk.
+  // Albümde tek arkaplan varsa bu değer hiç kullanılmaz (rotasyon devreye girmez).
+  const rawBackground = raw.background === undefined ? {} : raw.background;
+  if (rawBackground === null || typeof rawBackground !== 'object') {
+    problems.push('"background" bölümü nesne olmalı (ya da hiç verilmemeli)');
+  } else if (rawBackground.rotationMinutes !== undefined
+    && (!isNumber(rawBackground.rotationMinutes) || rawBackground.rotationMinutes <= 0)) {
+    problems.push('"background.rotationMinutes" pozitif sayı olmalı');
+  }
+
   const output = raw.output || {};
   let streamKey;
   if (!OUTPUT_MODES.includes(output.mode)) {
@@ -188,6 +200,7 @@ function loadConfig({
     queue: { mode: raw.queue.mode, batchSize: raw.queue.batchSize },
     // fontFile mutlak bir sistem yolu (C:/Windows/Fonts/...) — kök dizine göre çözülmez.
     overlay: { ...raw.overlay },
+    background: { rotationMinutes: rawBackground?.rotationMinutes ?? DEFAULT_ROTATION_MINUTES },
     output: output.mode === 'local'
       ? { mode: 'local', localPath: abs(output.localPath) }
       : { mode: 'rtmp', streamKey: streamKey.trim() },

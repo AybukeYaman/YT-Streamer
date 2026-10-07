@@ -102,13 +102,32 @@ function videoFilter(profile, overlay, overlayTexts = []) {
   return [scale, ...drawtexts].join(',');
 }
 
+// Video girişi iki moddan biri:
+//   tek arkaplan: -stream_loop -1 -i <dosya>
+//   rotasyon:     -stream_loop -1 -f concat -safe 0 -i <liste>   (arkaplan saatlik döner)
+// -stream_loop ikisinde de -1: listede TEK tur var, sonsuza uzatmayı ffmpeg yapar.
+// concat demuxer girdilerin kodek/çözünürlük/fps/pix_fmt/SAR/timebase'inin BİREBİR aynı
+// olmasını şart koşar; sapan tek dosya yayını bozar. Bu yüzden klipleri üreten taraf
+// (yayın paketi sözleşmesi) setsar=1 dahil hepsini sabitliyor.
+function videoInputArgs({ backgroundPath, backgroundPlaylistPath }) {
+  if (Boolean(backgroundPath) === Boolean(backgroundPlaylistPath)) {
+    throw new Error('video girişi olarak backgroundPath ya da backgroundPlaylistPath\'ten tam olarak biri verilmeli');
+  }
+  return backgroundPlaylistPath
+    ? ['-stream_loop', '-1', '-f', 'concat', '-safe', '0', '-i', backgroundPlaylistPath]
+    : ['-stream_loop', '-1', '-i', backgroundPath];
+}
+
 // Argümanlar dizi olarak kurulur — boşluklu Windows yolları tek eleman kalır, kaçış gerekmez.
 // Sıra ve değerler Faz 1 yerel testinde doğrulanan komutla aynı.
-function buildFfmpegArgs({ profile, backgroundPath, audioPath, playlistPath, runNumber, output, overlay = null, overlayTexts }) {
+function buildFfmpegArgs({
+  profile, backgroundPath, backgroundPlaylistPath, audioPath, playlistPath, runNumber,
+  output, overlay = null, overlayTexts,
+}) {
   return [
     '-hide_banner',
     '-y', // local modda çıktının üzerine yaz; yoksa ffmpeg stdin'den onay bekler
-    '-stream_loop', '-1', '-i', backgroundPath,
+    ...videoInputArgs({ backgroundPath, backgroundPlaylistPath }),
     ...audioInputArgs({ audioPath, playlistPath }),
     '-map', '0:v', '-map', '1:a',
     '-vf', videoFilter(profile, overlay, overlayTexts),
@@ -175,11 +194,20 @@ class FfmpegEncoder extends Encoder {
   }
 
   // options: { audioPath } (tek parça) ya da { playlistPath, runNumber, overlayTexts } (playlist modu);
-  // backgroundPath verilirse kurulumdakinin yerine o kullanılır (albüm başına arkaplan)
-  start({ audioPath, playlistPath, runNumber, overlayTexts, backgroundPath = this.backgroundPath }) {
+  // backgroundPath verilirse kurulumdakinin yerine o kullanılır (albüm başına arkaplan).
+  // backgroundPlaylistPath verilirse arkaplan rotasyonu devrededir ve tek dosya yolu
+  // tamamen devre dışı kalır — kurulumdaki backgroundPath'e DÜŞÜLMEZ, yoksa ffmpeg'e iki
+  // video girişi birden verilmiş olur.
+  start({
+    audioPath, playlistPath, runNumber, overlayTexts,
+    backgroundPath, backgroundPlaylistPath,
+  }) {
     if (this.running) throw new Error('FfmpegEncoder zaten çalışıyor');
     const args = buildFfmpegArgs({
-      profile: this.profile, backgroundPath, audioPath, playlistPath, runNumber,
+      profile: this.profile,
+      backgroundPath: backgroundPlaylistPath ? undefined : (backgroundPath ?? this.backgroundPath),
+      backgroundPlaylistPath,
+      audioPath, playlistPath, runNumber,
       output: this.output, overlay: this.overlay, overlayTexts,
     });
     this.emit('log', { kind: 'command', args: args.map((a) => maskSecret(a, this.output)) });

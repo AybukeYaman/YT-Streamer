@@ -38,6 +38,7 @@ class StreamOrchestrator extends EventEmitter {
   constructor({
     encoder, log, albumRepository, queue, playlistPath, writeFile,
     nowPlayingWriter = null, speedWindow = null, speedAlarm = null, stateStore = null,
+    backgroundPlaylistWriter = null,
     now = () => Date.now(), random = Math.random,
   }) {
     super();
@@ -55,6 +56,9 @@ class StreamOrchestrator extends EventEmitter {
     this.playlistPath = playlistPath;
     this.writeFile = writeFile;
     this.nowPlayingWriter = nowPlayingWriter;
+    // backgroundPlaylistWriter: BackgroundPlaylistWriter — verilmezse rotasyon hiç denenmez,
+    // her albüm tek arkaplanla oynar (eski davranış).
+    this.backgroundPlaylistWriter = backgroundPlaylistWriter;
     // stateStore: { save(state), load() } — verilirse süreç ölümünden sonra kaldığı yerden devam
     this.stateStore = stateStore;
     this.now = now;
@@ -255,8 +259,20 @@ class StreamOrchestrator extends EventEmitter {
     );
     this.#saveState(0); // yeni playlist: konum sıfırlanır (ilk kare gelmeden ölürse baştan)
     const overlayTexts = this.nowPlayingWriter ? this.#writeOverlayTexts(playlist.tracks) : undefined;
+    // Arkaplan rotasyonu: albümde birden çok klip varsa concat listesi yazılır ve encoder
+    // tek dosya yerine onu okur. Tek arkaplanlı albümde writer null döner → eski yol.
+    const rotation = this.backgroundPlaylistWriter?.write(playlist.album) ?? null;
+    if (rotation) {
+      this.log.info(
+        `arkaplan rotasyonu: ${rotation.backgroundCount} klip, ${rotation.lineCount} satır`,
+      );
+    }
     this.encoder.start({
-      playlistPath: playlist.path, runNumber: this.runNumber, backgroundPath: playlist.album.backgroundPath,
+      playlistPath: playlist.path,
+      runNumber: this.runNumber,
+      ...(rotation
+        ? { backgroundPlaylistPath: rotation.path }
+        : { backgroundPath: playlist.album.backgroundPath }),
       ...(overlayTexts && { overlayTexts }),
     });
   }

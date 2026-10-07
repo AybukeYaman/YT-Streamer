@@ -585,3 +585,79 @@ test('hiç başlamamışken stop zararsız', async () => {
   assert.equal(encoder.stopCalls, 0);
   assert.equal(orch.running, false);
 });
+
+// ── Arkaplan rotasyonu ───────────────────────────────────────────────────────
+const { BackgroundPlaylistWriter } = require('../../src/application/background-playlist-writer');
+
+// Rotasyonlu kurulum: playlist yazımı sahte değil gerçek içerik tutar (iki ayrı dosya
+// yazıldığı için hangi dosyaya ne yazıldığını ayırt etmek gerekiyor).
+function setupRotation({ backgrounds, rotationSeconds = 3600 }) {
+  const encoder = new FakeEncoder();
+  const { log, lines } = fakeLog();
+  const writes = new Map();
+  const writeFile = (p, content) => writes.set(p, content);
+  const album = new Album({ name: 'x', backgrounds, tracks: TRACKS });
+  const orch = new StreamOrchestrator({
+    encoder,
+    log,
+    albumRepository: { list: async () => [album] },
+    queue: { mode: 'sequential', batchSize: 2 },
+    playlistPath: 'C:/runtime/playlist.txt',
+    writeFile,
+    backgroundPlaylistWriter: new BackgroundPlaylistWriter({
+      playlistPath: 'C:/runtime/backgrounds.txt', writeFile, rotationSeconds,
+    }),
+  });
+  return { encoder, orch, writes, lines };
+}
+
+test('çoğul arkaplan: rotasyon listesi yazılır ve encoder\'a liste yolu geçer', async () => {
+  const { encoder, orch, writes, lines } = setupRotation({
+    backgrounds: [
+      { path: 'C:/bg/01.mp4', durationSeconds: 1800 },
+      { path: 'C:/bg/02.mp4', durationSeconds: 1800 },
+    ],
+    rotationSeconds: 1800,
+  });
+  await orch.start();
+
+  assert.deepEqual(encoder.starts, [{
+    playlistPath: 'C:/runtime/playlist.txt',
+    runNumber: 1,
+    backgroundPlaylistPath: 'C:/runtime/backgrounds.txt',
+  }]);
+  assert.deepEqual(writes.get('C:/runtime/backgrounds.txt').trim().split('\n'), [
+    "file 'C:/bg/01.mp4'",
+    "file 'C:/bg/02.mp4'",
+  ]);
+  assert.ok(lines.some((l) => /arkaplan rotasyonu: 2 klip/.test(l.m)));
+});
+
+test('tek arkaplan: writer verilse bile rotasyon listesi yazılmaz, eski yol kullanılır', async () => {
+  const { encoder, orch, writes } = setupRotation({
+    backgrounds: [{ path: 'C:/bg/01.mp4', durationSeconds: 1800 }],
+  });
+  await orch.start();
+
+  assert.deepEqual(encoder.starts, [{
+    playlistPath: 'C:/runtime/playlist.txt', runNumber: 1, backgroundPath: 'C:/bg/01.mp4',
+  }]);
+  assert.equal(writes.has('C:/runtime/backgrounds.txt'), false);
+});
+
+test('her playlist yeniden başlatmasında rotasyon listesi tazelenir', async () => {
+  const { encoder, orch, writes } = setupRotation({
+    backgrounds: [
+      { path: 'C:/bg/01.mp4', durationSeconds: 1800 },
+      { path: 'C:/bg/02.mp4', durationSeconds: 1800 },
+    ],
+    rotationSeconds: 1800,
+  });
+  await orch.start();
+  writes.delete('C:/runtime/backgrounds.txt');
+  encoder.emit('exit', 0, null); // playlist bitti → yeni playlist + yeni rotasyon listesi
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(writes.has('C:/runtime/backgrounds.txt'), true);
+  assert.equal(encoder.starts[1].backgroundPlaylistPath, 'C:/runtime/backgrounds.txt');
+});

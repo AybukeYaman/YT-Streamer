@@ -56,4 +56,6 @@ class TrackRepository {
   }
 }
 
-module.exports = { TrackRepository };
+// ffprobeDuration dışa açık: arkaplan klipleri de (AlbumRepository) aynı yoldan ölçülsün,
+// ikinci bir ffprobe sarmalayıcı yazılmasın.
+module.exports = { TrackRepository, ffprobeDuration };
