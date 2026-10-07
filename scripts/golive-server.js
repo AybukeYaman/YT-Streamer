@@ -21,6 +21,7 @@ const { GoLiveServer } = require('../src/infrastructure/golive-server');
 const { HealthMonitor } = require('../src/application/health-monitor');
 const { IngestCheck } = require('../src/application/checks/ingest-check');
 const { EncoderHeartbeatCheck } = require('../src/application/checks/encoder-heartbeat-check');
+const { DiskCheck } = require('../src/application/checks/disk-check');
 const { NullAlerter } = require('../src/application/alerter');
 const { WebhookAlerter, createAlivePinger } = require('../src/infrastructure/webhook-alerter');
 const { readMtimeMs, fileExists } = require('../src/infrastructure/file-stat');
@@ -94,6 +95,9 @@ async function main() {
     checks: [
       new IngestCheck({ goLiveService: service }),
       encoderCheck,
+      // Disk dolduğunda ffmpeg sebebi görünmeyen bir hatayla çöküyor ve yeniden
+      // başlatma döngüsüne giriyor; diğer kontroller bunu göremiyor.
+      new DiskCheck({ path: config.paths.runtime }),
     ],
     log: healthLog,
     alerter,
