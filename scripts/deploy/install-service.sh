@@ -130,6 +130,21 @@ WantedBy=multi-user.target
 EOF
 
 # ── Etkinleştir + (yeniden) başlat ───────────────────────────────────────────
+# ── 'deploy' kısayolu ───────────────────────────────────────────────────────
+# Kod güncellemesi en sık yapılan iş ve her seferinde "cd <repo> && bash deploy.sh"
+# yazmak gereksiz. Global bir sarmalayıcı: nerede olursan ol `deploy` yeter.
+# Argümanlar olduğu gibi aktarılır (deploy --dry-run, deploy --test).
+# Repo yolu kurulum anında gömülür — sarmalayıcı WorkingDirectory'ye bağlı değil.
+DEPLOY_SHORTCUT=/usr/local/bin/deploy
+echo "== $DEPLOY_SHORTCUT yazılıyor =="
+cat > "$DEPLOY_SHORTCUT" <<SHORTCUT
+#!/usr/bin/env bash
+# YT Streamer deploy kisayolu — scripts/deploy/install-service.sh tarafindan uretildi.
+# Elle duzenleme: kurulum tekrar calistirilinca uzerine yazilir.
+exec bash "$REPO_ROOT/deploy.sh" "\$@"
+SHORTCUT
+chmod +x "$DEPLOY_SHORTCUT"
+
 systemctl daemon-reload
 if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
   systemctl restart "$SERVICE_NAME"

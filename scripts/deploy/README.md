@@ -3,17 +3,22 @@
 | Ne zaman | Komut |
 |---|---|
 | **İlk kurulum** (yeni VPS) | `sudo bash scripts/deploy/install-service.sh` |
-| **Kod güncellemesi** (her deploy) | `bash deploy.sh` |
+| **Kod güncellemesi** (her deploy) | `deploy` (nerede olursan ol) |
 | **Yeni yayın ekleme** | `sudo bash scripts/deploy/add-stream.sh <isim>` |
 | **Albüm/müzik taşıma** (yerelden) | `bash scripts/deploy/sync-albums.sh <kullanıcı@host> <uzak-yol>` |
 
 ## Kod güncellemesi — `deploy.sh`
 
 ```bash
-bash deploy.sh --dry-run  # hiçbir şeyi DEĞİŞTİRMEZ — ne olacağını gösterir
-bash deploy.sh            # git pull -> env doğrulama -> npm ci -> tüm yayınları restart
-bash deploy.sh --test     # aynısı + testler (deploy öncesi)
+deploy --dry-run  # hiçbir şeyi DEĞİŞTİRMEZ — ne olacağını gösterir
+deploy            # git pull -> env doğrulama -> npm ci -> tüm yayınları restart
+deploy --test     # aynısı + testler (deploy öncesi)
 ```
+
+`deploy`, `install-service.sh`'ın kurduğu global sarmalayıcıdır (`/usr/local/bin/deploy`):
+repo yolu kurulum anında gömülür, bu yüzden hangi dizinde olduğun fark etmez ve
+`cd <repo> && bash deploy.sh` yazmak gerekmez. Argümanlar olduğu gibi aktarılır.
+Sarmalayıcı yoksa (eski kurulum) `bash <repo>/deploy.sh` hâlâ çalışır.
 
 ### `--dry-run` — riskli olmayan ilk tur
 
