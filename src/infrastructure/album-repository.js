@@ -54,8 +54,11 @@ class AlbumRepository {
   }
 
   async list() {
+    // Nokta ile başlayan klasörler albüm değildir: paketi üreten taraf yarım yazımı
+    // music-source/.staging/ altında tutuyor (atomik rename sözleşmesi). Bunları
+    // "albüm atlandı" uyarısıyla raporlamak her taramada gereksiz gürültü.
     const names = fs.readdirSync(this.dir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
+      .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
       .map((d) => d.name)
       .sort((a, b) => a.localeCompare(b));
 

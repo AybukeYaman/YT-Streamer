@@ -133,3 +133,13 @@ test('hiç arkaplan yoksa (ne backgrounds/ ne background.mp4) albüm atlanır', 
   assert.deepEqual(albums, []);
   assert.ok(lines.some((l) => l.level === 'warn' && /arkaplansiz/.test(l.m)));
 }));
+
+test('nokta ile başlayan klasörler albüm sayılmaz (.staging uyarı üretmez)', withBackgroundsSource({
+  gercek: { background: true },
+  '.staging': { background: true },
+}, async (dir) => {
+  const { log, lines } = fakeLog();
+  const albums = await new AlbumRepository({ dir, log, probeDuration }).list();
+  assert.deepEqual(albums.map((a) => a.name), ['gercek']);
+  assert.ok(!lines.some((l) => /staging/.test(l.m)), '.staging hiç raporlanmamalı');
+}));
