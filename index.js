@@ -9,11 +9,15 @@ const { SpeedWindow } = require('./src/domain/speed-window');
 const { StreamOrchestrator } = require('./src/application/stream-orchestrator');
 const { NowPlayingWriter } = require('./src/application/now-playing-writer');
 const { BackgroundPlaylistWriter } = require('./src/application/background-playlist-writer');
-const { PomodoroPlanner } = require('./src/application/pomodoro-planner');
+const { ReconfigurablePomodoroPlanner, plannerFactory } = require('./src/application/reconfigurable-pomodoro-planner');
+const { PlanAlbumRepository } = require('./src/application/plan-album-repository');
+const { StreamConfigService } = require('./src/application/stream-config-service');
+const { StreamPlanStore } = require('./src/infrastructure/stream-plan-store');
+const { MediaLibrary } = require('./src/infrastructure/media-library');
+const { ensureStreamClip } = require('./src/infrastructure/break-clip');
 const { PomodoroOverlayWriter } = require('./src/application/pomodoro-overlay-writer');
 const { PomodoroStore } = require('./src/infrastructure/pomodoro-store');
 const { DurationCache } = require('./src/infrastructure/duration-cache');
-const { ensureBreakClip } = require('./src/infrastructure/break-clip');
 const { ffprobeDuration } = require('./src/infrastructure/track-repository');
 const { Supervisor } = require('./src/application/supervisor');
 const { StreamControlService } = require('./src/application/stream-control-service');
@@ -76,16 +80,6 @@ async function main() {
     alertLog.warn('ALERT_WEBHOOK_URL boş — sorunlar yalnızca loga yazılacak, telefona bildirim GİTMEYECEK');
   }
 
-  // Mola görseli: ham dosya açılışta bir kez klibe çevrilir, sonucu önbelleğe alınır.
-  // Hazırlanamazsa null döner ve molada normal arkaplan kalır — yayın durmaz.
-  const breakClipPath = (config.pomodoro.enabled && overlayEnabled)
-    ? await ensureBreakClip({
-      sourcePath: config.pomodoro.breakBackground,
-      runtimeDir: config.paths.runtime,
-      log: logger.child('pomodoro'),
-    })
-    : null;
-
   // Parça/klip süreleri disk önbelleğinden okunur: her açılışta tüm kütüphaneyi
   // yeniden ffprobe'lamak 498 parçada 2 dk sürüyordu ve bu süre boyunca yayın akmıyor.
   const durationCache = new DurationCache({
@@ -95,41 +89,72 @@ async function main() {
   });
   const probeDuration = durationCache.wrap((f) => ffprobeDuration(f));
 
+  // ── Yayın planı (TUI'nın yapılandırdığı içerik) ──────────────────────────────
+  //
+  // Plan TEK kaynaktır: hangi parçalar, hangi sırayla, Pomodoro açık mı, study/break
+  // görüntüsü ne. Aşağıdaki sağlayıcılar (planProvider/clip) her yayın başlangıcında
+  // OKUNUR — böylece TUI'da "restart with new configuration" demek, süreci yeniden
+  // başlatmadan yeni planın devreye girmesi demek.
+  //
+  // Plan dosyası yoksa config.json'dan türetilen plan geçerli olur (fallbackPlan):
+  // TUI'yi hiç kullanmayan kurulumda davranış birebir bugünküyle aynı kalır.
+  const planStore = new StreamPlanStore({
+    runtimeDir: config.paths.runtime, writeFile: writeFileAtomic, log: logger.child('plan'),
+  });
+  const baseAlbumRepository = config.paths.albums
+    // paths.albums: albüm düzeni (her playlist tek albüm, arkaplan albümle değişir); yoksa tek albüm
+    ? new AlbumRepository({ dir: config.paths.albums, log: logger.child('albums'), probeDuration })
+    : new SingleAlbumRepository({
+      musicDir: config.paths.music, backgroundPath: config.paths.background, log: logger.child('tracks'), probeDuration,
+    });
+
+  // configService aşağıda (controlService'ten sonra) kurulur; motor tarafı ona bu
+  // kapaklardan bakar. Erken okuma null döner ve plansız davranış geçerli olur.
+  let configService = null;
+  const planProvider = () => (configService ? configService.planProvider() : null);
+  const studyClipProvider = () => (configService ? configService.studyClipProvider() : null);
+  const breakClipProvider = () => (configService ? configService.breakClipProvider() : null);
+
   const orchestrator = new StreamOrchestrator({
     encoder,
     log: logger.child('orchestrator'),
-    // paths.albums: albüm düzeni (her playlist tek albüm, arkaplan albümle değişir); yoksa tek albüm
-    albumRepository: config.paths.albums
-      ? new AlbumRepository({ dir: config.paths.albums, log: logger.child('albums'), probeDuration })
-      : new SingleAlbumRepository({
-        musicDir: config.paths.music, backgroundPath: config.paths.background, log: logger.child('tracks'), probeDuration,
-      }),
-    queue: config.queue,
+    // Depo plan süzgecinden geçer: seçili parçalar, plandaki sıra ve (varsa) study klibi.
+    // Plan boşsa iç deponun döndürdüğü liste aynen geçer.
+    albumRepository: new PlanAlbumRepository({
+      inner: baseAlbumRepository, planProvider, studyClipProvider, log: logger.child('plan'),
+    }),
+    // mode planın alanı (TUI'da seçilen sıralama); batchSize makine ayarı olarak kalır.
+    // Getter: her start() güncel değeri okur, yeniden başlatmada eski mod'a saplanmaz.
+    queue: { get mode() { return planProvider()?.music.order ?? config.queue.mode; }, batchSize: config.queue.batchSize },
     playlistPath: path.join(config.paths.runtime, 'playlist.txt'),
     writeFile: writeFileAtomic,
     nowPlayingWriter: overlayEnabled
       ? new NowPlayingWriter({ dir: path.join(config.paths.runtime, 'overlay'), writeFile: writeFileAtomic })
       : null,
-    // Pomodoro: kapalıysa (varsayılan) planner hiç kurulmaz ve orchestrator encoder'a
-    // bugünküyle aynı argümanları geçer. Overlay kapalıyken de kurulmaz: STUDY/BREAK
-    // yazısı drawtext'e, drawtext de overlay.fontFile'a bağlı.
-    pomodoroPlanner: (config.pomodoro.enabled && overlayEnabled)
-      ? new PomodoroPlanner({
-        type: config.pomodoro.type,
-        overlayWriter: new PomodoroOverlayWriter({
-          dir: path.join(config.paths.runtime, 'overlay'),
-          writeFile: writeFileAtomic,
-          fontSize: config.pomodoro.fontSize,
-          statusPosition: config.pomodoro.statusPosition,
-          labelPosition: config.pomodoro.labelPosition,
-        }),
-        store: new PomodoroStore({
-          file: path.join(config.paths.runtime, 'pomodoro.json'),
-          writeFile: writeFileAtomic,
+    // Pomodoro: açık/kapalı kararı ARTIK PLANDA. Overlay kapalıyken hiç kurulmaz
+    // (eskiden olduğu gibi): STUDY/BREAK yazısı drawtext'e, drawtext de
+    // overlay.fontFile'a bağlı. Plan "kapalı" diyorsa sarmalayıcı null döndürür ve
+    // orchestrator encoder'a bugünküyle AYNI argümanları geçer.
+    pomodoroPlanner: overlayEnabled
+      ? new ReconfigurablePomodoroPlanner({
+        planProvider,
+        breakClipProvider,
+        log: logger.child('pomodoro'),
+        createPlanner: plannerFactory({
+          overlayWriter: new PomodoroOverlayWriter({
+            dir: path.join(config.paths.runtime, 'overlay'),
+            writeFile: writeFileAtomic,
+            fontSize: config.pomodoro.fontSize,
+            statusPosition: config.pomodoro.statusPosition,
+            labelPosition: config.pomodoro.labelPosition,
+          }),
+          store: new PomodoroStore({
+            file: path.join(config.paths.runtime, 'pomodoro.json'),
+            writeFile: writeFileAtomic,
+            log: logger.child('pomodoro'),
+          }),
           log: logger.child('pomodoro'),
         }),
-        log: logger.child('pomodoro'),
-        breakClipPath,
       })
       : null,
     // Arkaplan rotasyonu: albümde backgrounds/ varsa klipler sırayla döner. Tek
@@ -161,6 +186,38 @@ async function main() {
   const controlService = new StreamControlService({
     orchestrator, supervisor, encoder, log: logger.child('control'),
   });
+
+  // Yapılandırma katmanı: TUI'nın tek muhatabı. Yayın motoru kurmaz — planı tutar,
+  // kütüphaneyi listeler, klipleri hazırlar ve restart'ı controlService'e delege eder.
+  configService = new StreamConfigService({
+    planStore,
+    albumRepository: baseAlbumRepository, // TUI süzülmemiş kütüphaneyi listeler
+    controlService,
+    config,
+    log: logger.child('plan'),
+    // Dosya tarama ve klip dönüşümü infrastructure'da; application katmanı ikisini de
+    // import etmiyor (mimari kuralı), bağlama burada yapılır.
+    mediaLibrary: new MediaLibrary({
+      albumsDir: config.paths.albums ?? null,
+      assetsDir: path.join(__dirname, 'assets'),
+      rootDir: __dirname,
+    }),
+    prepareClip: ensureStreamClip,
+    // Plan dosyası yoksa geçerli olan plan: config.json'daki pomodoro ayarları ve kuyruk
+    // modu. Overlay kapalıysa pomodoro da kapalı sayılır (drawtext'e bağlı).
+    fallbackPlan: {
+      name: 'config.json',
+      music: { order: config.queue.mode, albums: [] },
+      pomodoro: {
+        enabled: config.pomodoro.enabled && overlayEnabled,
+        type: config.pomodoro.type,
+        breakVideo: config.pomodoro.breakBackground,
+      },
+    },
+  });
+  // Aktif planın study/break kliplerini hazırla. Yayın başlamadan ÖNCE olmalı: klip
+  // hazır değilken ilk döngüde görüntü eksik kalırdı.
+  await configService.prepareActive();
 
   let tui = null;
   let shuttingDown = false;
@@ -206,15 +263,24 @@ async function main() {
   if (useTui) {
     tui = new StreamTui({
       controlService,
+      // [C] yayın yapılandırma sihirbazını açar; aynı controlService ile restart eder.
+      configService,
       logBuffer,
       onQuit: () => shutdown('TUI çıkış'),
     });
     await tui.open(); // Ink'i (ESM) dynamic import ile yükler ve mount eder
+    // --configure: yayın OTOMATİK BAŞLAMAZ, önce sihirbaz açılır. Yayını sihirbazdaki
+    // "START STREAM" başlatır (configService.apply → controlService.restart; yayın
+    // durmuşken restart = sadece start). İptal edilirse pano durmuş halde kalır ve
+    // [S] ile elle başlatılabilir.
+    if (args.configure) await tui.openWizard();
   }
 
   log.info(`çıkış: ${config.output.mode === 'local' ? config.output.localPath : 'rtmp'}`);
   try {
-    await controlService.start(); // her iki modda da yayın otomatik başlar (24/7)
+    // 24/7 varsayılanı: yayın kendiliğinden başlar. Tek istisna --configure — orada
+    // başlatma kararı kullanıcının elinde.
+    if (!args.configure) await controlService.start();
     // Açılış taraması bitti: önbelleğin işe yarayıp yaramadığı logda görünsün.
     // Sağlıklı tabloda isabet = kütüphane boyutu, ölçüm = yalnızca yeni/değişen dosyalar.
     logger.child('süre').info(durationCache.summary());

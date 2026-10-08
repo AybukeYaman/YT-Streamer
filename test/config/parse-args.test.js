@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const { parseArgs, instanceLabel, DEFAULTS } = require('../../src/config/parse-args');
 
 test('argümansız: varsayılanlar (mevcut tek-yayın davranışı korunur)', () => {
-  assert.deepEqual(parseArgs([]), { tui: false, configFile: 'config.json', envFile: '.env' });
+  assert.deepEqual(parseArgs([]), {
+    tui: false, configure: false, configFile: 'config.json', envFile: '.env',
+  });
   assert.deepEqual(parseArgs(), DEFAULTS);
 });
 
@@ -33,7 +35,17 @@ test('kısa biçim -c / -e', () => {
 
 test('bayraklar birlikte kullanılabilir (--tui + çoklu yayın)', () => {
   const a = parseArgs(['--tui', '--config', 'config.stream2.json', '--env', '.env.stream2']);
-  assert.deepEqual(a, { tui: true, configFile: 'config.stream2.json', envFile: '.env.stream2' });
+  assert.deepEqual(a, {
+    tui: true, configure: false, configFile: 'config.stream2.json', envFile: '.env.stream2',
+  });
+});
+
+// --configure paneli de açar: sihirbazın START STREAM'i yayını aynı süreçte başlatıyor,
+// ayrı bir giriş noktası yok (bkz. parse-args.js).
+test('--configure paneli de açar', () => {
+  const a = parseArgs(['--configure']);
+  assert.equal(a.configure, true);
+  assert.equal(a.tui, true);
 });
 
 test('değer eksikse hata (sessizce yanlış config ile başlamasın)', () => {

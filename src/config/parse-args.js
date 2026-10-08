@@ -3,10 +3,13 @@
 //
 //   node index.js                                        (tek yayın, varsayılan)
 //   node index.js --tui                                  (panel)
+//   node index.js --configure                             (panel + yayın yapılandırma
+//                                                          sihirbazı; yayın sihirbazdaki
+//                                                          START STREAM ile başlar)
 //   node index.js --config config.stream1.json --env .env.stream1
 //
 // Yollar proje köküne göre çözülür (bkz. loadConfig).
-const DEFAULTS = { tui: false, configFile: 'config.json', envFile: '.env' };
+const DEFAULTS = { tui: false, configure: false, configFile: 'config.json', envFile: '.env' };
 
 function value(raw, flag) {
   if (raw === undefined || raw === '' || raw.startsWith('-')) {
@@ -21,6 +24,9 @@ function parseArgs(args = []) {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--tui') { out.tui = true; continue; }
+    // --configure panelle birlikte açılır: sihirbazın "START STREAM"i yayını BU süreçte
+    // başlatıyor, ayrı bir giriş noktası (ve ikinci bir composition root) gerekmiyor.
+    if (a === '--configure') { out.configure = true; out.tui = true; continue; }
     if (a === '--config' || a === '-c') { out.configFile = value(args[++i], a); continue; }
     if (a === '--env' || a === '-e') { out.envFile = value(args[++i], a); continue; }
     if (a.startsWith('--config=')) { out.configFile = value(a.slice('--config='.length), '--config'); continue; }

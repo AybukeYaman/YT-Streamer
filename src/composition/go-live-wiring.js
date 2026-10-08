@@ -14,6 +14,7 @@ const broadcasts = require('../infrastructure/youtube-broadcasts');
 const { BroadcastStateStore } = require('../infrastructure/broadcast-state-store');
 const { PendingVodStore } = require('../infrastructure/pending-vod-store');
 const { writeFileAtomic } = require('../infrastructure/atomic-file');
+const { StreamPlanStore } = require('../infrastructure/stream-plan-store');
 const { GoLiveService } = require('../application/go-live-service');
 
 // Yayın süreci değil: kilit (instance-lock) ALINMAZ. Aksi halde go-live, çalışan
@@ -52,12 +53,29 @@ function buildGoLive({
     log: logger.child('vod-gizlilik'),
   });
 
+  // Kapak (küçük resim) TUI'da seçiliyor ve yayın planında duruyor. go-live AYRI bir
+  // süreç; planı açılışta bir kez okumak, TUI'da kapak değiştirildikten sonra açılan
+  // broadcast'e eski resmi koymak olurdu. Bu yüzden getter: plan dosyası broadcast
+  // oluşturulduğu anda okunur (nadir bir işlem, maliyeti küçük bir JSON okuması).
+  // Plan yoksa ya da kapak seçilmemişse config.json'daki değer geçerli — mevcut davranış.
+  const planStore = new StreamPlanStore({
+    runtimeDir: config.paths.runtime, writeFile: writeFileAtomic, log: logger.child('plan'),
+  });
+  const broadcastConfig = {
+    ...config.broadcast,
+    get thumbnailPath() {
+      const cover = planStore.loadActive()?.cover;
+      if (!cover) return config.broadcast.thumbnailPath;
+      return path.isAbsolute(cover) ? cover : path.resolve(__dirname, '..', '..', cover);
+    },
+  };
+
   const service = new GoLiveService({
     api,
     stateStore,
     pendingVods,
     log: logger.child('go-live'),
-    broadcastConfig: config.broadcast,
+    broadcastConfig,
     // local modda stream key yok; o durumda streamId config'ten gelmeli.
     streamKey: config.output.mode === 'rtmp' ? config.output.streamKey : null,
     encoderCheck,

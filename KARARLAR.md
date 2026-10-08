@@ -1501,3 +1501,132 @@ loglanıp molada normal arkaplan bırakılıyor.
 Çıktının 5. saniyesinde normal arkaplan + STUDY, 25. saniyesinde mutfak görseli + BREAK;
 ikisinde de parça adı ve tür etiketi yerinde. Geçiş anı kare kare tarandı: 8.04 sn'de
 hâlâ çalışma arkaplanı, 8.08 sn'de mola arkaplanı — 24 fps'de TEK kare (41 ms).
+
+## [Faz J] Yayın yapılandırma TUI'ı: kapak, müzik, Pomodoro tek ekranda — 8 Ekim 2026
+
+**Sorun.** Yayına çıkmadan ya da restart ederken içeriği değiştirmek elle config/state
+dosyası düzenlemek demekti: hangi parçalar çalacak, Pomodoro açık mı, çalışma ve mola
+fanında hangi görüntü duracak, kapak hangisi. Hepsi ayrı dosyalarda, hiçbiri terminalden
+görünmüyor, yanlış yazım ancak yayın düşerken anlaşılıyordu.
+
+**Çözüm: motorun üstünde ince bir YAPILANDIRMA KATMANI.** Yeni yayın motoru YOK. Sihirbaz
+(`src/ui/config-wizard.js`) adım adım seçim yaptırıyor, sonucu bir **yayın planı**na
+yazıyor, planı mevcut sistemin zaten okuduğu alanlara bağlıyor.
+
+```
+[preset] → cover → music → order → pomodoro → pomodoroType → [custom]
+         → studyVideo → breakVideo → summary → START | Edit | Save | Cancel
+```
+
+### Plan neden config.json'a yazılmıyor
+
+`config.json` MAKİNEYE özel teknik yapılandırma (font yolu, runtime klasörü, profil,
+çıkış, kimlik) ve nadiren değişiyor. Plan ise YAYININ İÇERİĞİ ve her restart'ta değişiyor.
+İkisi aynı dosyada olsa, sihirbazın her "START STREAM"ı makine ayarlarını yeniden yazmak
+zorunda kalırdı — bir yazım hatası yayını değil KURULUMU bozar.
+
+Plan `runtime/stream-plan.json`, preset'ler `runtime/presets/<slug>.json`. runtime altında
+olması kasıtlı: `state.json`/`pomodoro.json` ile aynı klasör, yani çoklu yayında her
+instance kendi runtime'ıyla kendi planını taşıyor (instance-lock da o klasörü koruyor) ve
+"hangi plan hangi yayına ait" diye ikinci bir eşleme tutmak gerekmiyor.
+
+### Tek source of truth: plan → mevcut alanlar
+
+Plan hiçbir ayarı İKİNCİ bir yerde tutmuyor; her alanı sistemdeki mevcut bir alana
+bağlanıyor ve bağlama TEK bir yerde yapılıyor:
+
+| plan alanı            | karşılığı                     | bağlandığı yer |
+|-----------------------|-------------------------------|----------------|
+| `cover`               | `broadcast.thumbnailPath`     | `go-live-wiring.js` (getter) |
+| `music.albums`        | albüm listesinin süzgeci      | `PlanAlbumRepository` |
+| `music.order`         | `queue.mode`                  | `index.js` (getter) |
+| `pomodoro.enabled`    | planner kurulur/kurulmaz      | `ReconfigurablePomodoroPlanner` |
+| `pomodoro.type`       | `PomodoroCycle`               | `ReconfigurablePomodoroPlanner` |
+| `pomodoro.breakVideo` | encoder `breakBackground`     | `StreamConfigService` (klibi hazırlar) |
+| `pomodoro.studyVideo` | albümün arkaplanının yerine   | `PlanAlbumRepository` + `StreamConfigService` |
+
+**BOŞ ALAN = MEVCUT DAVRANIŞ.** Seçim yoksa tüm kütüphane çalar, `studyVideo` null'sa
+albümün kendi arkaplan(lar)ı kullanılır, `cover` null'sa config'deki kalır. Plan dosyası
+hiç olmayan kurulum (VPS'te çalışan yayın) bugünküyle BİREBİR aynı çalışıyor.
+
+**Plan dosyası yoksa config.json'dan plan türetiliyor** (`fallbackPlan`, index.js). Böylece
+"plan" sistemin TEK okuma biçimi oldu: sihirbazı hiç kullanmayan kurulum da aynı kod
+yolundan geçiyor, "planlı" ve "plansız" diye iki ayrı dal yok.
+
+### Süreci yeniden başlatmadan restart
+
+Plan HER yayın başlangıcında okunuyor: `PlanAlbumRepository.list()` her `start()`'ta,
+`queue.mode` ve kapak getter'la, Pomodoro ise imza değişince yeniden kurulan sarmalayıcıyla
+(`ReconfigurablePomodoroPlanner`). Yani `restart with new configuration` =
+`controlService.restart()`; node sürecini yeniden başlatmak gerekmiyor. Pomodoro döngüsünün
+başlangıcı tür değişmedikçe korunuyor (PomodoroStore), çünkü döngü duvar saatine bağlı.
+
+### Klipler sihirbazda hazırlanıyor, motor hazır dosya görüyor
+
+Study/break görüntüsü yayın sözleşmesine çevrilmek zorunda (1280x720/24/SAR 1:1) ve dönüşüm
+bir ffmpeg çağrısı — ASENKRON. Orchestrator'ın `plan()` yolu senkron; oraya asenkron iş
+sokmak yayın akışını bekletirdi. Bu yüzden dönüşüm "START STREAM" anında (ya da açılışta)
+bir kez yapılıyor, sonucu önbelleğe alınıyor, motor yalnızca hazır dosyanın yolunu görüyor.
+`break-clip.js` genelleştirildi (`ensureStreamClip`): study ve break klibi AYNI dönüşümden
+geçiyor, farkı yalnızca çıktı adı — iki kopya bir gün birinin SAR'ının kaymasına yol açardı.
+
+### Serbest Pomodoro süresi: ayrı alan değil, aynı gösterim
+
+"Custom" seçeneği `pomodoro.type`'a `"45+15"` yazıyor. Yeni bir `customStudyMinutes` alanı
+EKLENMEDİ: tür zaten `"50+10"` gibi okunabilir bir metin, serbest süreler aynı anahtarın
+içine sığıyor. Böylece config doğrulaması, PomodoroStore (tür değişince döngü sıfırlanır),
+ekran etiketi ve sihirbaz tek kaynaktan (`resolvePomodoroType`) besleniyor.
+
+**Tur sayısı (`rounds`) yayını BİTİRMİYOR.** Planda duruyor, özette ve logda görünüyor ama
+döngü sonsuz akıyor — yayın 7/24 ve döngü duvar saatine bağlı. Tur sınırı koymak "4 turdan
+sonra yayını kapat" demek olurdu; bilinçli olarak yapılmadı.
+
+### Sıralama albüm İÇİNDE
+
+Bir playlist tek albümden oluşuyor (AlbumQueue, Faz 8), yani albümler arası global sıra
+yayına yansımaz. Sihirbaz bu yüzden parçayı başka albüme taşımaya izin VERMİYOR: izin
+verseydi kullanıcı yayına çıkmayacak bir sıra kurar ve nedenini anlamazdı.
+
+### Tek Ink ağacı, iki ekran
+
+Sihirbaz panonun yerine AYNI Ink ağacında basılıyor (`vm.screen`). İkinci bir `render()`
+örneği açmak iki raw-mode sahibi demek olurdu: tuşlar bölünür, terminal geri yüklenmez.
+Sihirbaz açıkken tüm tuşlar ona gidiyor — yarım bırakılmış bir yapılandırma anında yayına
+komut gitmesi istenmiyor.
+
+`--configure` bayrağı paneli açıp yayını OTOMATİK BAŞLATMIYOR: başlatma kararı sihirbazdaki
+"START STREAM"da. Ayrı bir giriş noktası (ve ikinci bir composition root) yazılmadı.
+
+### Duman testinde yakalanan hata: bölü ayracı
+
+Plan JSON'da yolları ileri bölüyle yazmak doğal (elle düzenleme, başka makineden kopyalama);
+diskten okunan yollar ise `path.join` çıktısı, Windows'ta TERS bölü. Düz metin
+karşılaştırması sessizce başarısız oluyor, "plandaki 2 parça diskte yok" deyip TÜM
+kütüphaneye düşüyordu — yayın akıyor ama yapılandırma yok sayılıyor. En sinsi hata türü.
+
+Çözüm `pathIndex` (domain/stream-plan.js): önce bölü ayracı normalleştirilmiş TAM eşleşme,
+sonra küçük harfe indirilmiş eşleşme. Harf duyarsız karşılaştırmanın YEDEK olması kasıtlı —
+Linux'ta yalnızca büyük/küçük harfle ayrılan iki dosya birbirine karışmasın. Eşleştirme
+yapan üç yer (depo, özet, sihirbaz) aynı yardımcıyı kullanıyor.
+
+### Doğrulama
+
+- 741 test (yeni: plan domain'i, plan deposu, süzen depo, Pomodoro sarmalayıcısı, medya
+  tarayıcı, sihirbaz akışı, Ink görünümü, yol eşleştirmesi).
+- Uçtan uca gerçek ffmpeg ile iki koşu: (1) 2 parça seçili plan → playlist tam o iki parça,
+  o sırada; (2) Pomodoro `2+1` + study/break klipleri → `study-background.mp4` ana video
+  girişi, `break-background.mp4` overlay olarak mola pencerelerinde
+  (`enable='gte(t,119.999)*lt(t,179.999)+...'`), 4 faz / 9 bip.
+- Mimari testleri korundu: domain hiçbir modül import etmiyor (bu yüzden `stream-plan.js`
+  tür biçimini kendi sınıyor), application katmanı fs/child_process/infrastructure import
+  etmiyor (dosya tarama ve klip dönüşümü enjekte ediliyor).
+
+### Kullanım
+
+```
+npm run configure     # panel + sihirbaz; yayın START STREAM ile başlar
+npm run tui           # panel; yayın otomatik başlar, [C] sihirbazı açar
+```
+
+Sihirbaz tuşları: `↑↓` gez · `Enter` seç · `Space` işaretle · `a`/`Tab` görünenleri
+işaretle · `/` ara · `Shift+↑↓` sırala · `x` çıkar · `m` sıra modu · `Esc` geri.

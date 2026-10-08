@@ -2,7 +2,7 @@
 // Eksik/geçersiz alan varsa tüm sorunları tek bir hata mesajında listeleyip düşer —
 // sessizce varsayılan değerle devam etmez.
 const fs = require('fs');
-const { POMODORO_TYPES } = require('../domain/pomodoro');
+const { resolvePomodoroType, POMODORO_TYPE_HINT } = require('../domain/pomodoro');
 const path = require('path');
 const { parseEnv } = require('util');
 
@@ -165,8 +165,10 @@ function loadConfig({
     if (rawPomodoro.enabled !== undefined && !isBoolean(rawPomodoro.enabled)) {
       problems.push('"pomodoro.enabled" true ya da false olmalı');
     }
-    if (rawPomodoro.type !== undefined && !POMODORO_TYPES[rawPomodoro.type]) {
-      problems.push(`"pomodoro.type" "${rawPomodoro.type}" — ${Object.keys(POMODORO_TYPES).map((t) => `"${t}"`).join(' ya da ')} olmalı`);
+    // Tür doğrulaması domain'de: hazır listedekiler ve serbest "50+10" biçimi tek
+    // yerden (resolvePomodoroType) kabul edilir.
+    if (rawPomodoro.type !== undefined && !resolvePomodoroType(rawPomodoro.type)) {
+      problems.push(`"pomodoro.type" "${rawPomodoro.type}" — ${POMODORO_TYPE_HINT} olmalı`);
     }
     if (rawPomodoro.fontSize !== undefined && (!isNumber(rawPomodoro.fontSize) || rawPomodoro.fontSize <= 0)) {
       problems.push('"pomodoro.fontSize" pozitif sayı olmalı');

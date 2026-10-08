@@ -25,6 +25,29 @@ const POMODORO_TYPES = Object.freeze({
   '30+10': Object.freeze({ studyMinutes: 30, breakMinutes: 10 }),
 });
 
+// Hazır listede olmayan tür: "<calisma>+<mola>" (dakika) biçiminde SERBEST süre.
+// Neden ayrı bir "custom" alanı YOK: tür zaten "50+10" gibi okunabilir bir metin, yani
+// serbest süreler aynı anahtarın içine sığıyor. Böylece config doğrulaması, PomodoroStore
+// (tür değişince döngü sıfırlanır), etiket ("POMODORO 45+15") ve TUI tek kaynaktan
+// (resolvePomodoroType) besleniyor — serbest süre için ikinci bir yol açılmıyor.
+const CUSTOM_TYPE_RE = /^(\d{1,3})\+(\d{1,3})$/;
+
+// Tür → { studyMinutes, breakMinutes }. Tanınmayan tür için null (çağıran hata üretir).
+function resolvePomodoroType(type) {
+  if (typeof type !== 'string') return null;
+  const key = type.trim();
+  if (POMODORO_TYPES[key]) return POMODORO_TYPES[key];
+  const m = CUSTOM_TYPE_RE.exec(key);
+  if (!m) return null;
+  const studyMinutes = Number(m[1]);
+  const breakMinutes = Number(m[2]);
+  if (studyMinutes <= 0 || breakMinutes <= 0) return null;
+  return Object.freeze({ studyMinutes, breakMinutes });
+}
+
+// Hata/yardım metinlerinde tek biçim kullanılsın diye.
+const POMODORO_TYPE_HINT = `${Object.keys(POMODORO_TYPES).join(', ')} ya da "<calisma>+<mola>" (ornek "45+15")`;
+
 const STUDY = 'study';
 const BREAK = 'break';
 
@@ -34,16 +57,15 @@ const BEEP_COUNT = 3;
 const BEEP_GAP_SECONDS = 0.6;
 
 class PomodoroCycle {
-  // type: POMODORO_TYPES anahtarı; startedAt: döngünün başladığı an (epoch ms)
+  // type: POMODORO_TYPES anahtarı ya da serbest "<calisma>+<mola>"; startedAt: döngünün
+  // başladığı an (epoch ms)
   constructor({ type, startedAt }) {
-    const preset = POMODORO_TYPES[type];
+    const preset = resolvePomodoroType(type);
     if (!preset) {
-      throw new PomodoroError(
-        `bilinmeyen pomodoro türü "${type}" — ${Object.keys(POMODORO_TYPES).join(', ')}`,
-      );
+      throw new PomodoroError(`bilinmeyen pomodoro türü "${type}" — ${POMODORO_TYPE_HINT}`);
     }
     if (!Number.isFinite(startedAt)) throw new PomodoroError(`geçersiz startedAt (${startedAt})`);
-    this.type = type;
+    this.type = String(type).trim();
     this.startedAt = startedAt;
     this.studySeconds = preset.studyMinutes * 60;
     this.breakSeconds = preset.breakMinutes * 60;
@@ -117,5 +139,6 @@ class PomodoroCycle {
 }
 
 module.exports = {
-  PomodoroCycle, PomodoroError, POMODORO_TYPES, STUDY, BREAK, BEEP_COUNT, BEEP_GAP_SECONDS,
+  PomodoroCycle, PomodoroError, POMODORO_TYPES, POMODORO_TYPE_HINT, resolvePomodoroType,
+  STUDY, BREAK, BEEP_COUNT, BEEP_GAP_SECONDS,
 };

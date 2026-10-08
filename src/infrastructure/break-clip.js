@@ -18,22 +18,37 @@ const { convertAny, isSupported } = require('./clip-normalizer');
 
 const OUTPUT_NAME = 'break-background.mp4';
 const META_NAME = 'break-background.json';
+// Pomodoro'nun ÇALIŞMA fanında gösterilecek klip de aynı yoldan geçer (TUI'da "study
+// video"): sözleşme birebir aynı (1280x720/24/SAR 1:1, sessiz) ve önbellek mantığı da.
+// İki ayrı dönüşüm yazmak, bir gün birinin kaymasına ve concat'in sessizce bozulmasına
+// yol açardı — o yüzden tek işlev, farkı yalnızca çıktı dosyasının adı.
+const STUDY_OUTPUT_NAME = 'study-background.mp4';
 
 // Dönüşümü gerekiyorsa yapar, hazır klibin yolunu döndürür. Hazırlanamazsa null —
-// mola görseli olmaması yayını ENGELLEMEZ, sadece molada normal arkaplan kalır.
-async function ensureBreakClip({ sourcePath, runtimeDir, log }) {
+// görsel olmaması yayını ENGELLEMEZ (molada/çalışmada normal arkaplan kalır).
+// name: çıktı dosyasının adı (uzantısız); meta dosyası aynı adı kullanır.
+// Çıktı adı → log etiketi. Çağıranın ayrıca etiket geçmesi gerekmesin: StreamConfigService
+// yalnızca 'name' biliyor ve iki klibi aynı işlevle hazırlıyor; etiket burada çözülmezse
+// çalışma klibi loga "mola görseli" diye düşüyordu.
+const CLIP_LABELS = Object.freeze({
+  'break-background': 'mola görseli',
+  'study-background': 'çalışma görseli',
+});
+
+async function ensureStreamClip({ sourcePath, runtimeDir, log, name = 'break-background', label = null }) {
+  const clipLabel = label ?? CLIP_LABELS[name] ?? name;
   if (!sourcePath) return null;
   if (!fs.existsSync(sourcePath)) {
-    log.warn(`mola görseli bulunamadı: ${sourcePath} — molada normal arkaplan kalacak`);
+    log.warn(`${clipLabel} bulunamadı: ${sourcePath} — normal arkaplan kalacak`);
     return null;
   }
   if (!isSupported(sourcePath)) {
-    log.warn(`mola görseli desteklenmeyen tür: ${path.basename(sourcePath)} — molada normal arkaplan kalacak`);
+    log.warn(`${clipLabel} desteklenmeyen tür: ${path.basename(sourcePath)} — normal arkaplan kalacak`);
     return null;
   }
 
-  const out = path.join(runtimeDir, OUTPUT_NAME);
-  const metaFile = path.join(runtimeDir, META_NAME);
+  const out = path.join(runtimeDir, `${name}.mp4`);
+  const metaFile = path.join(runtimeDir, `${name}.json`);
   const stat = fs.statSync(sourcePath);
   const stamp = { source: sourcePath, size: stat.size, mtimeMs: Math.round(stat.mtimeMs) };
 
@@ -48,7 +63,7 @@ async function ensureBreakClip({ sourcePath, runtimeDir, log }) {
     }
   }
 
-  log.info(`mola görseli hazırlanıyor: ${path.basename(sourcePath)}`);
+  log.info(`${clipLabel} hazırlanıyor: ${path.basename(sourcePath)}`);
   fs.mkdirSync(runtimeDir, { recursive: true });
   const result = await convertAny(sourcePath, out);
   if (!result.ok) {
@@ -59,10 +74,19 @@ async function ensureBreakClip({ sourcePath, runtimeDir, log }) {
     fs.writeFileSync(metaFile, JSON.stringify(stamp));
   } catch (err) {
     // Meta yazılamazsa sadece her açılışta yeniden kodlanır.
-    log.warn(`mola görseli bilgisi yazılamadı: ${err.message}`);
+    log.warn(`${clipLabel} bilgisi yazılamadı: ${err.message}`);
   }
-  log.info(`mola görseli hazır: ${result.seconds} sn (${result.note})`);
+  log.info(`${clipLabel} hazır: ${result.seconds} sn (${result.note})`);
   return out;
 }
 
-module.exports = { ensureBreakClip, OUTPUT_NAME };
+// Mevcut çağıranlar (index.js, testler) için ince sarmalayıcı — davranış değişmedi.
+const ensureBreakClip = (args) => ensureStreamClip({ ...args, name: 'break-background' });
+
+// Pomodoro çalışma fanının arkaplanı.
+const ensureStudyClip = (args) => ensureStreamClip({ ...args, name: 'study-background' });
+
+module.exports = {
+  ensureStreamClip, ensureBreakClip, ensureStudyClip, CLIP_LABELS,
+  OUTPUT_NAME, STUDY_OUTPUT_NAME, META_NAME,
+};

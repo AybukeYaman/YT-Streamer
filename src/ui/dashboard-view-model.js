@@ -163,6 +163,7 @@ function buildViewModel({
   const footer = [
     { key: 'S', label: 'Start' },
     { key: 'R', label: 'Restart' },
+    { key: 'C', label: 'Configure' },
     { key: 'Q', label: 'Stop' },
     { key: '↑↓', label: 'Logs' },
     { key: 'End', label: 'Live' },

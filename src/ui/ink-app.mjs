@@ -3,6 +3,7 @@
 // ile yüklenir (mount). JSX yok: React.createElement (h) kullanılır (ekstra build/paket yok).
 import React, { useState, useEffect } from 'react';
 import { render, Box, Text, useInput } from 'ink';
+import { Wizard } from './wizard-view.mjs';
 
 const h = React.createElement;
 
@@ -141,6 +142,13 @@ function Dashboard({ vm }) {
   );
 }
 
+// Aktif ekran: pano ya da yapılandırma sihirbazı. İkisi AYNI Ink ağacında yer değiştirir
+// (bkz. stream-tui.js başlığı) — ikinci bir render örneği açılmaz.
+function Screen({ vm }) {
+  if (vm.screen === 'wizard') return h(Wizard, { vm: vm.wizard, rows: vm.rows });
+  return h(Dashboard, { vm });
+}
+
 function App({ controller }) {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -149,7 +157,7 @@ function App({ controller }) {
     return () => controller.removeListener('render', onRender);
   }, [controller]);
   useInput((input, key) => { controller.handleInput(input, key); });
-  return h(Dashboard, { vm: controller.getViewModel() });
+  return h(Screen, { vm: controller.getViewModel() });
 }
 
 // CJS StreamTui.open() buradan çağırır: Ink'i başlatır, unmount kolu döner.
@@ -158,4 +166,4 @@ export function mount(controller) {
   return { unmount: () => instance.unmount(), waitUntilExit: () => instance.waitUntilExit() };
 }
 
-export { Dashboard, App };
+export { Dashboard, App, Screen };

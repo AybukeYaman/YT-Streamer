@@ -287,8 +287,19 @@ test('pomodoro verilen alanları ezer, kalanı varsayılandan', () => {
 
 test('bilinmeyen pomodoro türü reddedilir', () => {
   const config = clone();
-  config.pomodoro = { enabled: true, type: '25+5' };
+  config.pomodoro = { enabled: true, type: '25 dakika' };
   assert.ok(problemsOf({ config }).some((p) => /pomodoro\.type/.test(p)));
+  const zero = clone();
+  zero.pomodoro = { enabled: true, type: '0+10' };
+  assert.ok(problemsOf({ config: zero }).some((p) => /pomodoro\.type/.test(p)));
+});
+
+// Serbest süre (TUI'daki "Custom") config'de de geçerli: tür metni tek kaynaktan
+// (domain/pomodoro resolvePomodoroType) doğrulanıyor.
+test('serbest pomodoro süresi kabul edilir', () => {
+  const config = clone();
+  config.pomodoro = { enabled: true, type: '45+15' };
+  assert.equal(load({ config }).result.pomodoro.type, '45+15');
 });
 
 test('pomodoro.enabled ve fontSize tipi doğrulanır', () => {

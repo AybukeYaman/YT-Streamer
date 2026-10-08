@@ -18,8 +18,20 @@ test('etiket türden türüyor', () => {
 });
 
 test('bilinmeyen tür ve geçersiz başlangıç kurulumda yakalanır', () => {
-  assert.throws(() => cycle('25+5'), PomodoroError);
+  // Biçime uymayan ya da sıfır/negatif süreli türler reddedilir.
+  assert.throws(() => cycle('yirmibes'), PomodoroError);
+  assert.throws(() => cycle('0+5'), PomodoroError);
+  assert.throws(() => cycle('50-10'), PomodoroError);
   assert.throws(() => new PomodoroCycle({ type: '50+10', startedAt: null }), PomodoroError);
+});
+
+// Serbest süre: hazır listede olmayan "<calisma>+<mola>" da geçerli bir tür (TUI'daki
+// "Custom" seçeneği bu metni üretir). Ayrı bir alan/ikinci bir tür listesi yok.
+test('serbest süre türü kabul edilir ve etikete yansır', () => {
+  const c = cycle('45+15');
+  assert.equal(c.studySeconds, 45 * 60);
+  assert.equal(c.breakSeconds, 15 * 60);
+  assert.equal(c.label, 'POMODORO 45+15');
 });
 
 test('phaseAt: çalışma ve mola doğru yerde, kalan süre doğru', () => {
