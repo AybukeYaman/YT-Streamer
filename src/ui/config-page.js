@@ -63,38 +63,38 @@ function renderConfigPage({ plan, clips, token, notice = null, error = null }) {
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 16px 16px 48px; background: #0f1115; color: #e8e8ea;
+    margin: 0; padding: 16px 16px 48px; background: #1c0f17; color: #fbe6f0;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     max-width: 480px; margin-inline: auto;
   }
-  h1 { font-size: 20px; margin: 4px 0 16px; }
+  h1 { font-size: 20px; margin: 4px 0 16px; color: #ffd3ea; }
   section { margin-bottom: 28px; }
-  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: #9aa0ab; margin: 0 0 10px; }
-  .hint { font-size: 13px; color: #9aa0ab; margin: 4px 0 12px; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: #e79fc4; margin: 0 0 10px; }
+  .hint { font-size: 13px; color: #c98cae; margin: 4px 0 12px; }
   .row {
     display: flex; align-items: center; gap: 12px; padding: 12px 8px;
-    border-bottom: 1px solid #22262e; min-height: 44px;
+    border-bottom: 1px solid #3a2130; min-height: 44px;
   }
-  .row input[type=checkbox] { width: 22px; height: 22px; flex-shrink: 0; }
+  .row input[type=checkbox] { width: 22px; height: 22px; flex-shrink: 0; accent-color: #ec4899; }
   .row .thumb {
     width: 56px; height: 32px; object-fit: cover; border-radius: 4px;
-    background: #1a1d24; flex-shrink: 0;
+    background: #2a1620; flex-shrink: 0;
   }
   .row span { overflow-wrap: anywhere; }
-  .checklist { border: 1px solid #22262e; border-radius: 8px; overflow: hidden; }
+  .checklist { border: 1px solid #3a2130; border-radius: 8px; overflow: hidden; background: #241320; }
   input[type=text] {
     width: 100%; padding: 12px; font-size: 16px; border-radius: 8px;
-    border: 1px solid #343a45; background: #1a1d24; color: #e8e8ea;
+    border: 1px solid #4a2a3c; background: #241320; color: #fbe6f0;
   }
   button {
     width: 100%; padding: 14px; font-size: 16px; border-radius: 8px; border: none;
     margin-top: 10px; min-height: 44px;
   }
-  .primary { background: #4c8bf5; color: #fff; font-weight: 600; }
-  .secondary { background: #262a33; color: #e8e8ea; }
-  .muted { color: #9aa0ab; font-size: 14px; }
-  .notice { background: #16331f; border: 1px solid #2d6a3e; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
-  .error { background: #3a1c1c; border: 1px solid #8a3636; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
+  .primary { background: #ec4899; color: #fff; font-weight: 600; }
+  .secondary { background: #3a2130; color: #fbe6f0; }
+  .muted { color: #c98cae; font-size: 14px; }
+  .notice { background: #3a1430; border: 1px solid #d6459b; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
+  .error { background: #3a1420; border: 1px solid #c2447a; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
 </style>
 </head>
 <body>
