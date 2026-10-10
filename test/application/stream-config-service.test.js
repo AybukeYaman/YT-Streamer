@@ -67,11 +67,11 @@ function makeService(overrides = {}) {
 
 // ─── Sağlayıcılar ────────────────────────────────────────────────────────
 
-test('plansız kurulumda sağlayıcılar null döner (mevcut davranış korunur)', () => {
+test('plansız kurulumda sağlayıcılar boş liste döner (mevcut davranış korunur)', () => {
   const service = makeService();
   assert.equal(service.planProvider(), null);
-  assert.equal(service.studyClipProvider(), null);
-  assert.equal(service.breakClipProvider(), null);
+  assert.deepEqual(service.studyClipsProvider(), []);
+  assert.deepEqual(service.breakClipsProvider(), []);
 });
 
 test('diskteki aktif plan açılışta yüklenir', () => {
@@ -132,7 +132,7 @@ test('dosya tarayıcı kurulmadıysa listeler boş döner (sihirbaz yine çalı�
 
 // ─── Uygulama ────────────────────────────────────────────────────────────
 
-test('apply: klipleri hazırlar, planı yazar ve sağlayıcılara yansıtır', async () => {
+test('apply: havuzdaki klipleri hazırlar, planı yazar ve sağlayıcılara yansıtır', async () => {
   const planStore = fakePlanStore();
   const prepared = [];
   const service = makeService({
@@ -145,23 +145,29 @@ test('apply: klipleri hazırlar, planı yazar ve sağlayıcılara yansıtır', a
 
   await service.apply({
     name: 'Cozy Study',
-    pomodoro: { enabled: true, type: '50+10', studyVideo: 'X:/s.mp4', breakVideo: 'X:/b.jpg' },
+    pomodoro: {
+      enabled: true, type: '50+10',
+      studyVideos: ['X:/s1.mp4', 'X:/s2.mp4'], breakVideos: ['X:/b.jpg'],
+    },
   });
 
-  assert.deepEqual(prepared, ['study-background', 'break-background']);
-  assert.equal(service.studyClipProvider(), 'X:/runtime/study-background.mp4|s.mp4');
-  assert.equal(service.breakClipProvider(), 'X:/runtime/break-background.mp4|b.jpg');
+  assert.deepEqual(prepared, ['study-1', 'study-2', 'break-1']);
+  assert.deepEqual(service.studyClipsProvider(), [
+    'X:/runtime/study-1.mp4|s1.mp4', 'X:/runtime/study-2.mp4|s2.mp4',
+  ]);
+  assert.deepEqual(service.breakClipsProvider(), ['X:/runtime/break-1.mp4|b.jpg']);
   assert.equal(planStore.saved, 1);
   assert.equal(service.planProvider().name, 'Cozy Study');
 });
 
-test('klip hazırlanamazsa plan yine uygulanır, o klip null kalır (yayın durmaz)', async () => {
+test('klip hazırlanamazsa plan yine uygulanır, o klip havuzdan düşer (yayın durmaz)', async () => {
   const service = makeService({
     prepareClip: async () => { throw new Error('ffmpeg düştü'); },
   });
-  await service.apply({ name: 'x', pomodoro: { enabled: true, studyVideo: 'X:/yok.mp4' } });
-  assert.equal(service.studyClipProvider(), null);
+  const { warnings } = await service.apply({ name: 'x', pomodoro: { enabled: true, studyVideos: ['X:/yok.mp4'] } });
+  assert.deepEqual(service.studyClipsProvider(), []);
   assert.equal(service.planProvider().name, 'x');
+  assert.ok(warnings.some((w) => /çalışma görüntüleri hazırlanamadı/.test(w)));
 });
 
 test('klip verilmemişse dönüştürücü hiç çağrılmaz', async () => {

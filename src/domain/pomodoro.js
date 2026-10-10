@@ -99,21 +99,35 @@ class PomodoroCycle {
   // İlk faz genelde yarıda yakalanır: start 0'a kırpılır, bitişi gerçek faz sonudur.
   // Son fazın bitişi null: çalıştırma faz ortasında biterse yazı sona kadar kalsın
   // (parça başlıklarındaki aynı kural, PlaybackTimeline.segments).
+  // Her segmente RESTART'A DAYANIKLI bir phaseIndex eklenir: döngü başlangıcından bu
+  // yana kaçıncı study/break fazı (ikisi AYRI sayılır — ilk study phaseIndex 0, ilk
+  // break de phaseIndex 0). Faz numarası tamamen startedAt + nowMs'ten türüyor, bu
+  // çalıştırmanın durationSeconds'ından bağımsız — ffmpeg bir session ortasında
+  // yeniden başlasa da (N3) aynı faza aynı phaseIndex düşer, klip seçimi kaymaz.
   segmentsFor({ nowMs, durationSeconds }) {
     if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
       throw new PomodoroError(`durationSeconds pozitif olmalı (${durationSeconds})`);
     }
-    const intoCycle = this.elapsedAt(nowMs) % this.cycleSeconds;
+    const elapsed = this.elapsedAt(nowMs);
+    const intoCycle = elapsed % this.cycleSeconds;
+    const fullCycles = Math.floor(elapsed / this.cycleSeconds);
     const segments = [];
     // Çalıştırma başlangıcını içeren fazın, çalıştırmaya göreli başlangıcı (≤ 0).
     let cursor = intoCycle < this.studySeconds ? -intoCycle : -(intoCycle - this.studySeconds);
     let phase = intoCycle < this.studySeconds ? STUDY : BREAK;
+    // Her tam döngüde bir study + bir break geçiyor (bu sırada). Çalıştırma BREAK'te
+    // başlıyorsa, bu döngünün study'si zaten geçti — bir sonraki study bir SONRAKİ
+    // döngüye ait (studyIndex = fullCycles + 1), breakIndex ise bu döngünün (fullCycles).
+    let studyIndex = phase === STUDY ? fullCycles : fullCycles + 1;
+    let breakIndex = fullCycles;
 
     while (cursor < durationSeconds) {
       const length = phase === STUDY ? this.studySeconds : this.breakSeconds;
       const end = cursor + length;
-      segments.push({ phase, start: Math.max(0, cursor), end });
+      const phaseIndex = phase === STUDY ? studyIndex : breakIndex;
+      segments.push({ phase, start: Math.max(0, cursor), end, phaseIndex });
       cursor = end;
+      if (phase === STUDY) studyIndex += 1; else breakIndex += 1;
       phase = phase === STUDY ? BREAK : STUDY;
     }
     // Son segmentin bitişi açık bırakılır.

@@ -133,8 +133,8 @@ function toSummaryWithPomodoro(wizard) {
   press(wizard, 'enter');
   choose(wizard, 'Yes');
   choose(wizard, '50 min study / 10 min break');
-  choose(wizard, '(albümün kendi arkaplanı)');
-  choose(wizard, '(molada arkaplan değişmesin)');
+  press(wizard, 'enter'); // studyVideo: seçim yapmadan devam
+  press(wizard, 'enter'); // breakVideo: aynı
   return wizard.getViewModel();
 }
 
@@ -478,7 +478,7 @@ test('serbest süre formunda sıfır reddedilir', async () => {
   assert.equal(wizard.getViewModel().step, 'pomodoroCustom');
 });
 
-test('study ve break videoları bağımsız seçilir', async () => {
+test('study ve break video havuzları bağımsız ve ÇOKLU seçilir (N3)', async () => {
   const { wizard, service } = await openWizard();
   choose(wizard, 'Yeni yapılandırma…');
   choose(wizard, '(kapak değiştirilmesin)');
@@ -488,16 +488,16 @@ test('study ve break videoları bağımsız seçilir', async () => {
   choose(wizard, '50 min study / 10 min break');
   assert.equal(wizard.getViewModel().step, 'studyVideo');
   moveTo(wizard, 'assets/study.mp4');
-  press(wizard, 'enter');
+  press(wizard, 'space', 'enter'); // seç + devam
   assert.equal(wizard.getViewModel().step, 'breakVideo');
   moveTo(wizard, 'assets/break.mp4');
-  press(wizard, 'enter');
+  press(wizard, 'space', 'enter');
   await pressAsync(wizard, 'enter'); // START
-  assert.equal(service.applied[0].pomodoro.studyVideo, 'X:/assets/study.mp4');
-  assert.equal(service.applied[0].pomodoro.breakVideo, 'X:/assets/break.mp4');
+  assert.deepEqual(service.applied[0].pomodoro.studyVideos, ['X:/assets/study.mp4']);
+  assert.deepEqual(service.applied[0].pomodoro.breakVideos, ['X:/assets/break.mp4']);
 });
 
-test('study/break adımında "(mevcut davranış)" seçeneği null bırakır', async () => {
+test('study/break adımında hiç seçim yapılmazsa havuz boş kalır (mevcut davranış)', async () => {
   const { wizard, service } = await openWizard();
   choose(wizard, 'Yeni yapılandırma…');
   choose(wizard, '(kapak değiştirilmesin)');
@@ -505,13 +505,28 @@ test('study/break adımında "(mevcut davranış)" seçeneği null bırakır', a
   press(wizard, 'enter');
   choose(wizard, 'Yes');
   choose(wizard, '50 min study / 10 min break');
-  moveTo(wizard, '(albümün kendi arkaplanı)');
-  press(wizard, 'enter');
-  moveTo(wizard, '(molada arkaplan değişmesin)');
-  press(wizard, 'enter');
+  press(wizard, 'enter'); // studyVideo: hiç seçim yapmadan devam
+  press(wizard, 'enter'); // breakVideo: aynı
   await pressAsync(wizard, 'enter');
-  assert.equal(service.applied[0].pomodoro.studyVideo, null);
-  assert.equal(service.applied[0].pomodoro.breakVideo, null);
+  assert.deepEqual(service.applied[0].pomodoro.studyVideos, []);
+  assert.deepEqual(service.applied[0].pomodoro.breakVideos, []);
+});
+
+test('study videosunda birden çok klip seçilebilir', async () => {
+  const { wizard, service } = await openWizard();
+  choose(wizard, 'Yeni yapılandırma…');
+  choose(wizard, '(kapak değiştirilmesin)');
+  press(wizard, 'enter');
+  press(wizard, 'enter');
+  choose(wizard, 'Yes');
+  choose(wizard, '50 min study / 10 min break');
+  moveTo(wizard, 'mimi/bg.mp4');
+  press(wizard, 'space');
+  moveTo(wizard, 'assets/study.mp4');
+  press(wizard, 'space', 'enter');
+  press(wizard, 'enter'); // breakVideo: seçim yok
+  await pressAsync(wizard, 'enter');
+  assert.deepEqual(service.applied[0].pomodoro.studyVideos, ['X:/mimi/bg.mp4', 'X:/assets/study.mp4']);
 });
 
 // ─── Özet, Edit, Save ───────────────────────────────────────────────────
@@ -525,8 +540,8 @@ test('özet seçimleri, toplam süreyi ve geçiş davranışını gösterir', as
   press(wizard, 'enter'); // order → pomodoro
   choose(wizard, 'Yes');
   choose(wizard, '50 min study / 10 min break');
-  choose(wizard, '(albümün kendi arkaplanı)');
-  choose(wizard, '(molada arkaplan değişmesin)');
+  press(wizard, 'enter'); // studyVideo: seçim yapmadan devam
+  press(wizard, 'enter'); // breakVideo: aynı
   const vm = wizard.getViewModel();
   assert.equal(vm.step, 'summary');
   const value = (label) => vm.summary.find((l) => l.label === label).value;

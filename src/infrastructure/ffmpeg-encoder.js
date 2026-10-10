@@ -153,14 +153,6 @@ function drawtextExpr(style, text) {
 //             statusPosition, lineGap } ya da null. Parça başlığından AYRI bir
 // drawtext kümesi: kendi konumu, kendi punto'su. Böylece sol altta "Track Name",
 // sağ üstte "12:34 / STUDY" aynı anda, üst üste binmeden görünür.
-// Birden çok zaman aralığını tek enable ifadesinde birleştirir: (a1)+(a2)+… — ffmpeg'de
-// toplama mantıksal VEYA gibi davranır (sıfırdan büyük = etkin).
-function enableAny(windows) {
-  return windows.length === 1
-    ? enableExpr(windows[0].start, windows[0].end)
-    : `'${windows.map((w) => enableExpr(w.start, w.end).slice(1, -1)).join('+')}'`;
-}
-
 function videoFilter(profile, overlay, overlayTexts = [], pomodoro = null) {
   const scale = `scale=${profile.width}:${profile.height}`;
   const filters = [];
@@ -248,41 +240,85 @@ function beepMixChain(beepTimes, musicLabel = '1:a', beepLabel = '2:a', outLabel
 // beepTimes boşsa (Pomodoro kapalı ya da bu çalıştırmada geçiş yok) ses zinciri HİÇ
 // kurulmaz: -vf + doğrudan map, yani bugünkü komutun birebir aynısı. Bip varsa video ve
 // ses tek -filter_complex'e taşınır (ikisini -vf ile karıştırmak kırılgan).
+// N3: study/break klipleri artık albümün arkaplanının YERİNE geçmiyor, ÜSTÜNE biniyor
+// (overlay) — her pencerenin kendi klibi olabilir (çoklu havuz, bkz. pomodoro-planner.js).
+// windows: [{ path, start, end }] — zaman sırasında, AYNI path birden çok pencerede
+// tekrar edebilir. study/break pencereleri birbiriyle asla ÇAKIŞMAZ (tek seferde bir faz
+// aktif), o yüzden chain sırası fark etmez.
+//
+// Her FARKLI path için ayrı bir girdi açılır (girişler pahalı: -stream_loop ile sürekli
+// decode edilir — pomodoro-planner.js'teki MAX_CLIPS_PER_RUN sınırı bu yüzden var).
+// Aynı path birden çok pencerede kullanılıyorsa `split` ile çoğaltılır: bir giriş akışı
+// filtre grafiğinde yalnızca BİR KEZ tüketilebilir, split onu N kopyaya ayırır.
+function buildPhaseOverlayChain(profile, windows, startInputIndex) {
+  const scale = `scale=${profile.width}:${profile.height},setsar=1`;
+  const distinctPaths = [...new Set(windows.map((w) => w.path))];
+  const inputChains = [];
+  const prefixByPath = new Map();
+  distinctPaths.forEach((p, i) => {
+    const uses = windows.filter((w) => w.path === p).length;
+    const inputIdx = startInputIndex + i;
+    const prefix = `ph${i}_`;
+    prefixByPath.set(p, prefix);
+    if (uses > 1) {
+      const outs = Array.from({ length: uses }, (_, k) => `[${prefix}${k}]`).join('');
+      inputChains.push(`[${inputIdx}:v]${scale},split=${uses}${outs}`);
+    } else {
+      inputChains.push(`[${inputIdx}:v]${scale}[${prefix}0]`);
+    }
+  });
+
+  const usedSoFar = new Map();
+  let baseLabel = 'phbase';
+  const overlaySteps = [`[0:v]${scale}[${baseLabel}]`];
+  windows.forEach((w, i) => {
+    const prefix = prefixByPath.get(w.path);
+    const k = usedSoFar.get(w.path) ?? 0;
+    usedSoFar.set(w.path, k + 1);
+    const outLabel = i === windows.length - 1 ? 'phcomp' : `pho${i}`;
+    overlaySteps.push(`[${baseLabel}][${prefix}${k}]overlay=enable=${enableExpr(w.start, w.end)}[${outLabel}]`);
+    baseLabel = outLabel;
+  });
+
+  return { chain: [...inputChains, ...overlaySteps].join(';'), distinctPaths };
+}
+
 function buildFfmpegArgs({
   profile, backgroundPath, backgroundPlaylistPath, audioPath, playlistPath, runNumber,
   output, overlay = null, overlayTexts, pomodoro = null, beepTimes = [],
-  breakBackground = null,
+  phaseBackgrounds = [],
 }) {
   const vf = videoFilter(profile, overlay, overlayTexts, pomodoro);
   const mixing = beepTimes.length > 0;
-  // Mola arkaplanı: yalnızca bu çalıştırmada mola penceresi varsa giriş eklenir.
-  const breaking = Boolean(breakBackground && breakBackground.windows.length > 0);
-  // Giriş sırası: 0 arkaplan, 1 müzik, sonra (varsa) mola klibi, sonra (varsa) bip.
-  const breakIndex = breaking ? 2 : null;
-  const beepIndex = mixing ? (breaking ? 3 : 2) : null;
-  const complex = mixing || breaking;
+  // study/break klipleri: yalnızca bu çalıştırmada atanmış pencere varsa giriş eklenir.
+  const hasPhaseBackgrounds = phaseBackgrounds.length > 0;
+  // Giriş sırası: 0 arkaplan, 1 müzik, sonra (varsa) study/break klipleri, sonra (varsa) bip.
+  const PHASE_INPUT_BASE = 2;
+  const complex = mixing || hasPhaseBackgrounds;
 
-  // Video zinciri: önce mola klibi ana arkaplanın ÜSTÜNE bindirilir, yazılar en sona
-  // kalır — STUDY/BREAK ve tür etiketi mola görselinin de üstünde görünsün.
-  // overlay'in enable'ı, BREAK yazısının enable'ıyla aynı zaman ifadesinden üretiliyor:
-  // ikisi tek kaynaktan geldiği için görsel ile yazı asla birbirinden kayamaz.
+  // Video zinciri: önce study/break klipleri ana arkaplanın ÜSTÜNE bindirilir, yazılar
+  // en sona kalır — STUDY/BREAK ve tür etiketi klibin de üstünde görünsün. overlay'in
+  // enable'ı, STUDY/BREAK yazısının enable'ıyla aynı zaman ifadesinden üretiliyor: ikisi
+  // tek kaynaktan geldiği için görsel ile yazı asla birbirinden kayamaz.
   let videoChain;
-  if (breaking) {
-    const brk = `[${breakIndex}:v]scale=${profile.width}:${profile.height},setsar=1[brk]`;
-    const comp = `[0:v]scale=${profile.width}:${profile.height}[bg];[bg][brk]overlay=enable=${enableAny(breakBackground.windows)}[comp]`;
-    // vf'in başındaki scale zaten uygulandı; kalan filtreleri (drawtext'ler) comp'a bağla.
+  let distinctPaths = [];
+  if (hasPhaseBackgrounds) {
+    const built = buildPhaseOverlayChain(profile, phaseBackgrounds, PHASE_INPUT_BASE);
+    distinctPaths = built.distinctPaths;
+    // vf'in başındaki scale zaten uygulandı; kalan filtreleri (drawtext'ler) phcomp'a bağla.
     const rest = vf.split(',').slice(1).join(',');
-    videoChain = `${brk};${comp}` + (rest ? `;[comp]${rest}[v]` : ';[comp]null[v]');
+    videoChain = built.chain + (rest ? `;[phcomp]${rest}[v]` : ';[phcomp]null[v]');
   } else {
     videoChain = `[0:v]${vf}[v]`;
   }
+  const beepIndex = mixing ? PHASE_INPUT_BASE + distinctPaths.length : null;
 
   return [
     '-hide_banner',
     '-y', // local modda çıktının üzerine yaz; yoksa ffmpeg stdin'den onay bekler
     ...videoInputArgs({ backgroundPath, backgroundPlaylistPath }),
     ...audioInputArgs({ audioPath, playlistPath }),
-    ...(breaking ? ['-stream_loop', '-1', '-i', breakBackground.path] : []),
+    ...distinctPaths.flatMap((p) => ['-stream_loop', '-1', '-i', p]),
     ...(mixing ? BEEP_INPUT_ARGS : []),
     ...(complex
       ? ['-filter_complex',
@@ -360,7 +396,7 @@ class FfmpegEncoder extends Encoder {
   start({
     audioPath, playlistPath, runNumber, overlayTexts,
     backgroundPath, backgroundPlaylistPath,
-    pomodoro = null, beepTimes = [], breakBackground = null,
+    pomodoro = null, beepTimes = [], phaseBackgrounds = [],
   }) {
     if (this.running) throw new Error('FfmpegEncoder zaten çalışıyor');
     const args = buildFfmpegArgs({
@@ -369,7 +405,7 @@ class FfmpegEncoder extends Encoder {
       backgroundPlaylistPath,
       audioPath, playlistPath, runNumber,
       output: this.output, overlay: this.overlay, overlayTexts,
-      pomodoro, beepTimes, breakBackground,
+      pomodoro, beepTimes, phaseBackgrounds,
     });
     this.emit('log', { kind: 'command', args: args.map((a) => maskSecret(a, this.output)) });
 

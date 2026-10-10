@@ -15,11 +15,15 @@ const { PomodoroPlanner } = require('./pomodoro-planner');
 
 class ReconfigurablePomodoroPlanner {
   // planProvider: () => StreamPlan|null — aktif plan
-  // breakClipProvider: () => string|null — hazırlanmış mola klibi (dönüşüm dışarıda)
-  // createPlanner: ({ type, breakClipPath }) => PomodoroPlanner — testte sahte verilir
-  constructor({ planProvider, breakClipProvider = () => null, createPlanner, log }) {
+  // studyClipsProvider/breakClipsProvider: () => string[] — hazırlanmış klip havuzu
+  //   (dönüşüm dışarıda, StreamConfigService'te; N3 çoklu klip)
+  // createPlanner: ({ type, studyClips, breakClips }) => PomodoroPlanner — testte sahte verilir
+  constructor({
+    planProvider, studyClipsProvider = () => [], breakClipsProvider = () => [], createPlanner, log,
+  }) {
     this.planProvider = typeof planProvider === 'function' ? planProvider : () => null;
-    this.breakClipProvider = typeof breakClipProvider === 'function' ? breakClipProvider : () => null;
+    this.studyClipsProvider = typeof studyClipsProvider === 'function' ? studyClipsProvider : () => [];
+    this.breakClipsProvider = typeof breakClipsProvider === 'function' ? breakClipsProvider : () => [];
     this.createPlanner = createPlanner;
     this.log = log;
     this.signature = null;
@@ -34,18 +38,21 @@ class ReconfigurablePomodoroPlanner {
       this.signature = 'off';
       return null;
     }
-    const breakClipPath = this.breakClipProvider();
-    // İmzaya mola klibi de girer: yalnızca mola görseli değiştiğinde de yeniden kurulmalı
-    // (döngü başlangıcı korunur — PomodoroStore aynı tür için kayıtlı startedAt'ı döndürür).
-    const signature = `${streamPlan.pomodoro.type}|${breakClipPath ?? ''}`;
+    const studyClips = this.studyClipsProvider();
+    const breakClips = this.breakClipsProvider();
+    // İmzaya klip havuzları da girer: yalnızca görseller değiştiğinde de yeniden kurulmalı
+    // (döngü başlangıcı korunur — PomodoroStore aynı tür için kayıtlı startedAt/seed'i
+    // döndürür, bkz. pomodoro-planner.js).
+    const signature = `${streamPlan.pomodoro.type}|${studyClips.join(',')}|${breakClips.join(',')}`;
     if (!this.planner || this.signature !== signature) {
-      this.planner = this.createPlanner({ type: streamPlan.pomodoro.type, breakClipPath });
+      this.planner = this.createPlanner({ type: streamPlan.pomodoro.type, studyClips, breakClips });
       this.signature = signature;
       const rounds = streamPlan.pomodoro.rounds;
       this.log.info(
         `pomodoro yapılandırması uygulandı: ${streamPlan.pomodoro.type}`
         + (rounds ? ` (planda ${rounds} tur)` : '')
-        + (breakClipPath ? ', mola klibi var' : ''),
+        + (studyClips.length ? `, ${studyClips.length} çalışma klibi` : '')
+        + (breakClips.length ? `, ${breakClips.length} mola klibi` : ''),
       );
     }
     return this.planner.plan({ durationSeconds });
@@ -53,11 +60,11 @@ class ReconfigurablePomodoroPlanner {
 }
 
 // index.js'in kurduğu fabrika için yardımcı: bağımlılıkları sabitleyip yalnızca tür ve
-// mola klibini değişken bırakır. Böylece sarmalayıcı PomodoroOverlayWriter/PomodoroStore
-// gibi altyapı nesnelerini hiç tanımaz.
+// klip havuzlarını değişken bırakır. Böylece sarmalayıcı PomodoroOverlayWriter/
+// PomodoroStore gibi altyapı nesnelerini hiç tanımaz.
 function plannerFactory({ overlayWriter, store, log, now }) {
-  return ({ type, breakClipPath }) => new PomodoroPlanner({
-    type, overlayWriter, store, log, breakClipPath, ...(now && { now }),
+  return ({ type, studyClips, breakClips }) => new PomodoroPlanner({
+    type, overlayWriter, store, log, studyClips, breakClips, ...(now && { now }),
   });
 }
 

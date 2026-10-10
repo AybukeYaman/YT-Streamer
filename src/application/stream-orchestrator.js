@@ -290,7 +290,7 @@ class StreamOrchestrator extends EventEmitter {
       ...(pomodoroPlan && {
         pomodoro: pomodoroPlan.pomodoro,
         beepTimes: pomodoroPlan.beepTimes,
-        ...(pomodoroPlan.breakBackground && { breakBackground: pomodoroPlan.breakBackground }),
+        ...(pomodoroPlan.phaseBackgrounds?.length && { phaseBackgrounds: pomodoroPlan.phaseBackgrounds }),
       }),
     });
   }

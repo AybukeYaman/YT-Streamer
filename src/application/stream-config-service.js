@@ -21,10 +21,11 @@
 // (mediaLibrary, prepareClip) composition root'tan enjekte edilir.
 const { StreamPlan, summarizePlan } = require('../domain/stream-plan');
 
-// Hazırlanan kliplerin runtime'daki adları. İsim break-clip.js'in sözleşmesi;
-// burada yalnızca hangi klibin hangi ada yazılacağı seçiliyor.
-const STUDY_CLIP = 'study-background';
-const BREAK_CLIP = 'break-background';
+// Hazırlanan kliplerin runtime'daki ad ÖNEKLERİ (N3: çoklu klip havuzu — her klip kendi
+// sırasıyla "study-1", "study-2", … adını alır; break-clip.js zaten keyfi 'name' kabul
+// ediyor, burada yalnızca hangi sıranın hangi adı aldığı seçiliyor).
+const STUDY_CLIP_PREFIX = 'study';
+const BREAK_CLIP_PREFIX = 'break';
 
 class StreamConfigService {
   // planStore: { loadActive, saveActive, listPresets, savePreset, deletePreset }
@@ -54,9 +55,12 @@ class StreamConfigService {
 
     // Aktif plan kurulumda okunur (senkron): motor tarafı ilk start()'ta hazır bulmalı.
     this.plan = this.planStore.loadActive() || this.fallbackPlan;
-    // Hazırlanmış klipler: { source, clip }. Kaynak değişmediyse yeniden dönüştürülmez.
-    this.studyClip = null;
-    this.breakClip = null;
+    // Hazırlanmış klip HAVUZLARI (N3): yayın formatına çevrilmiş yolların dizisi,
+    // plan.pomodoro.studyVideos/breakVideos ile AYNI sırada. Disk seviyesinde önbellek
+    // zaten break-clip.js'te (kaynak değişmediyse ffmpeg yeniden çalışmaz) — burada ikinci
+    // bir bellek içi önbellek YOK, tek kaynak disk.
+    this.studyClips = [];
+    this.breakClips = [];
     this.albumsCache = null;
   }
 
@@ -66,12 +70,12 @@ class StreamConfigService {
     return this.plan || null;
   }
 
-  studyClipProvider() {
-    return this.studyClip ? this.studyClip.clip : null;
+  studyClipsProvider() {
+    return this.studyClips;
   }
 
-  breakClipProvider() {
-    return this.breakClip ? this.breakClip.clip : null;
+  breakClipsProvider() {
+    return this.breakClips;
   }
 
   // Sihirbazın düzenlemeye başlayacağı plan: aktif plan ya da boş plan (tüm kütüphane,
@@ -172,11 +176,11 @@ class StreamConfigService {
 
     onProgress('görüntüler hazırlanıyor…');
     const prepared = await this.#prepareClips(p);
-    if (p.pomodoro.enabled && p.pomodoro.studyVideo && !prepared.study) {
-      warnings.push('çalışma görüntüsü hazırlanamadı — albümün kendi arkaplanı kullanılacak');
+    if (p.pomodoro.enabled && prepared.study.length < p.pomodoro.studyVideos.length) {
+      warnings.push('bazı çalışma görüntüleri hazırlanamadı — o klipler havuzdan düşürüldü');
     }
-    if (p.pomodoro.enabled && p.pomodoro.breakVideo && !prepared.break) {
-      warnings.push('mola görüntüsü hazırlanamadı — molada normal arkaplan kalacak');
+    if (p.pomodoro.enabled && prepared.break.length < p.pomodoro.breakVideos.length) {
+      warnings.push('bazı mola görüntüleri hazırlanamadı — o klipler havuzdan düşürüldü');
     }
 
     onProgress('plan kaydediliyor…');
@@ -231,35 +235,42 @@ class StreamConfigService {
   // sebebi yok.
   async #prepareClips(plan) {
     if (!plan.pomodoro.enabled || !this.prepareClip) {
-      this.studyClip = null;
-      this.breakClip = null;
-      return { study: null, break: null };
+      this.studyClips = [];
+      this.breakClips = [];
+      return { study: [], break: [] };
     }
-    const study = await this.#ensure('studyClip', STUDY_CLIP, plan.pomodoro.studyVideo);
-    const brk = await this.#ensure('breakClip', BREAK_CLIP, plan.pomodoro.breakVideo);
+    const study = await this.#ensureList(STUDY_CLIP_PREFIX, 'çalışma görseli', plan.pomodoro.studyVideos);
+    const brk = await this.#ensureList(BREAK_CLIP_PREFIX, 'mola görseli', plan.pomodoro.breakVideos);
+    this.studyClips = study;
+    this.breakClips = brk;
     return { study, break: brk };
   }
 
-  // Dönüşüm hatası yayını DURDURMAZ: klip null kalır, arkaplan normal akışına döner.
-  // (Aynı ilke break-clip.js'te: görsel hazırlanamazsa yayın sürer.)
-  async #ensure(field, name, source) {
-    if (!source) {
-      this[field] = null;
-      return null;
+  // Havuzdaki her kaynağı sırayla yayın formatına çevirir. Hazırlanamayan kaynak (dosya
+  // silinmiş, desteklenmeyen tür) sessizce ATLANIR — havuzdan bir klip düşmesi yayını
+  // DURDURMAZ, kalan klipler normal çalışır (aynı ilke break-clip.js'te: tek klip
+  // hazırlanamazsa yayın sürer). Disk seviyesindeki önbellek break-clip.js'te (kaynak
+  // değişmediyse ffmpeg yeniden çalışmaz) — burada ikinci bir önbellek katmanı yok.
+  async #ensureList(prefix, label, sources) {
+    const out = [];
+    for (let i = 0; i < sources.length; i++) {
+      const source = sources[i];
+      let clip = null;
+      try {
+        clip = await this.prepareClip({
+          sourcePath: source,
+          runtimeDir: this.config.paths.runtime,
+          name: `${prefix}-${i + 1}`,
+          label: `${label} ${i + 1}`,
+          log: this.log,
+        });
+      } catch (err) {
+        this.log.warn(`${label} ${i + 1} hazırlanamadı: ${err.message}`);
+      }
+      if (clip) out.push(clip);
     }
-    const cached = this[field];
-    if (cached && cached.source === source) return cached.clip;
-    let clip = null;
-    try {
-      clip = await this.prepareClip({
-        sourcePath: source, runtimeDir: this.config.paths.runtime, name, log: this.log,
-      });
-    } catch (err) {
-      this.log.warn(`${name} hazırlanamadı: ${err.message}`);
-    }
-    this[field] = clip ? { source, clip } : null;
-    return clip;
+    return out;
   }
 }
 
-module.exports = { StreamConfigService, STUDY_CLIP, BREAK_CLIP };
+module.exports = { StreamConfigService, STUDY_CLIP_PREFIX, BREAK_CLIP_PREFIX };

@@ -13,8 +13,10 @@
 //   music.order         → queue.mode                 index.js (queue.mode getter)
 //   pomodoro.enabled    → planner kurulur/kurulmaz   ReconfigurablePomodoroPlanner
 //   pomodoro.type       → PomodoroCycle              ReconfigurablePomodoroPlanner
-//   pomodoro.breakVideo → encoder breakBackground    StreamConfigService (klip hazırlar)
-//   pomodoro.studyVideo → albümün arkaplanı yerine   PlanAlbumRepository + StreamConfigService
+//   pomodoro.breakVideos → mola pencereleri overlay'i  StreamConfigService (klip hazırlar)
+//   pomodoro.studyVideos → çalışma pencereleri overlay'i  StreamConfigService (klip hazırlar)
+//   (N3: ÇOKLU klip — her session havuzdan seededShuffle ile deterministik seçilir,
+//   bkz. src/domain/seeded-shuffle.js ve src/application/pomodoro-planner.js)
 //
 // Hepsi YAYIN BAŞLARKEN okunur (getter / her list() çağrısı): böylece süreci yeniden
 // başlatmadan "restart with new configuration" mümkün olur.
@@ -124,12 +126,37 @@ function normalizeAlbums(raw, problems) {
   return out;
 }
 
+// Çoklu klip havuzu (N3): studyVideos/breakVideos verilmişse o kullanılır (dizi, boş
+// olmayan metinler, tekrarlar atılır). Verilmemişse ESKİ tekil alan (studyVideo/
+// breakVideo, metin) tek elemanlı listeye çevrilir — VPS'te ŞU AN çalışan tek-değerli
+// planlar bu düzeltmeyle hiç etkilenmez (geriye dönük uyumluluk şart, bkz.
+// PLAN-yapilandirma-ui.md Faz N3). İkisi de yoksa boş liste ("mevcut davranış": albümün
+// kendi arkaplanı kullanılır).
+function normalizeVideoList(raw, legacySingle, fieldLabel, problems) {
+  if (raw !== undefined && raw !== null) {
+    if (!Array.isArray(raw)) {
+      problems.push(`"pomodoro.${fieldLabel}" dizi olmalı`);
+      return [];
+    }
+    if (raw.some((v) => !isNonEmptyString(v))) {
+      problems.push(`"pomodoro.${fieldLabel}" içinde geçersiz yol var (boş olmayan metin olmalı)`);
+      return [];
+    }
+    return Object.freeze([...new Set(raw.map((v) => v.trim()))]);
+  }
+  if (isNonEmptyString(legacySingle)) return Object.freeze([legacySingle.trim()]);
+  if (legacySingle !== undefined && legacySingle !== null) {
+    problems.push(`"pomodoro.${fieldLabel.replace(/s$/, '')}" dosya yolu (metin) ya da null olmalı`);
+  }
+  return Object.freeze([]);
+}
+
 function normalizePomodoro(raw, problems) {
   const p = raw === undefined || raw === null ? {} : raw;
   if (typeof p !== 'object') {
     problems.push('"pomodoro" bölümü nesne olmalı');
     return {
-      enabled: false, type: DEFAULT_TYPE, rounds: DEFAULT_ROUNDS, studyVideo: null, breakVideo: null,
+      enabled: false, type: DEFAULT_TYPE, rounds: DEFAULT_ROUNDS, studyVideos: [], breakVideos: [],
     };
   }
   if (p.enabled !== undefined && typeof p.enabled !== 'boolean') {
@@ -144,17 +171,14 @@ function normalizePomodoro(raw, problems) {
   if (rounds !== null && !isPositiveInt(rounds)) {
     problems.push('"pomodoro.rounds" pozitif tam sayı ya da null olmalı');
   }
-  for (const key of ['studyVideo', 'breakVideo']) {
-    if (p[key] !== undefined && p[key] !== null && !isNonEmptyString(p[key])) {
-      problems.push(`"pomodoro.${key}" dosya yolu (metin) ya da null olmalı`);
-    }
-  }
+  const studyVideos = normalizeVideoList(p.studyVideos, p.studyVideo, 'studyVideos', problems);
+  const breakVideos = normalizeVideoList(p.breakVideos, p.breakVideo, 'breakVideos', problems);
   return {
     enabled: p.enabled === true,
     type: typeof type === 'string' ? type.trim() : type,
     rounds,
-    studyVideo: isNonEmptyString(p.studyVideo) ? p.studyVideo.trim() : null,
-    breakVideo: isNonEmptyString(p.breakVideo) ? p.breakVideo.trim() : null,
+    studyVideos,
+    breakVideos,
   };
 }
 
@@ -224,7 +248,11 @@ class StreamPlan {
         order: this.music.order,
         albums: this.music.albums.map((a) => ({ name: a.name, trackPaths: [...a.trackPaths] })),
       },
-      pomodoro: { ...this.pomodoro },
+      pomodoro: {
+        ...this.pomodoro,
+        studyVideos: [...this.pomodoro.studyVideos],
+        breakVideos: [...this.pomodoro.breakVideos],
+      },
       metadata: { ...this.metadata },
     };
   }

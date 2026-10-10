@@ -53,7 +53,7 @@ function draftFromPlan(plan) {
       // Seçim: albüm adı → seçili parça yollarının SIRALI listesi.
       selection: new Map(),
       pomodoro: {
-        enabled: false, type: DEFAULT_TYPE, rounds: DEFAULT_ROUNDS, studyVideo: null, breakVideo: null,
+        enabled: false, type: DEFAULT_TYPE, rounds: DEFAULT_ROUNDS, studyVideos: [], breakVideos: [],
       },
     };
   }
@@ -62,7 +62,11 @@ function draftFromPlan(plan) {
     cover: plan.cover,
     order: plan.music.order,
     selection: new Map(plan.music.albums.map((a) => [a.name, [...a.trackPaths]])),
-    pomodoro: { ...plan.pomodoro },
+    // StreamPlan dondurulmuş (frozen) diziler tutar — taslak düzenlenebilir olmalı,
+    // o yüzden yeni (yazılabilir) bir kopya alınır. Aksi halde #toggleVideoSelection
+    // frozen bir array'e push/splice yapmaya çalışıp sessizce (ya da strict modda
+    // hatayla) başarısız olurdu.
+    pomodoro: { ...plan.pomodoro, studyVideos: [...plan.pomodoro.studyVideos], breakVideos: [...plan.pomodoro.breakVideos] },
   };
 }
 
@@ -334,21 +338,19 @@ class ConfigWizard extends EventEmitter {
       }
       case 'studyVideo':
       case 'breakVideo': {
-        const field = step === 'studyVideo' ? 'studyVideo' : 'breakVideo';
+        // N3: ÇOKLU seçim (checklist, music adımıyla aynı desen). Hiç seçim yapılmazsa
+        // havuz boş kalır — "mevcut davranış" (albümün kendi arkaplanı) için ayrı bir
+        // seçenek YOK, boş havuzun kendisi o anlama geliyor.
+        const field = step === 'studyVideo' ? 'studyVideos' : 'breakVideos';
+        const selected = new Set(this.draft.pomodoro[field]);
         const items = this.library.clips.map((file) => ({
-          value: file, label: shortPath(file), hint: 'klip', current: file === this.draft.pomodoro[field],
+          value: file, label: shortPath(file), hint: 'klip', track: true, checked: selected.has(file),
         }));
         // Görseller de kabul: açılışta Ken Burns klibine çevrilir (bkz. clip-normalizer).
         for (const file of this.library.covers) {
-          items.push({ value: file, label: shortPath(file), hint: 'görsel', current: file === this.draft.pomodoro[field] });
+          items.push({ value: file, label: shortPath(file), hint: 'görsel', track: true, checked: selected.has(file) });
         }
-        items.push({ value: CUSTOM, label: 'custom…', hint: 'dosya yolunu yaz' });
-        items.push({
-          value: null,
-          label: step === 'studyVideo' ? '(albümün kendi arkaplanı)' : '(molada arkaplan değişmesin)',
-          hint: 'mevcut davranış',
-          current: this.draft.pomodoro[field] === null,
-        });
+        items.push({ value: CUSTOM, label: 'custom…', hint: 'dosya yolunu ekle' });
         return items;
       }
       case 'summary':
@@ -463,8 +465,11 @@ class ConfigWizard extends EventEmitter {
       return undefined;
     }
 
-    if (this.step === 'music') {
+    const isVideoChecklist = this.step === 'studyVideo' || this.step === 'breakVideo';
+    if (this.step === 'music' || isVideoChecklist) {
       if (ch === ' ') { this.#toggleCursor(items); return undefined; }
+    }
+    if (this.step === 'music') {
       // "Görünenlerin hepsini seç": Tab ve (arama kapalıyken) 'a'. Tab gerekiyor çünkü
       // arama açıkken harfler sorguya gider — "yagmur yaz, hepsini seç" akışının tek
       // tuşu o. Arama kapalıyken 'a' daha akılda kalıcı olduğu için ikisi de kabul.
@@ -501,10 +506,21 @@ class ConfigWizard extends EventEmitter {
         if (all) this.draft.selection.delete(album.name);
         else this.draft.selection.set(album.name, album.tracks.map((t) => t.path));
       }
+    } else if (item.track && (this.step === 'studyVideo' || this.step === 'breakVideo')) {
+      this.#toggleVideoSelection(item.value);
     } else if (item.track) {
       this.#toggleTrack(item.albumName, item.value);
     }
     this.emit('render');
+  }
+
+  // study/break klip havuzu: basit üyelik anahtarı (albüm yok, sıra önemsiz).
+  #toggleVideoSelection(value) {
+    const field = this.step === 'studyVideo' ? 'studyVideos' : 'breakVideos';
+    const list = this.draft.pomodoro[field];
+    const i = list.indexOf(value);
+    if (i === -1) list.push(value);
+    else list.splice(i, 1);
   }
 
   // İmlecin üstündeki parçayı seçimden çıkarır. Yol üzerinden bulunur (arama açıkken
@@ -578,15 +594,19 @@ class ConfigWizard extends EventEmitter {
         this.#advance();
         return undefined;
       case 'studyVideo':
-        if (item.value === CUSTOM) return this.#askPath('Study videosu', 'video', (f) => { this.draft.pomodoro.studyVideo = f; });
-        this.draft.pomodoro.studyVideo = item.value;
+      case 'breakVideo': {
+        // Checklist deseni music ile aynı: Space seçer/çıkarır, Enter adımı bitirir.
+        // CUSTOM üzerinde Enter istisna: yeni bir yol EKLEMEK için metin girişi açar.
+        if (item.value === CUSTOM) {
+          const field = this.step === 'studyVideo' ? 'studyVideos' : 'breakVideos';
+          const label = this.step === 'studyVideo' ? 'Study videosu' : 'Break videosu';
+          return this.#askPath(label, 'video', (f) => {
+            if (!this.draft.pomodoro[field].includes(f)) this.draft.pomodoro[field].push(f);
+          });
+        }
         this.#advance();
         return undefined;
-      case 'breakVideo':
-        if (item.value === CUSTOM) return this.#askPath('Break videosu', 'video', (f) => { this.draft.pomodoro.breakVideo = f; });
-        this.draft.pomodoro.breakVideo = item.value;
-        this.#advance();
-        return undefined;
+      }
       case 'summary':
         if (item.value === 'start') return this.#applyDraft();
         if (item.value === 'edit') { this.#goto('edit'); return undefined; }
@@ -865,8 +885,16 @@ class ConfigWizard extends EventEmitter {
       // durur ve logda görünür. Döngü duvar saatine bağlı olduğu için tur sınırı koymak
       // yayını durdurmak anlamına gelirdi — bilinçli olarak yapılmıyor.
       lines.push({ label: 'Rounds', value: `${p.rounds} (bilgi — yayın 7/24 akar)` });
-      lines.push({ label: 'Study Video', value: short(p.studyVideo) || '(albümün arkaplanı)' });
-      lines.push({ label: 'Break Video', value: short(p.breakVideo) || '(arkaplan değişmez)' });
+      lines.push({
+        label: 'Study Videos',
+        value: p.studyVideos.length ? `${p.studyVideos.length} klip (session başına rastgele)` : '(albümün arkaplanı)',
+        list: p.studyVideos.map((v) => short(v)),
+      });
+      lines.push({
+        label: 'Break Videos',
+        value: p.breakVideos.length ? `${p.breakVideos.length} klip (session başına rastgele)` : '(arkaplan değişmez)',
+        list: p.breakVideos.map((v) => short(v)),
+      });
       lines.push({ label: 'Transitions', value: 'geçiş öncesi 3 uyarı bipi (mevcut sistem)' });
     }
     return lines;
@@ -887,6 +915,8 @@ class ConfigWizard extends EventEmitter {
       );
     } else if (this.step === 'order') {
       base.push({ key: 'Shift+↑↓', label: 'taşı' }, { key: 'x', label: 'çıkar' }, { key: 'm', label: `sıra: ${this.draft.order}` }, { key: 'Enter', label: 'devam' });
+    } else if (this.step === 'studyVideo' || this.step === 'breakVideo') {
+      base.push({ key: 'Space', label: 'seç' }, { key: '/', label: 'ara' }, { key: 'Enter', label: 'devam' });
     } else {
       base.push({ key: 'Enter', label: 'seç' }, { key: '/', label: 'ara' });
     }
@@ -911,8 +941,16 @@ const STEP_META = {
   pomodoro: { title: 'ENABLE POMODORO?', kind: 'list', hint: 'kapalıysa normal yayın akışı sürer' },
   pomodoroType: { title: 'POMODORO MODE', kind: 'list', hint: 'çalışma/mola süresi' },
   pomodoroCustom: { title: 'CUSTOM POMODORO', kind: 'form', hint: 'dakika cinsinden' },
-  studyVideo: { title: 'STUDY VIDEO', kind: 'list', hint: 'çalışma fanında gösterilecek görüntü' },
-  breakVideo: { title: 'BREAK VIDEO', kind: 'list', hint: 'molada gösterilecek görüntü' },
+  studyVideo: {
+    title: 'STUDY VIDEOS',
+    kind: 'checklist',
+    hint: 'çoklu seçim — her çalışma session\'ı havuzdan rastgele bir klip kullanır, ardışık iki session aynı klibi tekrarlamaz',
+  },
+  breakVideo: {
+    title: 'BREAK VIDEOS',
+    kind: 'checklist',
+    hint: 'çoklu seçim — her mola session\'ı havuzdan rastgele bir klip kullanır, ardışık iki session aynı klibi tekrarlamaz',
+  },
   summary: { title: 'LIVE STREAM CONFIG', kind: 'summary', hint: 'son kontrol' },
   edit: { title: 'EDIT', kind: 'list', hint: 'hangi adıma dönülsün?' },
 };

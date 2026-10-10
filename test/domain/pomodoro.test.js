@@ -63,9 +63,9 @@ test('startedAt gelecekteyse (saat kayması) döngü başlamamış sayılır', (
 test('segmentsFor: faz başında başlayan çalıştırma', () => {
   const segments = cycle().segmentsFor({ nowMs: at(0), durationSeconds: 3700 });
   assert.deepEqual(segments, [
-    { phase: STUDY, start: 0, end: 3000 },
-    { phase: BREAK, start: 3000, end: 3600 },
-    { phase: STUDY, start: 3600, end: null },
+    { phase: STUDY, start: 0, end: 3000, phaseIndex: 0 },
+    { phase: BREAK, start: 3000, end: 3600, phaseIndex: 0 },
+    { phase: STUDY, start: 3600, end: null, phaseIndex: 1 },
   ]);
 });
 
@@ -73,22 +73,39 @@ test('segmentsFor: faz ORTASINDA başlayan çalıştırma — ilk segment 0\'a k
   // Çalışma fazının 20. dakikasında başla: 30 dk çalışma kalmış
   const segments = cycle().segmentsFor({ nowMs: at(20), durationSeconds: 2400 });
   assert.deepEqual(segments, [
-    { phase: STUDY, start: 0, end: 1800 },
-    { phase: BREAK, start: 1800, end: null },
+    { phase: STUDY, start: 0, end: 1800, phaseIndex: 0 },
+    { phase: BREAK, start: 1800, end: null, phaseIndex: 0 },
   ]);
 });
 
 test('segmentsFor: mola ortasında başlayan çalıştırma', () => {
   const segments = cycle().segmentsFor({ nowMs: at(55), durationSeconds: 600 });
   assert.deepEqual(segments, [
-    { phase: BREAK, start: 0, end: 300 },
-    { phase: STUDY, start: 300, end: null },
+    { phase: BREAK, start: 0, end: 300, phaseIndex: 0 },
+    { phase: STUDY, start: 300, end: null, phaseIndex: 1 },
   ]);
 });
 
 test('segmentsFor: tek faza sığan kısa çalıştırma', () => {
   const segments = cycle().segmentsFor({ nowMs: at(0), durationSeconds: 60 });
-  assert.deepEqual(segments, [{ phase: STUDY, start: 0, end: null }]);
+  assert.deepEqual(segments, [{ phase: STUDY, start: 0, end: null, phaseIndex: 0 }]);
+});
+
+test('segmentsFor: phaseIndex restart\'a dayanıklı — aynı anın segmenti, farklı durationSeconds\'ta aynı index', () => {
+  // 140. dakikada başlayan (2 tam tur + 20 dk) bir çalıştırma, ffmpeg'in bu session'ı
+  // farklı bir noktada (örn. restart sonrası) yeniden başlatmasını simüle eder: aynı
+  // nowMs'teki faz hep aynı phaseIndex'e düşmeli, durationSeconds'tan bağımsız.
+  const short = cycle().segmentsFor({ nowMs: at(140), durationSeconds: 60 });
+  const long = cycle().segmentsFor({ nowMs: at(140), durationSeconds: 2400 });
+  assert.equal(short[0].phaseIndex, long[0].phaseIndex);
+  assert.equal(short[0].phaseIndex, 2); // 2 tam tur tamamlanmış → üçüncü study (0-based: 2)
+});
+
+test('segmentsFor: phaseIndex ardışık fazlarda artıyor, study/break ayrı sayılıyor', () => {
+  const segments = cycle().segmentsFor({ nowMs: at(0), durationSeconds: 7300 });
+  assert.deepEqual(segments.map((s) => [s.phase, s.phaseIndex]), [
+    [STUDY, 0], [BREAK, 0], [STUDY, 1], [BREAK, 1], [STUDY, 2],
+  ]);
 });
 
 test('segmentsFor: geçersiz süre reddedilir', () => {
@@ -116,8 +133,8 @@ test('beepTimesFor: yarıda yakalanan faz için bip ÇALMAZ (geçiş geçmişte 
 test('30+10 türünde geçişler 30. ve 40. dakikada', () => {
   const segments = cycle('30+10').segmentsFor({ nowMs: at(0), durationSeconds: 2500 });
   assert.deepEqual(segments, [
-    { phase: STUDY, start: 0, end: 1800 },
-    { phase: BREAK, start: 1800, end: 2400 },
-    { phase: STUDY, start: 2400, end: null },
+    { phase: STUDY, start: 0, end: 1800, phaseIndex: 0 },
+    { phase: BREAK, start: 1800, end: 2400, phaseIndex: 0 },
+    { phase: STUDY, start: 2400, end: null, phaseIndex: 1 },
   ]);
 });

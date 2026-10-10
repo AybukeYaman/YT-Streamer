@@ -10,47 +10,46 @@
 // orchestrator.start()'a, o da list()'e gidiyor — yani süreci yeniden başlatmadan yeni
 // seçim devreye giriyor.
 //
-// Plan yoksa, müzik seçimi boşsa ve study klibi verilmemişse iç depo ne döndürüyorsa
-// O döner (referansı bile değişmez) — plansız kurulumda davranış birebir aynı.
+// Plan yoksa ya da müzik seçimi boşsa iç depo ne döndürüyorsa O döner (referansı bile
+// değişmez) — plansız kurulumda davranış birebir aynı.
 //
 // Hiçbir şey eşleşmezse (albüm silinmiş, parçalar yeniden adlandırılmış) plana rağmen
 // TÜM kütüphaneye düşülür ve uyarı loglanır: yayın 7/24 akmak zorunda, eski bir seçim
 // yüzünden susmaktan iyidir (aynı ilke: StreamOrchestrator'da kayıtlı durumun kurtarılması).
-const { Album } = require('../domain/album');
+//
+// N3 NOTU: study klibi eskiden burada albümün arkaplanının YERİNE geçiyordu
+// (#withStudyClip). Çoklu klip havuzunda bu çalışmaz — klip artık faza göre değişiyor,
+// taban arkaplan sabit kalmalı. Study/break klipleri şimdi birer OVERLAY: taban katman
+// hep albümün kendi arkaplanı, study/break pencerelerinde üstüne biniyor (bkz.
+// pomodoro-planner.js phaseBackgrounds, ffmpeg-encoder.js). Bu depo artık yalnızca MÜZİK
+// seçimini süzüyor.
 const { pathIndex } = require('../domain/stream-plan');
+const { Album } = require('../domain/album');
 
 class PlanAlbumRepository {
   // inner: { list(): Promise<Album[]> } — AlbumRepository ya da SingleAlbumRepository
   // planProvider: () => StreamPlan|null — aktif plan (her çağrıda okunur)
-  // studyClipProvider: () => string|null — hazırlanmış study klibinin yolu (yayın
-  //   formatına çevrilmiş; dönüşüm StreamConfigService'te, burada I/O yok)
   // log: { info, warn }
-  constructor({ inner, planProvider, studyClipProvider = () => null, log }) {
+  constructor({ inner, planProvider, log }) {
     if (!inner) throw new Error('PlanAlbumRepository: inner depo gerekli');
     this.inner = inner;
     this.planProvider = typeof planProvider === 'function' ? planProvider : () => null;
-    this.studyClipProvider = typeof studyClipProvider === 'function' ? studyClipProvider : () => null;
     this.log = log;
   }
 
   async list() {
     const albums = await this.inner.list();
     const plan = this.planProvider();
-    const studyClip = this.studyClipProvider();
-    if (!plan || (plan.usesWholeLibrary && !studyClip)) return albums;
+    if (!plan || plan.usesWholeLibrary) return albums;
 
-    const selected = plan.usesWholeLibrary ? albums : this.#select(albums, plan);
+    const selected = this.#select(albums, plan);
     if (!selected.length) {
       this.log.warn('plandaki müzik seçimi diskte bulunamadı — tüm kütüphaneye düşülüyor');
-      return studyClip ? albums.map((a) => this.#withStudyClip(a, studyClip)) : albums;
+      return albums;
     }
-    const withBackground = studyClip ? selected.map((a) => this.#withStudyClip(a, studyClip)) : selected;
-    const trackCount = withBackground.reduce((n, a) => n + a.tracks.length, 0);
-    this.log.info(
-      `plan "${plan.name}": ${withBackground.length} albüm, ${trackCount} parça`
-      + (studyClip ? ' (study arkaplanı plandan)' : ''),
-    );
-    return withBackground;
+    const trackCount = selected.reduce((n, a) => n + a.tracks.length, 0);
+    this.log.info(`plan "${plan.name}": ${selected.length} albüm, ${trackCount} parça`);
+    return selected;
   }
 
   // Plandaki sıraya göre albümleri ve içlerindeki parçaları seçer.
@@ -78,13 +77,6 @@ class PlanAlbumRepository {
       out.push(new Album({ name: album.name, backgrounds: album.backgrounds.map((b) => ({ ...b })), tracks }));
     }
     return out;
-  }
-
-  // Study klibi: albümün arkaplan(lar)ının yerine TEK klip. Rotasyon da kendiliğinden
-  // devre dışı kalır (Album.rotates tek klipte false) — "çalışma fanında şu video olsun"
-  // demek, arkaplanın değişmemesi demek.
-  #withStudyClip(album, clipPath) {
-    return new Album({ name: album.name, backgroundPath: clipPath, tracks: [...album.tracks] });
   }
 }
 

@@ -27,9 +27,14 @@ function withStore(fn) {
   };
 }
 
-test('yazılan başlangıç aynı tür için geri okunur', withStore(({ store }) => {
-  store.save({ type: '50+10', startedAt: 1234 });
-  assert.equal(store.load('50+10'), 1234);
+test('yazılan başlangıç ve seed aynı tür için geri okunur', withStore(({ store }) => {
+  store.save({ type: '50+10', startedAt: 1234, seed: 42 });
+  assert.deepEqual(store.load('50+10'), { startedAt: 1234, seed: 42 });
+}));
+
+test('seed olmayan eski kayıt (N3 öncesi) seed:0 ile okunur, yoksayılmaz', withStore(({ store, file }) => {
+  fs.writeFileSync(file, JSON.stringify({ type: '50+10', startedAt: 1234 }));
+  assert.deepEqual(store.load('50+10'), { startedAt: 1234, seed: 0 });
 }));
 
 test('dosya yoksa null, uyarı da yok (ilk çalıştırma normal)', withStore(({ store, lines }) => {

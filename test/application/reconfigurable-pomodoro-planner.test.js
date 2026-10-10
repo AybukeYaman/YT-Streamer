@@ -8,24 +8,24 @@ const silentLog = { info() {}, warn() {} };
 
 // Gerçek PomodoroPlanner yerine sayaç: sarmalayıcının İŞİ "hangi planlayıcı geçerli",
 // pomodoro mantığı değil (o pomodoro-planner.test.js'te).
-function make({ plan = null, breakClip = null } = {}) {
+function make({ plan = null, breakClips = [] } = {}) {
   const built = [];
   let current = plan;
-  let clip = breakClip;
+  let clips = breakClips;
   const planner = new ReconfigurablePomodoroPlanner({
     planProvider: () => current,
-    breakClipProvider: () => clip,
+    breakClipsProvider: () => clips,
     log: silentLog,
     createPlanner: (opts) => {
       built.push(opts);
-      return { plan: ({ durationSeconds }) => ({ type: opts.type, durationSeconds, breakClipPath: opts.breakClipPath }) };
+      return { plan: ({ durationSeconds }) => ({ type: opts.type, durationSeconds, breakClips: opts.breakClips }) };
     },
   });
   return {
     planner,
     built,
     setPlan: (p) => { current = p; },
-    setClip: (c) => { clip = c; },
+    setClips: (c) => { clips = c; },
   };
 }
 
@@ -68,12 +68,12 @@ test('tür değişince planlayıcı yeniden kurulur', () => {
   assert.deepEqual(built.map((b) => b.type), ['50+10', '45+15']);
 });
 
-test('yalnızca mola klibi değişse de yeniden kurulur', () => {
-  const { planner, built, setClip } = make({ plan: enabled(), breakClip: null });
+test('yalnızca mola klip havuzu değişse de yeniden kurulur', () => {
+  const { planner, built, setClips } = make({ plan: enabled(), breakClips: [] });
   planner.plan({ durationSeconds: 600 });
-  setClip('X:/runtime/break.mp4');
+  setClips(['X:/runtime/break.mp4']);
   const result = planner.plan({ durationSeconds: 600 });
-  assert.equal(result.breakClipPath, 'X:/runtime/break.mp4');
+  assert.deepEqual(result.breakClips, ['X:/runtime/break.mp4']);
   assert.equal(built.length, 2);
 });
 

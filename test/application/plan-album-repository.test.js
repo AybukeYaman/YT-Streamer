@@ -24,15 +24,10 @@ function fakeLog() {
   return { log: { info() {}, warn: (m) => warnings.push(m) }, warnings };
 }
 
-function make({ plan = null, studyClip = null, inner = { list: async () => albums() } } = {}) {
+function make({ plan = null, inner = { list: async () => albums() } } = {}) {
   const { log, warnings } = fakeLog();
   return {
-    repo: new PlanAlbumRepository({
-      inner,
-      planProvider: () => plan,
-      studyClipProvider: () => studyClip,
-      log,
-    }),
+    repo: new PlanAlbumRepository({ inner, planProvider: () => plan, log }),
     warnings,
   };
 }
@@ -43,7 +38,7 @@ test('plan yoksa iç deponun listesi AYNEN döner (referans bile değişmez)', a
   assert.equal(await repo.list(), list);
 });
 
-test('seçim yoksa ve study klibi verilmemişse liste değişmez', async () => {
+test('seçim yoksa liste değişmez', async () => {
   const list = albums();
   const { repo } = make({ plan: new StreamPlan({}), inner: { list: async () => list } });
   assert.equal(await repo.list(), list);
@@ -97,25 +92,6 @@ test('planda olmayan albüm atlanır ve uyarılır', async () => {
   assert.deepEqual((await repo.list()).map((a) => a.name), ['mimi', 'gece']);
   assert.ok(warnings.some((w) => /artık yok/.test(w)));
   assert.ok(warnings.some((w) => /tüm kütüphaneye düşülüyor/.test(w)));
-});
-
-test('study klibi albümün arkaplanının yerine geçer ve rotasyonu kapatır', async () => {
-  const { repo } = make({ plan: new StreamPlan({}), studyClip: 'X:/runtime/study.mp4' });
-  const out = await repo.list();
-  for (const album of out) {
-    assert.deepEqual(album.backgrounds.map((b) => b.path), ['X:/runtime/study.mp4']);
-    assert.equal(album.rotates, false);
-  }
-  // Parçalara dokunulmaz.
-  assert.deepEqual(out[0].tracks.map((t) => t.path), ['X:/mimi/1.m4a', 'X:/mimi/2.m4a', 'X:/mimi/3.m4a']);
-});
-
-test('study klibi seçimle birlikte de uygulanır', async () => {
-  const plan = new StreamPlan({ music: { albums: [{ name: 'gece', trackPaths: ['X:/gece/1.m4a'] }] } });
-  const { repo } = make({ plan, studyClip: 'X:/runtime/study.mp4' });
-  const out = await repo.list();
-  assert.equal(out.length, 1);
-  assert.equal(out[0].backgroundPath, 'X:/runtime/study.mp4');
 });
 
 test('iç depo gerekli', () => {

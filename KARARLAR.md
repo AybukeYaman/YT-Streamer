@@ -1879,3 +1879,72 @@ kurulum yolu, `main()`'den `args.planOnly` ile dallanıyor — mevcut yol hiç d
 - 780 test (yeni: 7 `PlanOnlyControlService`, 3 parse-args bayrak/hata).
 - `npm test` yeşil; mevcut 770 test davranış değişmeden geçiyor (DEFAULTS'a yeni alan
   eklenmesi dışında `parseArgs` çıktısı eski çağrılarda aynı).
+
+---
+
+## [Faz N3] Çoklu study/break klibi, session başına deterministik rastgele seçim — 11 Ekim 2026
+
+**Soru:** Kullanıcı çalışma/mola fazı için birden çok görsel seçebilsin, her session
+(her çalışma/mola fazı) havuzdan rastgele bir klip kullansın, ardışık iki session aynı
+klibi tekrarlamasın. Zorluk: ffmpeg playlist bitişinde (~2 saatte bir) yeniden başlıyor
+ve bu bir session'ın TAM ORTASINA denk gelebilir — "rastgele" her restart'ta yeniden
+seçilirse kullanıcı çalışmanın ortasında arka planın değiştiğini görür.
+
+**Karar:** Seçim RASTGELE değil DETERMİNİSTİK: `src/domain/seeded-shuffle.js` (yeni,
+mulberry32 PRNG + `shuffledAt(pool, seed, index)`, queue.js'teki "tur sınırında tekrar
+yok" kuralının saf/konumsal hali). `seed`, `pomodoro.json`'a `startedAt` ile BİRLİKTE
+yazılır (tek kayıt — ikisi ayrı dosyada olsa biri yazılıp diğeri yazılamadığında tutarsız
+çift oluşurdu) ve döngü boyunca SABİT kalır. Her segmentin klibi kendi `phaseIndex`'inden
+(`domain/pomodoro.js#segmentsFor`'a eklendi: "döngü başlangıcından bu yana kaçıncı
+study/break fazı, ikisi AYRI sayılır") hesaplanır — aynı faz numarası + aynı seed = aynı
+klip, restart/çökme/deploy seçimi KAYDIRMAZ.
+
+**Plan şeması:** `pomodoro.studyVideo`/`breakVideo` (tekil) yerine `studyVideos`/
+`breakVideos` (dizi). Geriye uyumluluk ŞART (VPS'te şu an çalışan plan tekil yazıyor):
+`normalizeVideoList` tekil alanı tek elemanlı listeye çevirir, `toJSON()` HER ZAMAN liste
+biçimini yazar.
+
+**Study klibinin yeri değişti:** Eskiden `PlanAlbumRepository#withStudyClip` study
+klibini albümün arkaplanının YERİNE koyuyordu (tüm çalıştırma boyunca taban video oydu).
+Çoklu klipte bu çalışmaz — klip artık FAZA göre değişiyor. Yeni model: taban katman hep
+albümün kendi arkaplanı, study/break pencereleri bunun ÜSTÜNE overlay olarak biniyor
+(ffmpeg-encoder.js'teki eski "mola arkaplanı" overlay mekanizması genelleştirildi).
+`PlanAlbumRepository` artık yalnızca MÜZİK seçimini süzüyor, klip bilmiyor.
+
+**ffmpeg filtre grafiği:** `buildFfmpegArgs`'a `breakBackground` (tek klip+pencere
+listesi) yerine `phaseBackgrounds` (pencere listesi, her biri kendi `path`'i ile) verildi.
+Aynı klip birden çok pencerede kullanılıyorsa (`MAX_CLIPS_PER_RUN` sınırı altında kalan
+havuzlarda sık rastlanır) TEK girişten `split` ile çoğaltılır — bir giriş akışı filtre
+grafiğinde yalnızca BİR KEZ tüketilebilir. `MAX_CLIPS_PER_RUN = 4`
+(`pomodoro-planner.js`): her ek giriş `-stream_loop` ile sürekli decode edilir, VPS 2
+vCPU'da encode zaten ~1.000x sınırına yakın; sınırı aşan fazlar zaten kullanılan
+kliplerden birine deterministik düşürülür (`phaseIndex % kullanılanlar.length`).
+
+**TUI:** Study/break adımları tek seçimden (list) ÇOKLU seçime (checklist) geçti — music
+adımındaki Space-seç/Enter-devam deseniyle aynı. "(albümün kendi arkaplanı)" /
+"(molada arkaplan değişmesin)" seçeneği kaldırıldı: boş havuzun kendisi artık o anlama
+geliyor.
+
+**Etki:** `src/domain/seeded-shuffle.js` (yeni), `src/domain/pomodoro.js`
+(`segmentsFor` → `phaseIndex`), `src/domain/stream-plan.js` (`studyVideos`/
+`breakVideos`), `src/infrastructure/pomodoro-store.js` (seed de saklanır),
+`src/application/pomodoro-planner.js` (çoklu klip ataması + `MAX_CLIPS_PER_RUN`),
+`src/application/reconfigurable-pomodoro-planner.js` (`studyClipsProvider`/
+`breakClipsProvider`), `src/application/stream-config-service.js` (liste hazırlama,
+`study-1`/`study-2`/… adlandırma), `src/application/plan-album-repository.js` (study
+klip override kaldırıldı), `src/infrastructure/ffmpeg-encoder.js`
+(`phaseBackgrounds` + split tabanlı overlay zinciri), `src/ui/config-wizard.js`
+(checklist adımları), `index.js` (sağlayıcı adları güncellendi).
+
+### Doğrulama
+
+- 797 test (yeni: 7 seeded-shuffle, 6 pomodoro phaseIndex, 2 pomodoro-store seed,
+  6 pomodoro-planner çoklu klip/MAX_CLIPS_PER_RUN, 6 ffmpeg-encoder phaseBackgrounds,
+  6 stream-plan studyVideos/breakVideos, config-wizard checklist testleri).
+- Regresyon kalkanları: "klip yokken komut bugünküyle birebir aynı" hem
+  `ffmpeg-encoder.test.js` hem `pomodoro-planner.test.js`'te korundu; "eski tekil
+  studyVideo/breakVideo tek elemanlı listeye çevrilir" VPS'teki mevcut planın
+  bozulmayacağını doğruluyor.
+- Gerçek ffmpeg ile uçtan uca doğrulama (farklı fazlara denk gelen kareler) BU OTURUMDA
+  YAPILMADI — VPS'e deploy edilmeden önce plan dosyasındaki "Doğrulama yöntemi"
+  bölümündeki adımlarla elle doğrulanmalı.

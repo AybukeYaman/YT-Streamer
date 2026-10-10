@@ -479,52 +479,69 @@ test('bip yokken pomodoro yazıları yine de görünür (-vf yolu korunur)', () 
   assert.ok(args[args.indexOf('-vf') + 1].includes('pomodoro-001.txt'));
 });
 
-test('mola arkaplanı: ikinci video girişi overlay ile bindirilir, yazılar üstte kalır', () => {
+test('tek faz klibi: ikinci video girişi overlay ile bindirilir, yazılar üstte kalır', () => {
   const args = buildFfmpegArgs({
     profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL,
     overlay: OVERLAY, overlayTexts: [], pomodoro: POMO,
-    breakBackground: { path: '/runtime/break.mp4', windows: [{ start: 600, end: null }] },
+    phaseBackgrounds: [{ path: '/runtime/break.mp4', start: 600, end: null }],
   });
-  // Giriş sırası: 0 arkaplan, 1 müzik, 2 mola klibi (sonsuz döngüde)
+  // Giriş sırası: 0 arkaplan, 1 müzik, 2 faz klibi (sonsuz döngüde)
   assert.deepEqual(args.slice(args.lastIndexOf('-stream_loop'), args.lastIndexOf('-stream_loop') + 4),
     ['-stream_loop', '-1', '-i', '/runtime/break.mp4']);
   const fc = args[args.indexOf('-filter_complex') + 1];
-  assert.ok(fc.startsWith('[2:v]scale=1280:720,setsar=1[brk];'), 'mola klibi ölçeklenip SAR sabitlenmeli');
-  assert.ok(fc.includes("[bg][brk]overlay=enable='gte(t\\,600.000)'[comp]"));
-  // Yazılar overlay'den SONRA: mola görselinin üstünde görünsünler
-  assert.ok(fc.indexOf('[comp]drawtext') > fc.indexOf('overlay='));
+  assert.ok(fc.includes('[2:v]scale=1280:720,setsar=1[ph0_0]'), 'klip ölçeklenip SAR sabitlenmeli');
+  assert.ok(fc.includes("[phbase][ph0_0]overlay=enable='gte(t\\,600.000)'[phcomp]"));
+  // Yazılar overlay'den SONRA: klibin üstünde görünsünler
+  assert.ok(fc.indexOf('[phcomp]drawtext') > fc.indexOf('overlay='));
   // Bip yoksa ses doğrudan müzikten map'lenir
   assert.deepEqual(args.slice(args.indexOf('-map'), args.indexOf('-map') + 4), ['-map', '[v]', '-map', '1:a']);
 });
 
-test('mola arkaplanı + bip birlikte: giriş indeksleri kaymaz', () => {
+test('faz klibi + bip birlikte: giriş indeksleri kaymaz', () => {
   const args = buildFfmpegArgs({
     profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL,
     overlay: OVERLAY, overlayTexts: [], pomodoro: POMO, beepTimes: [12.5],
-    breakBackground: { path: '/runtime/break.mp4', windows: [{ start: 600, end: null }] },
+    phaseBackgrounds: [{ path: '/runtime/break.mp4', start: 600, end: null }],
   });
   const fc = args[args.indexOf('-filter_complex') + 1];
-  assert.ok(fc.includes('[2:v]scale'), 'mola klibi 2. giriş');
+  assert.ok(fc.includes('[2:v]scale'), 'faz klibi 2. giriş');
   assert.ok(fc.includes('[3:a]volume='), 'bip 3. giriş');
   assert.deepEqual(args.slice(args.indexOf('-map'), args.indexOf('-map') + 4), ['-map', '[v]', '-map', '[a]']);
 });
 
-test('mola penceresi yoksa mola girişi hiç eklenmez', () => {
+test('faz penceresi yoksa faz girişi hiç eklenmez (regresyon: eski komutla birebir)', () => {
   const args = buildFfmpegArgs({
     profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL,
     overlay: OVERLAY, overlayTexts: [], pomodoro: POMO,
-    breakBackground: { path: '/runtime/break.mp4', windows: [] },
+    phaseBackgrounds: [],
   });
   assert.ok(!args.includes('/runtime/break.mp4'));
   assert.ok(args.includes('-vf'), 'ek giriş yoksa eski -vf yolu korunur');
 });
 
-test('iki mola penceresi tek enable ifadesinde toplanır', () => {
+test('aynı klip birden çok pencerede: split ile çoğaltılır, her pencere kendi overlay adımını alır', () => {
   const args = buildFfmpegArgs({
     profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL,
     overlay: OVERLAY, overlayTexts: [], pomodoro: POMO,
-    breakBackground: { path: '/b.mp4', windows: [{ start: 600, end: 1200 }, { start: 4200, end: null }] },
+    phaseBackgrounds: [{ path: '/b.mp4', start: 600, end: 1200 }, { path: '/b.mp4', start: 4200, end: null }],
   });
   const fc = args[args.indexOf('-filter_complex') + 1];
-  assert.ok(fc.includes("overlay=enable='gte(t\\,600.000)*lt(t\\,1200.000)+gte(t\\,4200.000)'"));
+  assert.ok(fc.includes('[2:v]scale=1280:720,setsar=1,split=2[ph0_0][ph0_1]'), 'aynı klip tek girişten split ile çoğalmalı');
+  assert.ok(fc.includes("[phbase][ph0_0]overlay=enable='gte(t\\,600.000)*lt(t\\,1200.000)'[pho0]"));
+  assert.ok(fc.includes("[pho0][ph0_1]overlay=enable='gte(t\\,4200.000)'[phcomp]"));
+  // Tek giriş açılmalı (split sayesinde) — iki ayrı -stream_loop YOK.
+  assert.equal(args.filter((a) => a === '/b.mp4').length, 1);
+});
+
+test('farklı iki klip: iki ayrı giriş, ikisi de ayrı overlay adımı alır', () => {
+  const args = buildFfmpegArgs({
+    profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL,
+    overlay: OVERLAY, overlayTexts: [], pomodoro: POMO,
+    phaseBackgrounds: [{ path: '/study.mp4', start: 0, end: 3000 }, { path: '/break.mp4', start: 3000, end: null }],
+  });
+  assert.ok(args.includes('/study.mp4'));
+  assert.ok(args.includes('/break.mp4'));
+  const fc = args[args.indexOf('-filter_complex') + 1];
+  assert.ok(fc.includes('[2:v]scale=1280:720,setsar=1[ph0_0]'));
+  assert.ok(fc.includes('[3:v]scale=1280:720,setsar=1[ph1_0]'));
 });

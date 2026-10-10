@@ -128,16 +128,18 @@ async function main() {
   // kapaklardan bakar. Erken okuma null döner ve plansız davranış geçerli olur.
   let configService = null;
   const planProvider = () => (configService ? configService.planProvider() : null);
-  const studyClipProvider = () => (configService ? configService.studyClipProvider() : null);
-  const breakClipProvider = () => (configService ? configService.breakClipProvider() : null);
+  const studyClipsProvider = () => (configService ? configService.studyClipsProvider() : []);
+  const breakClipsProvider = () => (configService ? configService.breakClipsProvider() : []);
 
   const orchestrator = new StreamOrchestrator({
     encoder,
     log: logger.child('orchestrator'),
-    // Depo plan süzgecinden geçer: seçili parçalar, plandaki sıra ve (varsa) study klibi.
+    // Depo plan süzgecinden geçer: seçili parçalar ve plandaki sıra. Study/break klipleri
+    // artık (N3) arkaplanın YERİNE geçmiyor, overlay olarak ReconfigurablePomodoroPlanner
+    // üzerinden encoder'a gidiyor — bu depo yalnızca MÜZİK seçimini süzer.
     // Plan boşsa iç deponun döndürdüğü liste aynen geçer.
     albumRepository: new PlanAlbumRepository({
-      inner: baseAlbumRepository, planProvider, studyClipProvider, log: logger.child('plan'),
+      inner: baseAlbumRepository, planProvider, log: logger.child('plan'),
     }),
     // mode planın alanı (TUI'da seçilen sıralama); batchSize makine ayarı olarak kalır.
     // Getter: her start() güncel değeri okur, yeniden başlatmada eski mod'a saplanmaz.
@@ -154,7 +156,8 @@ async function main() {
     pomodoroPlanner: overlayEnabled
       ? new ReconfigurablePomodoroPlanner({
         planProvider,
-        breakClipProvider,
+        studyClipsProvider,
+        breakClipsProvider,
         log: logger.child('pomodoro'),
         createPlanner: plannerFactory({
           overlayWriter: new PomodoroOverlayWriter({

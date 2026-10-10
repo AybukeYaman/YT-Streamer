@@ -4,13 +4,18 @@
 // yeniden yazılıyor. Pomodoro başlangıcı ise döngü boyunca DEĞİŞMEYEN tek bir sayı;
 // aynı dosyaya koymak onu her yazımda gereksiz riske atardı.
 //
-// Kaydedilen tek şey startedAt (epoch ms) ve hangi tür için başlatıldığı. Faz (STUDY mi
-// BREAK mi) ve kalan süre KAYDEDİLMEZ — ikisi de startedAt + duvar saatinden yeniden
-// hesaplanıyor. Türetilebilen durumu saklamak, yeniden başlatmada iki kaynağın
-// çelişmesi demek olurdu.
+// Kaydedilen: startedAt (epoch ms), hangi tür için başlatıldığı ve seed (N3: study/break
+// klip havuzundan hangi klibin seçileceğini belirleyen deterministik PRNG tohumu, bkz.
+// src/domain/seeded-shuffle.js). Faz (STUDY mi BREAK mi) ve kalan süre KAYDEDİLMEZ —
+// ikisi de startedAt + duvar saatinden yeniden hesaplanıyor. Türetilebilen durumu
+// saklamak, yeniden başlatmada iki kaynağın çelişmesi demek olurdu.
 //
-// Tür değişirse (config'de 50+10 → 30+10) kayıt geçersiz sayılır ve döngü yeniden başlar:
-// yarım kalmış bir 50 dakikanın 30 dakikalık düzende karşılığı yok.
+// seed de startedAt ile AYNI kayıtta tutulur (ikinci bir dosya yok): klip seçimi de
+// döngü gibi restart'a dayanıklı olmalı — ikisi ayrı dosyalarda olsa biri yazılıp diğeri
+// yazılamadığında (disk hatası) tutarsız bir çift ortaya çıkabilirdi.
+//
+// Tür değişirse (config'de 50+10 → 30+10) kayıt geçersiz sayılır ve döngü (ve seed)
+// yeniden başlar: yarım kalmış bir 50 dakikanın 30 dakikalık düzende karşılığı yok.
 const fs = require('fs');
 
 class PomodoroStore {
@@ -21,16 +26,19 @@ class PomodoroStore {
     this.log = log;
   }
 
-  save({ type, startedAt }) {
+  save({ type, startedAt, seed }) {
     try {
-      this.writeFile(this.file, JSON.stringify({ type, startedAt }));
+      this.writeFile(this.file, JSON.stringify({ type, startedAt, seed }));
     } catch (err) {
       // Yazılamazsa yayın sürmeli: yalnızca restart sonrası döngü başa döner.
       this.log.warn(`pomodoro durumu yazılamadı: ${err.message}`);
     }
   }
 
-  // Verilen tür için geçerli bir kayıt varsa startedAt, yoksa null.
+  // Verilen tür için geçerli bir kayıt varsa { startedAt, seed }, yoksa null.
+  // seed eski kayıtlarda (N3 öncesi) yoktu — yoksa 0 döner (deterministik, geçerli bir
+  // seed): klip havuzu o sırada henüz yoktu, yani ilk kez kullanıldığında herhangi bir
+  // seed değeri kabul edilir.
   load(type) {
     let text;
     try {
@@ -54,7 +62,7 @@ class PomodoroStore {
       this.log.info(`pomodoro türü değişmiş (${state.type} → ${type}) — döngü yeniden başlıyor`);
       return null;
     }
-    return state.startedAt;
+    return { startedAt: state.startedAt, seed: Number.isFinite(state.seed) ? state.seed : 0 };
   }
 }
 
