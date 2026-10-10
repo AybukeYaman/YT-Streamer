@@ -755,3 +755,40 @@ test('getStatus: stopRequested varken state stopped (restarting değil)', () => 
   });
   assert.equal(svc.getStatus().state, 'stopped');
 });
+
+// ─── restart: start düşerse yayın ölü kalmamalı ──────────────────────────
+// Gerçek Supervisor ile (sahte değil): sözleşmenin uçtan uca tuttuğunu sınar.
+// 10 Ekim 2026'dan önce stop başarılı + start başarısız = KALICI durmuş yayın.
+test('restart(): start düşse bile komut hata atmaz ve yeniden deneme kurulur', async () => {
+  const { Supervisor } = require('../../src/application/supervisor');
+  const { EventEmitter: EE } = require('node:events');
+
+  const timers = [];
+  const orchestrator = Object.assign(new EE(), {
+    running: false,
+    getPlaybackState() { return Object.freeze({ running: this.running, stopping: false, stopRequested: false, runNumber: 1, currentTracks: null, currentAlbum: null, playStartedAt: null }); },
+    async start() { throw new Error('albüm listesi okunamadı'); },
+    async resume() { throw new Error('albüm listesi okunamadı'); },
+    async stop() { this.running = false; },
+  });
+  const lines = [];
+  const rec = (level) => (m) => lines.push({ level, m });
+  const supervisor = new Supervisor({
+    orchestrator,
+    log: { info: rec('info'), warn: rec('warn'), error: rec('error') },
+    now: () => 0,
+    setTimer: (fn, ms) => { const h = { fn, ms }; timers.push(h); return h; },
+    clearTimer: (h) => { const i = timers.indexOf(h); if (i >= 0) timers.splice(i, 1); },
+  });
+  const service = new StreamControlService({
+    orchestrator, supervisor, encoder: new FakeEncoder(),
+    log: { info() {}, warn() {}, error() {} },
+  });
+
+  await service.restart(); // fırlatmamalı
+
+  assert.equal(timers.length, 1, 'geri çekilmeli yeniden deneme kurulmuş olmalı');
+  assert.equal(timers[0].ms, 3000);
+  assert.equal(service.getStatus().state, 'restarting', 'panel "stopped" değil "restarting" göstermeli');
+  assert.ok(lines.some((l) => l.level === 'error' && /başlatılamadı: albüm listesi okunamadı/.test(l.m)));
+});

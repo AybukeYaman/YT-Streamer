@@ -1689,3 +1689,75 @@ için `\` ile kaçışlanır ve tamamı tek tırnak içine alınır — ffmpeg d
 - Uçtan uca gerçek ffmpeg: çalışmanın bitimine 20 sn kala başlayan bir çalıştırmada
   10. sn karesi `00:10 / STUDY`, 25. sn karesi `09:55 / BREAK` — geçişte sayaç yeni faza
   sarıyor, yazı ile sayaç aynı anda dönüyor (ikisi de tek `nowMs`'ten).
+
+---
+
+## [Faz L] Dayanıklılık: başlatma hataları, go-live kilidi, stale izi — 10 Ekim 2026
+
+Üç ayrı hata; ortak yanları, hepsinin SESSİZ olması: log dışında hiçbir yerde
+görünmüyorlar ve ikisi doğrudan "yayın 7/24 akar" sözünü deliyordu.
+
+### 1. Başlatma düşerse yayın kalıcı olarak duruyordu
+
+**Soru:** `orchestrator.start()` hata verirse (albüm listesi okunamadı, kütüphane boş
+geldi, playlist yazılamadı) ne olmalı?
+
+**Karar:** Supervisor bunu ÇÖKME sayar: hata çağırana iletilmez, aynı geri çekilmeli
+yeniden deneme yolundan geçer (3 → 6 → 12 → 24 → 48 → 60 sn, vazgeçme yok).
+
+**Gerekçe:** Supervisor yalnızca ÇALIŞAN bir yayının 'exit' olayını dinliyordu; "hiç
+başlayamamış" hal kapsam dışıydı ve o halde yeniden deneyen kimse yoktu:
+- `index.js` → süreç 1 ile düşüyordu, tek kurtarıcı systemd'nin `Restart=always`'i.
+  systemd'siz çalıştırmada (yerel, `--tui`) yayın hiç dönmüyordu.
+- TUI `[S]`/`[R]` → hata LOG paneline yazılıp bırakılıyordu: panel "stopped", yayın ölü.
+- Sihirbazdaki START STREAM (`restart` = stop + start) → stop başarılı, start başarısız;
+  plan kaydedilmiş, yayın KALICI olarak durmuş. Encoder kalp atışı bunu ~2 dk sonra
+  yakalıyor ama düzeltmesi elle `systemctl restart`.
+
+**Tek istisna "zaten çalışıyor":** programlama hatası, geçici arıza değil — yeniden
+denemek aynı hatayı tekrarlar, o yüzden atılır.
+
+**Etki:** `supervisor.js` (start + `#onFailedLaunch`), `stream-control-service.js` ve
+`index.js` yalnızca yorum/sözleşme güncellemesi. Panel bu durumda "stopped" değil
+"restarting" gösterir (pendingRestart zaten vardı).
+
+### 2. go-live tek-uçuş kilidi ön kontrolü kapsamıyordu
+
+**Soru:** Kilit ne zaman alınmalı?
+
+**Karar:** İlk `await`'ten ÖNCE, senkron olarak.
+
+**Gerekçe:** Kilit `#precheck` BİTTİKTEN sonra alınıyordu. Ön kontrol 2-3 API çağrısı
+yapıyor (token + getBroadcast + getStreamStatus), yani yüzlerce ms'lik bir pencere
+kalıyordu: iOS'ta çift dokunma ya da Shortcuts'ın kendi yeniden denemesi o pencereye
+düşerse İKİ istek de ön kontrolü geçiyor, ikisi de insert ediyordu — kanalda iki
+broadcast ve boşa kota. Kilidin var oluş sebebi tam olarak buydu ("iOS'ta çift dokunma
+iki broadcast yaratmasın") ve tutmuyordu.
+
+**Nasıl:** `inFlight`'a işin promise'i değil, KENDİ kontrolümüzdeki bir promise konuyor
+(`#acquireLock`/`#releaseLock`). Böylece kilit senkron alınabiliyor ve iş ister senkron
+bitsin (already-live) ister arka planda sürsün (accepted) aynı şekilde bırakılıyor.
+Bırakma yalnızca KENDİ kaydını temizliyor (StreamOrchestrator#trackStart ile aynı desen).
+
+### 3. stale izi hiç silinmiyordu
+
+**Soru:** `health: 'stale'` izi ingest toparlanınca ne olacak?
+
+**Karar:** Kayıttan silinir (`#clearStaleMark`), hem ön kontroldeki toparlanmada hem de
+grace penceresinde toparlanan "zaten canlı" halinde.
+
+**Gerekçe:** İz yalnızca YAZILIYORDU. Toparlanma halinde "önceki stale izi geçersiz"
+loglanıyor ama `broadcast.json`'da `health` + `unhealthySince` sonsuza kadar kalıyordu:
+`/status` (telefonun ucuz, API'siz yolu) sağlıklı yayını "stale" gösteriyor ve her
+go-live tetiği boşuna bir fazladan `getStreamStatus` çağrısı yapıyordu. Kayıt ancak bir
+sonraki TAM go-live akışında temizleniyordu.
+
+**ATMAZ:** İz silinemezse yalnızca yanlış bir gösterge kalır — `#saveState`'in tersine
+burada idempotans riski yok, go-live'ı bir gösterge yüzünden durdurmak yanlış olurdu.
+
+### Doğrulama
+
+- 758 test (yeni: 6 başlatma-hatası testi, 3 kilit testi, 3 stale izi testi).
+- Yeni testlerin HEPSİ eski kodda düşüyor, yenisinde geçiyor (düzeltmeler tek tek geri
+  alınıp sınandı) — yani testler gerçekten bu hataları yakalıyor, davranışı tarif
+  etmekle kalmıyor.

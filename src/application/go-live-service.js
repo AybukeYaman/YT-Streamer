@@ -174,17 +174,34 @@ class GoLiveService {
   // kısa süre 'inactive' görünür (bu yüzden staleGraceMs var). Kesin olanlar:
   //   1. encoder kalp atışı durmuş → ffmpeg basmıyor, ingest beklemek boşuna
   //   2. kayıtta zaten health:'stale' + ingest hâlâ ölü → grace bir önceki turda harcandı
+  //
+  // KİLİT ÖN KONTROLÜ DE KAPSAR (10 Ekim 2026): eskiden kilit, #precheck BİTTİKTEN sonra
+  // alınıyordu. Ön kontrol 2-3 API çağrısı yapıyor (token + getBroadcast + getStreamStatus),
+  // yani yüzlerce ms süren bir pencere kalıyordu: iOS'ta çift dokunma ya da Shortcuts'ın
+  // kendi yeniden denemesi o pencereye düşerse İKİ istek de ön kontrolü geçiyor, ikisi de
+  // insert ediyordu — kanalda iki broadcast ve boşa kota. Tam olarak engellenmek istenen
+  // senaryo buydu. Kilit artık ilk await'ten ÖNCE, senkron olarak alınıyor.
   async requestGoLive() {
     if (this.inFlight) {
       throw new GoLiveError('go-live şu an sürüyor', { code: 'busy' });
     }
-    const fast = await this.#precheck();
-    if (fast) return fast;
+    const lock = this.#acquireLock();
+    let fast;
+    try {
+      fast = await this.#precheck();
+    } catch (err) {
+      this.#releaseLock(lock);
+      throw err;
+    }
+    if (fast) {
+      this.#releaseLock(lock);
+      return fast;
+    }
 
     const startedAt = new Date(this.now()).toISOString();
     this.lastRun = { phase: 'running', startedAt, finishedAt: null, action: null, error: null };
-    // Arka plan: inFlight kilidi aynı — ikinci tetik 'busy' alır.
-    this.inFlight = this.#goLive()
+    // Arka plan: kilit AYNI kilit, iş bitene kadar tutulur — ikinci tetik 'busy' alır.
+    this.#goLive()
       .then((result) => {
         this.lastRun = {
           phase: 'done', startedAt, finishedAt: new Date(this.now()).toISOString(),
@@ -209,9 +226,27 @@ class GoLiveService {
         // (unhandledRejection) süreci düşürebilir.
         return { action: 'failed', error: err.message };
       })
-      .finally(() => { this.inFlight = null; });
+      .finally(() => this.#releaseLock(lock));
 
     return { action: 'accepted', startedAt };
+  }
+
+  // Tek-uçuş kilidi. inFlight'a KENDİ kontrolümüzdeki bir promise konur (iş promise'i
+  // değil): kilit senkron olarak alınabilsin ve iş ister senkron bitsin ister arka planda
+  // sürsün aynı şekilde bırakılsın. Hiç reddetmez — bekleyeni olmadığı için işlenmeyen
+  // ret riski yok.
+  #acquireLock() {
+    let release;
+    const promise = new Promise((resolve) => { release = resolve; });
+    this.inFlight = promise;
+    return { promise, release };
+  }
+
+  // Yalnızca KENDİ kaydını temizler: araya yeni bir istek girmişse ona dokunmaz
+  // (StreamOrchestrator#trackStart ile aynı desen).
+  #releaseLock(lock) {
+    lock.release();
+    if (this.inFlight === lock.promise) this.inFlight = null;
   }
 
   // Senkron, ucuz (en fazla 1 stat + 2 API birimi) ve KESİN olan kontroller.
@@ -243,6 +278,7 @@ class GoLiveService {
       }
       // Toparlanmış: stale izi silinir, aşağıdaki akış normal yoluna devam eder.
       this.log.info('önceki stale izi geçersiz — ingest tekrar veri alıyor');
+      this.#clearStaleMark(state);
     }
 
     // 3) Zaten sağlıklı şekilde akıyor mu? Bu da kesin ve ucuz (2 API birimi): telefon
@@ -288,8 +324,8 @@ class GoLiveService {
     if (this.inFlight) {
       return Promise.reject(new GoLiveError('go-live şu an sürüyor', { code: 'busy' }));
     }
-    this.inFlight = this.#goLive().finally(() => { this.inFlight = null; });
-    return this.inFlight;
+    const lock = this.#acquireLock();
+    return this.#goLive().finally(() => this.#releaseLock(lock));
   }
 
   async #goLive() {
@@ -299,6 +335,8 @@ class GoLiveService {
     const existing = await this.#existingBroadcast(accessToken, streamId);
     if (existing?.kind === 'live') {
       this.log.info(`broadcast zaten canlı (${existing.broadcastId}, ${existing.status}) — yeni insert yapılmadı`);
+      // Grace penceresinde toparlanmış olabilir: eski stale izi burada da silinir.
+      this.#clearStaleMark(this.stateStore.load());
       return { action: 'already-live', ...existing, kind: undefined, ingest: existing.ingest };
     }
     // Broadcast YouTube'da canlı ama ingest ölü: otomatik düzeltme BİLEREK yapılmıyor.
@@ -527,6 +565,25 @@ class GoLiveService {
         `broadcast durumu yazılamadı (${err.message}) — idempotans kaybolacağı için durduruldu`,
         { code: 'state_write_failed' },
       );
+    }
+  }
+
+  // Stale izini kayıttan siler (10 Ekim 2026). Eskiden iz YALNIZCA yazılıyordu, hiç
+  // silinmiyordu: ingest toparlandığında "önceki stale izi geçersiz" loglanıyor ama
+  // broadcast.json'da health:'stale' + unhealthySince sonsuza kadar kalıyordu. Sonucu:
+  //   - /status (telefonun ucuz, API'siz yolu) sağlıklı yayını "stale" gösteriyordu
+  //   - her go-live tetiği boşuna bir fazladan getStreamStatus çağrısı yapıyordu
+  // Kayıt ancak bir sonraki TAM go-live akışında (state baştan yazılınca) temizleniyordu.
+  //
+  // ATMAZ: iz silinemezse yalnızca yanlış bir gösterge kalır; #saveState'in tersine burada
+  // idempotans riski yok, go-live'ı bir gösterge yüzünden durdurmak yanlış olurdu.
+  #clearStaleMark(state) {
+    if (!state?.health && !state?.unhealthySince) return;
+    const { health, unhealthySince, ...rest } = state;
+    try {
+      this.stateStore.save(rest);
+    } catch (err) {
+      this.log.warn(`stale izi silinemedi (${err.message}) — durum gösterimi yanlış kalabilir`);
     }
   }
 

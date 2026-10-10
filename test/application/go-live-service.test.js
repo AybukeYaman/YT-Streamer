@@ -861,3 +861,95 @@ test('VOD: bir kaydın hatası diğerlerini engellemez', async () => {
   assert.equal(n, 3); // üçü de denendi
   assert.deepEqual(pendingVods.pending.map((e) => e.broadcastId), ['bad']); // yalnız hatalı kaldı
 });
+
+// ── Tek-uçuş kilidi: ön kontrolü de kapsar ───────────────────────────────────
+// 10 Ekim 2026: kilit eskiden #precheck BİTTİKTEN sonra alınıyordu. Ön kontrol
+// await'li olduğu için iki eşzamanlı tetik de onu geçiyor ve İKİ broadcast açılıyordu.
+
+test('requestGoLive: ön kontrol sürerken gelen ikinci tetik busy alır (tek broadcast)', async () => {
+  const api = fakeApi();
+  // getAccessToken'ı geciktir: ön kontrolün await penceresini genişlet.
+  const slowToken = api.getAccessToken;
+  api.getAccessToken = async () => { await new Promise((r) => setImmediate(r)); return slowToken(); };
+  const { service } = setup({ api, stateStore: fakeStateStore() });
+
+  const first = service.requestGoLive();
+  const second = service.requestGoLive().then(
+    () => { throw new Error('ikinci tetik kabul edilmemeliydi'); },
+    (err) => err,
+  );
+
+  const [a, b] = await Promise.all([first, second]);
+  assert.equal(a.action, 'accepted');
+  assert.ok(b instanceof GoLiveError);
+  assert.equal(b.code, 'busy');
+
+  await service.inFlight; // arka plandaki iş bitsin
+  assert.equal(api.calls.filter((c) => c[0] === 'insertBroadcast').length, 1, 'tek insert');
+});
+
+test('requestGoLive: ön kontrol hata atarsa kilit bırakılır (sonraki tetik busy almaz)', async () => {
+  const encoderCheck = { run: async () => ({ status: 'unhealthy', message: 'encoder durmuş' }) };
+  const { service } = setup({ encoderCheck });
+
+  await assert.rejects(() => service.requestGoLive(), /encoder yayın yapmıyor/);
+  assert.equal(service.busy, false, 'kilit bırakılmış olmalı');
+  await assert.rejects(() => service.requestGoLive(), /encoder yayın yapmıyor/);
+});
+
+test('requestGoLive: senkron already-live sonrası kilit bırakılır', async () => {
+  const stateStore = fakeStateStore({ broadcastId: 'b', streamId: STREAM_ID, status: 'live', title: 't' });
+  const api = fakeApi({ broadcasts: { b: { id: 'b', status: { lifeCycleStatus: 'live' } } } });
+  const { service } = setup({ api, stateStore });
+
+  assert.equal((await service.requestGoLive()).action, 'already-live');
+  assert.equal(service.busy, false);
+  assert.equal((await service.requestGoLive()).action, 'already-live', 'ikinci çağrı da çalışmalı');
+});
+
+// ── Stale izinin temizlenmesi ────────────────────────────────────────────────
+// Eskiden iz yalnızca YAZILIYOR, hiç silinmiyordu: toparlanan yayın /status'ta
+// sonsuza kadar "stale" görünüyor ve her tetik fazladan bir API çağrısı yapıyordu.
+
+test('stale izi: ingest toparlanınca kayıttan SİLİNİR', async () => {
+  const stateStore = fakeStateStore({
+    broadcastId: 'b', streamId: STREAM_ID, status: 'live', title: 't',
+    health: 'stale', unhealthySince: '2026-10-01T12:00:00.000Z',
+  });
+  const api = fakeApi({
+    broadcasts: { b: { id: 'b', status: { lifeCycleStatus: 'live' } } },
+    streams: [{ streamStatus: 'active', healthStatus: 'good' }],
+  });
+  const { service } = setup({ api, stateStore });
+
+  await service.requestGoLive();
+
+  assert.equal(stateStore.state.health, undefined, 'health izi kalmamalı');
+  assert.equal(stateStore.state.unhealthySince, undefined, 'unhealthySince izi kalmamalı');
+  assert.equal(stateStore.state.broadcastId, 'b', 'kaydın geri kalanı korunmalı');
+  assert.equal(stateStore.state.title, 't');
+  // Aynı kayıt /status'ta da temiz görünmeli (API'ye gitmeden)
+  assert.equal((await service.getStatus()).health, null);
+});
+
+test('stale izi yoksa boşuna yazma yapılmaz', async () => {
+  const stateStore = fakeStateStore({ broadcastId: 'b', streamId: STREAM_ID, status: 'live', title: 't' });
+  const api = fakeApi({ broadcasts: { b: { id: 'b', status: { lifeCycleStatus: 'live' } } } });
+  const { service } = setup({ api, stateStore });
+
+  await service.requestGoLive();
+  assert.deepEqual(stateStore.saves, [], 'temiz kayda dokunulmamalı');
+});
+
+test('stale izi silinemezse go-live DURMAZ (yalnızca uyarı)', async () => {
+  const stateStore = fakeStateStore({
+    broadcastId: 'b', streamId: STREAM_ID, status: 'live', title: 't', health: 'stale',
+  });
+  stateStore.save = () => { throw new Error('disk dolu'); };
+  const api = fakeApi({ broadcasts: { b: { id: 'b', status: { lifeCycleStatus: 'live' } } } });
+  const { service, lines } = setup({ api, stateStore });
+
+  const result = await service.requestGoLive();
+  assert.equal(result.action, 'already-live');
+  assert.ok(lines.some((l) => l.level === 'warn' && /stale izi silinemedi/.test(l.m)));
+});

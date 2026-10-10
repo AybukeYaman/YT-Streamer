@@ -121,7 +121,9 @@ class StreamControlService {
 
   /**
    * Yayını başlatır. Supervisor'a delege eder.
-   * Zaten çalışıyorsa hata fırlatır (Supervisor → Orchestrator.start() zaten fırlatıyor).
+   * Zaten çalışıyorsa hata FIRLATIR (programlama hatası). Başlatma başka bir nedenle
+   * düşerse (albüm okunamadı, playlist yazılamadı) hata GELMEZ: Supervisor onu çökme
+   * sayıp geri çekilmeli yeniden denemeye alır, yayın kendiliğinden döner.
    */
   async start() {
     this.log.info('yayın başlatma komutu alındı');
@@ -148,6 +150,9 @@ class StreamControlService {
    * Yayını yeniden başlatır: önce durdurur, sonra baştan başlatır.
    * stop() + start() üzerinden gider (Supervisor'a delege) — orchestrator'ın iç durumuna
    * doğrudan dokunmaz. Supervisor'ın çökme-geri-çekilme mantığından bağımsız, elle restart.
+   *
+   * start() düşerse yayın DURMUŞ KALMAZ: Supervisor geri çekilmeli yeniden denemeye alır
+   * (10 Ekim 2026 — eskiden stop başarılı + start başarısız = kalıcı ölü yayındı).
    */
   async restart() {
     this.log.info('yayın yeniden başlatma komutu alındı');

@@ -4,6 +4,10 @@
 //     başlatılamadı). code=0'lı normal playlist bitişi zaten orchestrator'ın içinde ele alınıyor,
 //     'exit' bile yaymıyor — supervisor onu hiç görmez.
 //
+// BAŞLATMANIN KENDİSİ de bu yoldan geçer: start()/resume() düşerse hata çağırana iletilmez,
+// çökme sayılıp geri çekilmeli yeniden denemeye girer (bkz. start()). Yayının "hiç
+// başlayamamış" hali de "başlayıp çökmüş" hali kadar ciddidir; ikisinde de vazgeçme yok.
+//
 // Üstel geri çekilme: 3 → 6 → 12 → 24 → 48 → 60 sn (tavan). Son (yeniden) başlatmadan beri
 // resetAfterMs (5 dk) çökmeden çalıştıysa sayaç başa döner.
 //
@@ -74,10 +78,37 @@ class Supervisor extends EventEmitter {
     });
   }
 
+  // BAŞLATMA DA ÇÖKME SAYILIR (10 Ekim 2026): orchestrator.start() düşerse (albüm listesi
+  // o an okunamadı, playlist yazılamadı, kütüphane boş geldi) hata YUKARI İLETİLMEZ —
+  // aynı geri çekilmeli yeniden deneme yoluna sokulur.
+  //
+  // Neden: eskiden hata çağırana gidiyordu ve orada yeniden deneyen kimse yoktu.
+  //   - index.js'te süreç 1 ile düşüyordu; tek kurtarıcı systemd'nin Restart=always'iydi.
+  //   - TUI'da [S]/[R] hatayı LOG paneline yazıp bırakıyordu: panel "stopped", yayın ölü.
+  //   - Sihirbazdaki START STREAM (restart = stop + start) stop'tan sonra start düşünce
+  //     yayını KALICI olarak durduruyordu — plan kaydedilmiş, yayın yok.
+  // Üçü de "yayın 7/24 akar, vazgeçme yok" ilkesiyle çelişiyordu (bkz. dosya başlığı).
+  //
+  // Tek istisna "zaten çalışıyor": bu bir programlama hatası, geçici bir arıza değil.
+  // Yeniden denemek işe yaramaz (sonraki deneme de aynı hatayı alır), o yüzden atılır.
   async start() {
+    if (this.orchestrator.getPlaybackState?.().running) {
+      throw new Error('yayın zaten çalışıyor');
+    }
     this.stopping = false;
     this.lastStartAt = this.now();
-    await this.orchestrator.start();
+    try {
+      await this.orchestrator.start();
+    } catch (err) {
+      this.#onFailedLaunch('başlatılamadı', err);
+    }
+  }
+
+  // Başarısız bir (yeniden) başlatmayı çökme yoluna sokar: geri çekilme, çökme sayacı ve
+  // tekrarlayan çökme alarmı aynı politikadan geçer — ikinci bir yeniden deneme mantığı yok.
+  #onFailedLaunch(label, err) {
+    this.log.error(`${label}: ${err.message}`);
+    this.#onExit({ expected: false, code: null, signal: null });
   }
 
   // Bekleyen yeniden başlatmayı iptal eder, yayın çalışıyorsa temiz kapatır.
@@ -127,8 +158,7 @@ class Supervisor extends EventEmitter {
       if (this.crashLoop) this.#scheduleRecoveryCheck();
     } catch (err) {
       // Başlatma da düşerse (örn. playlist yazılamadı) aynı çökme mantığından geçer.
-      this.log.error(`yeniden başlatılamadı: ${err.message}`);
-      this.#onExit({ expected: false, code: null, signal: null });
+      this.#onFailedLaunch('yeniden başlatılamadı', err);
     }
   }
 

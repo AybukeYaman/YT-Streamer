@@ -248,3 +248,56 @@ test('yeniden başlatma da düşerse aynı çökme mantığından geçer (sonrak
   assert.ok(lines.some((l) => l.level === 'error' && /yeniden başlatılamadı: playlist yazılamadı/.test(l.m)));
   assert.deepEqual(clock.pending(), [6000]);
 });
+
+// ── Başlatmanın kendisi düşerse ───────────────────────────────────────────────
+// 10 Ekim 2026: eskiden hata çağırana gidiyordu ve yeniden deneyen kimse yoktu —
+// yayın kalıcı olarak durmuş kalıyordu (index.js süreci düşürüyor, TUI loga yazıp
+// bırakıyor, sihirbazın restart'ı stop'tan sonra ölü bırakıyordu).
+
+test('start() düşerse hata YUTULMAZ ama yayın bırakılmaz: geri çekilmeli yeniden deneme', async () => {
+  const { orch, clock, sup, lines } = setup();
+  orch.start = async () => { orch.calls.push('start'); throw new Error('hiç albüm yok'); };
+  await sup.start(); // fırlatmamalı: çağıran (index.js / TUI) süreci düşürmesin
+  assert.ok(lines.some((l) => l.level === 'error' && /başlatılamadı: hiç albüm yok/.test(l.m)));
+  assert.deepEqual(clock.pending(), [3000], 'ilk geri çekilme kurulmuş olmalı');
+  assert.equal(sup.getSnapshot().pendingRestart, true);
+});
+
+test('başarısız başlatmanın ardından gelen deneme tutarsa yayın akar', async () => {
+  const { orch, clock, sup } = setup();
+  const realStart = orch.start.bind(orch);
+  orch.start = async () => { orch.calls.push('start'); throw new Error('albüm okunamadı'); };
+  await sup.start();
+  orch.start = realStart;
+  await clock.advance(3000); // resume → playlistWriter yok → start
+  assert.deepEqual(orch.calls, ['start', 'resume']);
+  assert.equal(sup.getSnapshot().pendingRestart, false);
+});
+
+test('art arda başarısız başlatma tekrarlayan çökme alarmı üretir (yine bırakılmaz)', async () => {
+  const { orch, clock, sup, alerter } = setup();
+  orch.start = async () => { throw new Error('albüm okunamadı'); };
+  orch.resume = async () => { throw new Error('albüm okunamadı'); };
+  await sup.start();
+  for (const delay of [3000, 6000, 12000, 24000]) await clock.advance(delay);
+  await flush();
+  assert.equal(alerter.sent.length, 1, 'eşik aşımında TEK bildirim');
+  assert.match(alerter.sent[0].title, /tekrarlayan çökme/i);
+  assert.ok(clock.pending().length === 1, 'alarm verilse de yeniden deneme sürüyor');
+});
+
+test('zaten çalışıyorsa start() yine hata atar (programlama hatası, yeniden denenmez)', async () => {
+  const { orch, clock, sup } = setup();
+  orch.getPlaybackState = () => ({ running: true });
+  await assert.rejects(() => sup.start(), /zaten çalışıyor/);
+  assert.deepEqual(clock.pending(), [], 'yeniden deneme KURULMAMALI');
+});
+
+test('stop() sonrası start() düşerse yeniden deneme yine kurulur (stopping bayrağı sıfırlanır)', async () => {
+  const { orch, clock, sup } = setup();
+  await sup.start();
+  await sup.stop();
+  orch.start = async () => { throw new Error('playlist yazılamadı'); };
+  await sup.start();
+  assert.deepEqual(clock.pending(), [3000]);
+});

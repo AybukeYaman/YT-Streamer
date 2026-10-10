@@ -279,6 +279,11 @@ async function main() {
   try {
     // 24/7 varsayılanı: yayın kendiliğinden başlar. Tek istisna --configure — orada
     // başlatma kararı kullanıcının elinde.
+    //
+    // Başlatma düşerse burada HATA GELMEZ: supervisor onu çökme sayıp geri çekilmeli
+    // yeniden denemeye alır ve süreç ayakta kalır. Eskiden hata buraya geliyordu, süreç
+    // 1 ile düşüyordu ve tek kurtarıcı systemd'nin Restart=always'iydi — systemd'siz
+    // çalıştırmada (yerel, --tui) yayın hiç dönmüyordu.
     if (!args.configure) await controlService.start();
     // Açılış taraması bitti: önbelleğin işe yarayıp yaramadığı logda görünsün.
     // Sağlıklı tabloda isabet = kütüphane boyutu, ölçüm = yalnızca yeni/değişen dosyalar.
