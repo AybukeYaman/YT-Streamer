@@ -20,6 +20,7 @@
 //   POST /config    → sayfadaki formu uygular
 const http = require('http');
 const crypto = require('crypto');
+const fs = require('fs');
 const { renderConfigPage } = require('../ui/config-page');
 
 const MAX_BODY_BYTES = 4096;
@@ -44,6 +45,9 @@ const RATE_LIMITS = Object.freeze({
   // Yapılandırma sayfası: telefondan elle doldurulan bir form, /go-live kadar sık değil
   // ama /status kadar da okuma-ağırlıklı değil — kendi (orta) kovası.
   '/config': { windowMs: 60000, max: 30 },
+  // Sayfa açılışında klip sayısı kadar önizleme isteği gider (onlarca olabilir) — /config
+  // sayfasından çok daha geniş bir bütçe gerekiyor.
+  '/config/thumb': { windowMs: 60000, max: 120 },
   // Yetkisiz denemeler: tek kova, tüm route'lar ortak.
   unauthorized: { windowMs: 60000, max: 20 },
 });
@@ -100,12 +104,16 @@ class GoLiveServer {
   // son gördüğü durum; /status'a eklenir. Verilmezse /status eskisi gibi döner.
   // configApi: ConfigApi — verilmezse /config 404 döner (mevcut kurulumlar etkilenmez,
   // projenin "özellik opsiyonel" deseni — bkz. ReconfigurablePomodoroPlanner).
+  // thumbnailProvider: (clipPath) => Promise<string|null> — klip için önizleme JPEG'inin
+  // yerel yolu (ensureThumbnail'i sarar, composition root enjekte eder). Verilmezse
+  // /config/thumb 404 döner, sayfa resimsiz (ama ÇALIŞIR) kalır.
   constructor({
     goLiveService, authToken, log,
     host = '127.0.0.1', port = 8787,
     now = () => Date.now(),
     healthProvider = null,
     configApi = null,
+    thumbnailProvider = null,
   }) {
     if (typeof authToken !== 'string' || authToken.trim().length < 32) {
       // Fail-closed: auth'suz ayağa kalkmak sessiz bir güvenlik açığı olurdu.
@@ -121,6 +129,7 @@ class GoLiveServer {
     this.now = now;
     this.healthProvider = healthProvider;
     this.configApi = configApi;
+    this.thumbnailProvider = thumbnailProvider;
     this.hits = new Map(); // kova adı → istek zaman damgaları
     this.server = http.createServer((req, res) => this.#handle(req, res));
   }
@@ -162,6 +171,18 @@ class GoLiveServer {
       'Cache-Control': 'no-store',
     });
     res.end(body);
+  }
+
+  // Önizleme JPEG'i: ensureThumbnail zaten DİSK seviyesinde önbelleğe alıyor (kaynak
+  // değişmedikçe ffmpeg yeniden çalışmaz), bu yüzden tarayıcı tarafında da kısa süreli
+  // önbellekleme güvenli — telefon aynı sayfayı birkaç kez açınca veri boşa harcanmasın.
+  #image(res, buffer) {
+    res.writeHead(200, {
+      'Content-Type': 'image/jpeg',
+      'Content-Length': buffer.length,
+      'Cache-Control': 'private, max-age=3600',
+    });
+    res.end(buffer);
   }
 
   #authorized(req) {
@@ -264,6 +285,20 @@ class GoLiveServer {
         // yüzden refresh=0 çağrısına da eklenir — telefon sık yoklayabilsin.
         const health = this.healthProvider ? this.healthProvider() : undefined;
         return this.#json(res, 200, { ok: true, ...status, ...(health ? { health } : {}) });
+      }
+
+      if (route === '/config/thumb') {
+        if (!this.configApi || !this.thumbnailProvider) return this.#json(res, 404, { error: 'not_found' });
+        if (req.method !== 'GET') return this.#json(res, 405, { error: 'method_not_allowed' });
+        const file = url.searchParams.get('file') || '';
+        // Yalnızca configApi'nin bildiği klip adaylarından biri istenebilir — rastgele bir
+        // yol verip sunucudaki herhangi bir dosyanın küçük resmini çıkarmak İSTENMEZ
+        // (aynı "listede olmayan yol reddedilir" kuralı ConfigApi#save'de de var).
+        const { clips } = await this.configApi.form();
+        if (!clips.includes(file)) return this.#json(res, 404, { error: 'not_found' });
+        const thumbPath = await this.thumbnailProvider(file);
+        if (!thumbPath) return this.#json(res, 404, { error: 'not_found' });
+        return this.#image(res, fs.readFileSync(thumbPath));
       }
 
       if (route === '/config') {

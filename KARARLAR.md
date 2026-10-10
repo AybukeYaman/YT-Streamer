@@ -2005,3 +2005,47 @@ telefondan erişilen HTTP servisi) `/config` route'u eklemek.
 - Gerçek tarayıcı testi (Android Chrome / iPad Safari) YAPILMADI — VPS'e deploy edildikten
   sonra scripts/deploy/README.md'deki adımla elle doğrulanmalı (headless ortamda telefon
   tarayıcısı simüle edilemiyor).
+
+---
+
+## [N2 eki] `/config` sayfasında klip önizlemesi (küçük resim) — 11 Ekim 2026
+
+**Soru:** N2 deploy edilip kullanıcı telefonundan denedikten sonra istek geldi: klip
+listesindeki dosya adlarının yanında küçük bir önizleme karesi görmek istiyor (hangi
+klip olduğunu dosya adından değil görsel olarak ayırt etmek için).
+
+**Karar:** `src/infrastructure/video-thumbnail.js` (yeni): ffmpeg ile klipten TEK kare
+alınıp 160px genişliğe ölçeklenmiş JPEG'e çevrilir. Önbellek break-clip.js'teki AYNI ilke
+(kaynağın boyut+mtime'ı) — kaynak değişmedikçe ffmpeg yeniden çalışmaz. Dosya adı kaynağın
+TAM YOLUNUN sha1'i: aynı ada sahip iki farklı klip ("mimi/break.mp4" ile "assets/break.mp4")
+çarpışmaz. Görsellerde (`-ss`/`-frames:v` YOK — tek kareli bir girişte "1 sn'ye atla"
+isteği 0 kare üretirdi) ile videolardan farklı argüman kurulur; bu dallanma SAF bir
+fonksiyonda (`buildThumbnailArgs`) ayrıştırıldı ki ffmpeg çalıştırmadan test edilebilsin —
+projenin ffmpeg çağıran diğer dosyaları (break-clip.js, clip-normalizer.js) hiç
+test edilmiyordu, burada en azından saf kısım test edildi.
+
+**Sunucu tarafı:** `golive-server.js`'e `GET /config/thumb?file=&token=` route'u; `file`
+yalnızca `configApi`'nin bildiği klip listesindeki bir yol olabilir (ConfigApi#save'deki
+"listede olmayan yol reddedilir" kuralının AYNISI — rastgele bir dosya yoluyla sunucudaki
+herhangi bir dosyanın küçük resmi çıkarılamaz). Kendi hız sınırı kovası (120/dk — sayfa
+başına onlarca önizleme isteği gidebilir). `thumbnailProvider` opsiyonel enjeksiyon
+(`ensureThumbnail`'i sarar): verilmezse/üretemezse sayfa **resimsiz ama ÇALIŞIR** kalır
+(`<img onerror>` kırık resmi gizler) — aynı "özellik opsiyonel, kırılmaz" deseni
+(bkz. `ReconfigurablePomodoroPlanner`, N1'deki `PlanOnlyControlService`).
+
+**Test yazarken bulunan hata (testin kendi hatası, üründe değil):** `withTmp` test
+yardımcısı `try { return fn(dir); } finally { rmSync(dir) }` biçimindeydi — `fn` async
+olduğu için `finally` klasörü fn'in İÇİNDEKİ await'ler bitmeden siliyordu (setImmediate'le
+gelen gecikmeli dosya yazımı ENOENT veriyordu). Düzeltme: `try { return await fn(dir) }`.
+
+**Etki:** `src/infrastructure/video-thumbnail.js` (yeni), `src/infrastructure/golive-server.js`
+(`/config/thumb` route'u + hız sınırı kovası), `src/ui/config-page.js` (her klip satırında
+`<img class="thumb">`), `scripts/golive-server.js` (`thumbnailProvider` bağlama).
+
+### Doğrulama
+
+- 833 test (yeni: 6 `video-thumbnail` — argüman kurulumu, önbellek isabeti/ıskası, hata
+  durumunda null; 3 `/config/thumb` route; 1 config-page `<img>` testi).
+- Gerçek ffmpeg ile doğrulandı (yerel Windows ffmpeg 9.0.1): mavi bir test klibinden ve
+  sarı bir test görselinden gerçekten küçük (160px) JPEG önizlemeler üretildi, renkleri
+  gözle doğrulandı.

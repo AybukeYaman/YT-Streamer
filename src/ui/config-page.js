@@ -18,19 +18,31 @@ function esc(value) {
     .replace(/'/g, '&#39;');
 }
 
-function checkbox(name, value, checked, label) {
+// thumbSrc: /config/thumb URL'i ya da null (token yoksa/istenmiyorsa resim basılmaz —
+// sayfa resimsiz de ÇALIŞIR, bkz. golive-server.js'teki thumbnailProvider opsiyonel notu).
+// onerror: üretilemeyen/henüz üretilmemiş bir önizlemede kırık resim ikonu yerine
+// elemanı GİZLER — sessiz bozulma yerine sessizce eksik kalma (break-clip.js'teki "görsel
+// hazırlanamazsa yayın sürer" ilkesiyle aynı ruh).
+function checkbox(name, value, checked, label, thumbSrc) {
   const id = `${name}-${esc(value).replace(/[^a-zA-Z0-9]/g, '_')}`;
+  const thumb = thumbSrc
+    ? `<img class="thumb" src="${esc(thumbSrc)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+    : '';
   return `
     <label class="row" for="${id}">
       <input type="checkbox" id="${id}" name="${esc(name)}" value="${esc(value)}" ${checked ? 'checked' : ''}>
+      ${thumb}
       <span>${esc(label)}</span>
     </label>`;
 }
 
-function clipList(name, clips, selected) {
+function clipList(name, clips, selected, token) {
   if (!clips.length) return '<p class="muted">Klip bulunamadı — albüm arkaplanı ya da assets/ altına video ekleyin.</p>';
   const set = new Set(selected);
-  return `<div class="checklist">${clips.map((c) => checkbox(name, c, set.has(c), shortPath(c))).join('')}</div>`;
+  return `<div class="checklist">${clips.map((c) => {
+    const thumbSrc = `/config/thumb?token=${encodeURIComponent(token)}&file=${encodeURIComponent(c)}`;
+    return checkbox(name, c, set.has(c), shortPath(c), thumbSrc);
+  }).join('')}</div>`;
 }
 
 // plan: StreamPlan — currentPlan() hiç null dönmez, form her zaman bir taslakla açılır.
@@ -64,6 +76,10 @@ function renderConfigPage({ plan, clips, token, notice = null, error = null }) {
     border-bottom: 1px solid #22262e; min-height: 44px;
   }
   .row input[type=checkbox] { width: 22px; height: 22px; flex-shrink: 0; }
+  .row .thumb {
+    width: 56px; height: 32px; object-fit: cover; border-radius: 4px;
+    background: #1a1d24; flex-shrink: 0;
+  }
   .row span { overflow-wrap: anywhere; }
   .checklist { border: 1px solid #22262e; border-radius: 8px; overflow: hidden; }
   input[type=text] {
@@ -99,13 +115,13 @@ ${error ? `<div class="error">${esc(error)}</div>` : ''}
   <section>
     <h2>Çalışma Görselleri</h2>
     <p class="hint">Çoklu seçim — her çalışma session'ı havuzdan rastgele bir klip kullanır, ardışık iki session aynı klibi tekrarlamaz.</p>
-    ${clipList('studyVideos', clips, p.studyVideos)}
+    ${clipList('studyVideos', clips, p.studyVideos, token)}
   </section>
 
   <section>
     <h2>Mola Görselleri</h2>
     <p class="hint">Çoklu seçim — her mola session'ı havuzdan rastgele bir klip kullanır, ardışık iki session aynı klibi tekrarlamaz.</p>
-    ${clipList('breakVideos', clips, p.breakVideos)}
+    ${clipList('breakVideos', clips, p.breakVideos, token)}
   </section>
 
   <section class="muted">

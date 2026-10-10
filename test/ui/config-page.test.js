@@ -56,6 +56,14 @@ test('notice ve error gösterilir', () => {
   assert.match(html2, /class="error">hata oldu/);
 });
 
+test('her klip satırında önizleme <img> var, token ile', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: ['X:/clips/a.mp4'], token: 'tkn',
+  });
+  assert.match(html, /<img class="thumb" src="\/config\/thumb\?token=tkn&amp;file=X%3A%2Fclips%2Fa\.mp4"/);
+  assert.match(html, /onerror="this\.style\.display='none'"/);
+});
+
 test('dokunma hedefleri en az 44px (CSS min-height)', () => {
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
   assert.match(html, /min-height:\s*44px/);

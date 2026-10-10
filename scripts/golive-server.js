@@ -20,6 +20,7 @@ const { loadYoutubeCredentials } = require('../src/infrastructure/youtube-creden
 const { buildGoLive } = require('../src/composition/go-live-wiring');
 const { buildConfigService } = require('../src/composition/config-wiring');
 const { ConfigApi } = require('../src/application/config-api');
+const { ensureThumbnail } = require('../src/infrastructure/video-thumbnail');
 const { GoLiveServer } = require('../src/infrastructure/golive-server');
 const { HealthMonitor } = require('../src/application/health-monitor');
 const { IngestCheck } = require('../src/application/checks/ingest-check');
@@ -126,6 +127,12 @@ async function main() {
     },
     log: logger.child('config'),
   });
+  // Kullanıcı isteği üzerine: /config sayfasında klip listesinin yanında küçük bir
+  // önizleme karesi (bkz. src/infrastructure/video-thumbnail.js). Opsiyonel — ffmpeg
+  // bulunamazsa ya da üretim başarısız olursa sayfa resimsiz ÇALIŞMAYA devam eder.
+  const thumbnailProvider = (file) => ensureThumbnail({
+    sourcePath: file, runtimeDir: config.paths.runtime, log: logger.child('thumb'),
+  });
   const monitor = new HealthMonitor({
     checks: [
       new IngestCheck({ goLiveService: service }),
@@ -151,6 +158,7 @@ async function main() {
     // (kota harcamadan) "encoder yazıyor mu, ingest akıyor mu" sorusunun cevabı.
     healthProvider: () => monitor.snapshot(),
     configApi,
+    thumbnailProvider,
   });
 
   await server.listen();

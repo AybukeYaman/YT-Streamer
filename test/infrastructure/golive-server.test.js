@@ -371,6 +371,77 @@ test('POST /config: başarısız save hatayla aynı sayfayı basar, 200 döner',
   }
 });
 
+// ─── /config/thumb ─────────────────────────────────────────────────────────
+
+test('thumbnailProvider yoksa /config/thumb 404 döner', () => withServer(
+  { goLiveService: fakeService(), configApi: fakeConfigApi() },
+  async ({ call }) => {
+    const res = await call('/config/thumb?file=%2Fclips%2Fa.mp4');
+    assert.equal(res.status, 404);
+  },
+));
+
+test('GET /config/thumb: listedeki klip için thumbnailProvider çağrılır, JPEG döner', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { log } = fakeLog();
+  const api = fakeConfigApi();
+  let requestedFile = null;
+  const fakeJpg = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'yt-thumbtest-')), 'x.jpg');
+  fs.writeFileSync(fakeJpg, Buffer.from([0xff, 0xd8, 0xff]));
+  const server = new GoLiveServer({
+    authToken: TOKEN, log, port: 0, goLiveService: fakeService(), configApi: api,
+    thumbnailProvider: async (file) => { requestedFile = file; return fakeJpg; },
+  });
+  await server.listen();
+  const base = `http://127.0.0.1:${server.boundPort}`;
+  try {
+    const res = await fetch(`${base}/config/thumb?token=${TOKEN}&file=${encodeURIComponent('/clips/a.mp4')}`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /image\/jpeg/);
+    assert.equal(requestedFile, '/clips/a.mp4');
+  } finally {
+    await server.close();
+  }
+});
+
+test('GET /config/thumb: listede olmayan yol reddedilir (404, traversal kapalı)', async () => {
+  const { log } = fakeLog();
+  const api = fakeConfigApi();
+  let called = false;
+  const server = new GoLiveServer({
+    authToken: TOKEN, log, port: 0, goLiveService: fakeService(), configApi: api,
+    thumbnailProvider: async () => { called = true; return 'ignored'; },
+  });
+  await server.listen();
+  const base = `http://127.0.0.1:${server.boundPort}`;
+  try {
+    const res = await fetch(`${base}/config/thumb?token=${TOKEN}&file=${encodeURIComponent('/etc/passwd')}`);
+    assert.equal(res.status, 404);
+    assert.equal(called, false, 'listede olmayan yol için thumbnailProvider hiç çağrılmamalı');
+  } finally {
+    await server.close();
+  }
+});
+
+test('GET /config/thumb: thumbnailProvider null dönerse 404 (üretilemedi)', async () => {
+  const { log } = fakeLog();
+  const api = fakeConfigApi();
+  const server = new GoLiveServer({
+    authToken: TOKEN, log, port: 0, goLiveService: fakeService(), configApi: api,
+    thumbnailProvider: async () => null,
+  });
+  await server.listen();
+  const base = `http://127.0.0.1:${server.boundPort}`;
+  try {
+    const res = await fetch(`${base}/config/thumb?token=${TOKEN}&file=${encodeURIComponent('/clips/a.mp4')}`);
+    assert.equal(res.status, 404);
+  } finally {
+    await server.close();
+  }
+});
+
 test('POST /config: başarılı restart notice\'ta görünür', async () => {
   const { log } = fakeLog();
   const api = fakeConfigApi({
