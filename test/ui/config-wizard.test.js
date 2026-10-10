@@ -689,3 +689,24 @@ test('shortPath son iki yol bileşenini verir (platformdan bağımsız)', () => 
   assert.equal(shortPath('X:\\music-source\\mimi\\break.mp4'), 'mimi/break.mp4');
   assert.equal(shortPath('/home/x/assets/kapak.jpg'), 'assets/kapak.jpg');
 });
+
+test('uygulama sürerken Ctrl+C sihirbazı KAPATMAZ, durumu söyler', async () => {
+  // 10 Ekim 2026: Ctrl+C busy kapısının üstündeydi. Sihirbaz "iptal edildi" diyip
+  // kapanıyor, arka plandaki iş sürüyor ve bitince kapanmış sihirbaz üzerinden
+  // "başlatıldı" diyordu — iptal edilemeyen bir iş iptal edilmiş gibi görünüyordu.
+  let resolveApply;
+  const service = fakeService({
+    applyAndRestart: () => new Promise((r) => { resolveApply = () => r({ plan: new StreamPlan({}), warnings: [] }); }),
+  });
+  const { wizard, exits } = await openWizard({ service });
+  toSummary(wizard);
+  const pending = wizard.handleInput('', { return: true });
+
+  wizard.handleInput('c', { ctrl: true });
+  assert.deepEqual(exits, [], 'sihirbaz kapanmamalı');
+  assert.match(wizard.getViewModel().notice, /iptal edilemez/);
+
+  resolveApply();
+  await pending;
+  assert.deepEqual(exits.map((e) => e.started), [true], 'iş bitince tek sonuç: başlatıldı');
+});

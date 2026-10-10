@@ -18,13 +18,33 @@ class AlbumQueue {
     this.trackQueues = new Map(albums.map((a) => [a, new Queue({ tracks: a.tracks, mode, random })]));
   }
 
-  // Sıradaki albüm ve ondan en fazla maxTracks parça (albüm daha kısaysa albüm uzunluğu kadar —
-  // aynı parça bir playlist'te tekrarlanmasın).
+  // Sıradaki albüm ve ondan en fazla maxTracks parça. Aynı parça bir playlist'te
+  // TEKRARLANMAZ: ilk tekrarda batch kesilir, yani playlist kısalır.
+  //
+  // Neden gerekiyordu (10 Ekim 2026): albümün parça kuyruğu kaldığı yerden devam ediyor.
+  // Turda 2 parça kalmışken 50'lik bir batch istenirse kuyruk "kalan 2 + YENİ turdan 48"
+  // veriyor ve yeni tur o 2 parçayı da içerebiliyordu — aynı şarkı aynı playlist'te iki
+  // kez, üstelik birkaç dakika arayla. Eski kod bunu "aynı parça tekrarlanmasın" diye
+  // yorumluyordu ama yalnızca albümden KISA batch'leri koruyordu.
+  //
+  // Neden kesmek (atlamak/karıştırmak değil): kuyruğun sırası bozulmaz, hiçbir parça
+  // atlanmaz — yalnızca tur sınırına denk gelen playlist kısa olur. Bedeli bir restart
+  // boşluğu (~225 ms, Faz 3.1 ölçümü), kazancı sıranın bozulmaması.
   nextBatch(maxTracks) {
     const album = this.order.next();
     const queue = this.trackQueues.get(album);
     const count = Math.min(maxTracks, album.tracks.length);
-    return { album, tracks: Array.from({ length: count }, () => queue.next()) };
+    // peek(n), next()'in döndüreceği parçaların ta kendisini verir (Queue sözleşmesi):
+    // tekrar aramak için kuyruğu tüketmek gerekmiyor.
+    const upcoming = queue.peek(count);
+    const seen = new Set();
+    let take = 0;
+    for (const track of upcoming) {
+      if (seen.has(track)) break;
+      seen.add(track);
+      take++;
+    }
+    return { album, tracks: Array.from({ length: take }, () => queue.next()) };
   }
 }
 

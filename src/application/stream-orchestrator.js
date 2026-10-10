@@ -247,6 +247,11 @@ class StreamOrchestrator extends EventEmitter {
     // ileride çoğalsa bile kapanış istenmişken yeni süreç doğmasın.
     if (this.stopRequested) {
       this.log.warn('yeni playlist başlatılmadı: kapanış istendi');
+      // #finish ŞART: bu kapı playlist bitişinden de (code=0) geçiliyor. Eskiden sadece
+      // return ediliyordu; o dar pencerede (ffmpeg tam kapanırken stop() gelmesi) running
+      // true kalıyor ve 'exit' hiç yayılmıyordu — yayın bitmişken panel "running"
+      // gösteriyordu. expected=true: supervisor bunu çökme sanıp yeniden başlatmasın.
+      this.#finish({ expected: true, code: null, signal: null });
       return;
     }
     this.runNumber++;

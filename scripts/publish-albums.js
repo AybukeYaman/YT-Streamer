@@ -112,5 +112,9 @@ if (!run(bash, syncArgs, `VPS'e taşıma: ${config.host}:${config.path}`)) {
 }
 
 console.log('\n== yayınlama tamam ==');
-console.log('Albümler yayın sürecine ALBÜM GEÇİŞİNDE girer; hemen görmek için VPS\'te:');
+// Albüm listesi YALNIZCA start()/restart'ta okunuyor (StreamOrchestrator): playlist
+// bitişindeki yeniden başlatma, açılışta kurulan kuyruktan devam ediyor. Yani yeni
+// albümler albüm geçişinde DEĞİL, ancak yayın yeniden başlatılınca girer.
+console.log('Yeni albümler yayına ancak YENİDEN BAŞLATMADAN sonra girer. VPS\'te:');
 console.log('  sudo systemctl restart yt-streamer');
+console.log('(ya da panelde [R] — yayın yeniden başlatıldığında kütüphane baştan okunur)');

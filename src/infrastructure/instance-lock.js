@@ -44,22 +44,29 @@ function acquireLock({ runtimeDir, pid = process.pid, isAlive = processAlive }) 
   const file = path.join(runtimeDir, LOCK_FILE);
   fs.mkdirSync(runtimeDir, { recursive: true });
 
-  let existing = null;
+  // Oluşturma ATOMİK ('wx' = yoksa oluştur, varsa EEXIST). Eskiden "oku → yaz" iki ayrı
+  // adımdı: milisaniye arayla başlayan iki instance ikisi de "kilit yok" görüp ikisi de
+  // yazabiliyordu — kilidin engellemesi gereken durumun ta kendisi (10 Ekim 2026).
+  // Bayat kilidi devralma davranışı korunuyor: EEXIST'te sahip PID'ye bakılır.
+  const claim = () => fs.writeFileSync(file, `${pid}\n`, { flag: 'wx' });
   try {
-    existing = fs.readFileSync(file, 'utf8');
+    claim();
   } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
-  }
-
-  if (existing !== null) {
+    if (err.code !== 'EEXIST') throw err;
+    let existing = '';
+    try {
+      existing = fs.readFileSync(file, 'utf8');
+    } catch (readErr) {
+      if (readErr.code !== 'ENOENT') throw readErr; // ENOENT: araya silen biri girmiş
+    }
     const owner = Number(existing.trim());
     // Geçersiz/bozuk içerik ya da ölü PID → bayat kilit, devralınır.
     if (Number.isInteger(owner) && owner > 0 && owner !== pid && isAlive(owner)) {
       throw new InstanceLockError(runtimeDir, owner);
     }
+    // Bayat kilidi devral: dosya zaten var, üzerine yazmak güvenli (sahibi yaşamıyor).
+    fs.writeFileSync(file, `${pid}\n`);
   }
-
-  fs.writeFileSync(file, `${pid}\n`);
 
   let released = false;
   return {

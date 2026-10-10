@@ -17,6 +17,9 @@ function outputTarget(output, runNumber) {
   if (output.mode === 'local') {
     if (runNumber === undefined) return output.localPath;
     const dot = output.localPath.lastIndexOf('.');
+    // Uzantısız yol (lastIndexOf = -1): numara sona eklenir. Eskiden slice(0,-1) son
+    // karakteri kesip "out" → "ou-1t" gibi bozuk bir ad üretiyordu.
+    if (dot <= 0) return `${output.localPath}-${runNumber}`;
     return `${output.localPath.slice(0, dot)}-${runNumber}${output.localPath.slice(dot)}`;
   }
   if (output.mode === 'rtmp') return YOUTUBE_RTMPS_BASE + output.streamKey;

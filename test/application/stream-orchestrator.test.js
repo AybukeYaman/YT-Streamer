@@ -564,6 +564,23 @@ test('stop sonrası playlist bitişi yeni ffmpeg başlatmaz', async () => {
   assert.ok(!lines.some((l) => /playlist #2/.test(l.m)));
 });
 
+test('stop sonrası playlist bitişi yayını "çalışıyor" halde BIRAKMAZ', async () => {
+  // 10 Ekim 2026: bu kapı yalnızca return ediyordu; running true kalıyor ve 'exit' hiç
+  // yayılmıyordu — yayın bitmişken panel "running" gösteriyordu.
+  const { encoder, orch } = setup();
+  const exits = [];
+  orch.on('exit', (e) => exits.push(e));
+  await orch.start();
+  await orch.stop();
+  exits.length = 0; // stop'un kendi exit'i sayılmasın
+  encoder.emit('exit', 0, null); // gecikmiş playlist bitişi
+
+  assert.equal(orch.running, false, 'yayın durmuş sayılmalı');
+  assert.equal(exits.length, 1);
+  assert.equal(exits[0].expected, true, 'supervisor bunu çökme sanmamalı');
+  assert.equal(orch.getPlaybackState().running, false);
+});
+
 test('stop sonrası yeni start temiz çalışır (stopRequested sıfırlanır)', async () => {
   const albumRepository = pendingAlbumRepository();
   const { encoder, orch } = setup({ albumRepository });

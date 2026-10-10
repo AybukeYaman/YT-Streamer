@@ -399,8 +399,20 @@ class ConfigWizard extends EventEmitter {
   handleInput(input, key = {}) {
     if (this.closed) return undefined;
     this.notice = null;
-    if (key.ctrl && (input === 'c' || key.name === 'c')) return this.cancel();
-    if (this.busy) return undefined; // uygulama sürerken tuşlar yoksayılır
+    const quitKey = key.ctrl && (input === 'c' || key.name === 'c');
+    // Uygulama sürerken TÜM tuşlar yoksayılır — Ctrl+C dahil. Eskiden Ctrl+C bu kapının
+    // ÜSTÜNDEYDİ: sihirbaz kapanıyor ("iptal edildi" yazıyor) ama arka plandaki iş
+    // (klip dönüşümü + stop + albüm yükleme, onlarca saniye) sürüyor ve bitince kapanmış
+    // sihirbaz üzerinden "başlatıldı" diyordu. İptal edilemeyen bir işi iptal edilmiş
+    // gibi göstermek yerine durumu söylüyoruz (10 Ekim 2026).
+    if (this.busy) {
+      if (quitKey) {
+        this.notice = 'yapılandırma uygulanıyor — iptal edilemez, bitmesi bekleniyor';
+        this.emit('render');
+      }
+      return undefined;
+    }
+    if (quitKey) return this.cancel();
 
     if (this.textInput) return this.#handleText(input, key);
     if (this.step === 'pomodoroCustom') return this.#handleForm(input, key);

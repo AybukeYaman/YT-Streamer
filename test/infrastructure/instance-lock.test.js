@@ -105,3 +105,21 @@ test('release sonrası kilit yeniden alınabilir', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('kilit atomik oluşturulur: dosya varsa üzerine körlemesine yazılmaz', () => {
+  // 10 Ekim 2026: "oku → yaz" iki ayrı adımdı; aynı anda başlayan iki instance ikisi de
+  // "kilit yok" görüp ikisi de yazabiliyordu. Artık oluşturma 'wx' ile atomik: var olan
+  // dosya ancak sahibinin ÖLÜ olduğu doğrulandıktan sonra devralınır.
+  //
+  // NOT: gerçek yarışı tek iş parçacıklı bir test üretemez (iki süreç gerekir) — bu test
+  // 'wx'e geçerken devralma kurallarının BOZULMADIĞINI sınayan bir kalkan. Yarışın
+  // kendisi kodun yapısıyla engelleniyor: dosyayı oluşturma işletim sistemi seviyesinde
+  // tek adım.
+  const dir = tmpRuntime();
+  acquireLock({ runtimeDir: dir, pid: 111, isAlive: () => true });
+  assert.throws(
+    () => acquireLock({ runtimeDir: dir, pid: 222, isAlive: () => true }),
+    /başka bir instance/,
+  );
+  assert.equal(fs.readFileSync(path.join(dir, LOCK_FILE), 'utf8').trim(), '111', 'sahibin PID’si korunmalı');
+});

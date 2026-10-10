@@ -1761,3 +1761,75 @@ burada idempotans riski yok, go-live'ı bir gösterge yüzünden durdurmak yanl�
 - Yeni testlerin HEPSİ eski kodda düşüyor, yenisinde geçiyor (düzeltmeler tek tek geri
   alınıp sınandı) — yani testler gerçekten bu hataları yakalıyor, davranışı tarif
   etmekle kalmıyor.
+
+---
+
+## [Faz M] Kalan hata listesi: hız sınırı, kuyruk tekrarı ve küçük kör noktalar — 10 Ekim 2026
+
+Faz L'in devamı; aynı taramadan çıkan, tek tek küçük ama hepsi SESSİZ hatalar.
+
+### 1. Hız sınırı route başına ve auth'tan SONRA
+
+**Soru:** go-live sunucusunun hız sınırı nasıl bölünmeli?
+
+**Karar:** Kova başına sınır — `/go-live` 10/dk (dar), `/status` 60/dk (geniş), yetkisiz
+istekler ayrı bir kovada 20/dk. Sınır artık yetkilendirmeden SONRA işliyor.
+
+**Gerekçe:** Tek bir global sayaç vardı (60 sn'de 20 istek) ve auth'tan ÖNCE işliyordu:
+- `/status`'un kendi yorumu "telefon sık yoklayabilsin" diyor, ama 3 sn'de bir yoklayan
+  bir Shortcuts/widget dakikada 20'yi aşıyor ve AYNI pencerede `/go-live` 429 alıyordu.
+  Yani sık yoklamak, yayını açma yeteneğini kilitliyordu.
+- Sayaç auth'tan önce olduğu için tokenı olmayan biri de onu doldurabiliyordu: yetkisiz
+  istekler sahibini kilitleyebiliyordu.
+Yetkisiz denemeler kendi kovasında kalarak yine sınırlı — kaba kuvvet koruması kaybolmadı.
+
+### 2. Aynı playlist'te aynı parça iki kez (shuffle)
+
+**Soru:** Albümün parça kuyruğu tur sınırını aşan bir batch verince ne olmalı?
+
+**Karar:** İlk tekrarda batch KESİLİR — playlist kısalır, sıra bozulmaz, parça atlanmaz.
+
+**Gerekçe:** Albümün parça kuyruğu kaldığı yerden devam ediyor. Turda 2 parça kalmışken
+50'lik batch istenirse kuyruk "kalan 2 + YENİ turdan 48" veriyor ve yeni tur (yeniden
+karıştırılmış liste) o 2 parçayı da içerebiliyordu: aynı şarkı aynı playlist'te iki kez,
+üstelik birkaç dakika arayla. Kodun kendi yorumu "aynı parça bir playlist'te
+tekrarlanmasın" diyordu ama yalnızca albümden KISA batch'leri koruyordu.
+
+Sequential modda bu mümkün değil (yeni tur aynı listenin kopyası, sınırı aşan batch
+kesintisiz döner) — kesme yalnızca gerçekten tekrar varsa devreye giriyor.
+
+Alternatifler: tekrarı atlayıp bir sonrakini almak (kuyruk sırasını bozar), yeni turu
+önceki turun kuyruğuna göre karıştırmak (Queue'nun tur mantığını karmaşıklaştırır).
+Kesmenin bedeli bir restart boşluğu (~225 ms, Faz 3.1 ölçümü).
+
+### 3. Küçük kör noktalar
+
+- **Kapanışta "çalışıyor" kalan yayın:** playlist bitişi (code=0) tam kapanış istenmişken
+  gelirse `#startNextPlaylist` yalnızca `return` ediyordu — `running` true kalıyor ve
+  `exit` hiç yayılmıyordu. Artık `#finish({ expected: true })` ile kapanıyor.
+- **Instance kilidi atomik:** "oku → yaz" iki adımdı; aynı anda başlayan iki instance
+  ikisi de "kilit yok" görebiliyordu. Oluşturma artık `wx` ile tek adım; bayat kilidi
+  devralma davranışı aynı.
+- **Sihirbazda Ctrl+C:** busy kapısının ÜSTÜNDEYDİ. "İptal edildi" deyip kapanıyor ama
+  arka plandaki iş (klip dönüşümü + stop + albüm yükleme) sürüyor ve bitince kapanmış
+  sihirbaz üzerinden "başlatıldı" diyordu. Artık iş sürerken Ctrl+C kapatmıyor, durumu
+  söylüyor — iptal edilemeyen bir işi iptal edilmiş gibi göstermiyoruz.
+- **Süre önbelleği kapanışta yazılıyor:** yazma 1 sn gecikmeli ve zamanlayıcı unref'li;
+  kapanış o pencereye denk gelirse ölçümler diske hiç yazılmıyor ve sonraki açılış
+  boşuna yeniden ffprobe'luyordu. (Önbellek girdilerinin budanması BİLEREK yapılmadı:
+  albüm klasörü geçici olarak erişilemezse — ağ/mount — budama tüm önbelleği silip tam
+  da kaçınmak istediğimiz 2 dakikalık açılış taramasını geri getirirdi.)
+- **Uzantısız local çıktı:** `lastIndexOf('.')` = -1 iken ad bozuluyordu ("out" →
+  "ou-2t"). Artık numara sona ekleniyor.
+- **Klip hata mesajı:** çalışma klibi hazırlanamadığında log "mola görseli" diyordu.
+- **albums:publish çıkış mesajı:** "albüm geçişinde girer" yazıyordu; albüm listesi
+  yalnızca `start()`/restart'ta okunuyor, yani doğrusu yeniden başlatma.
+
+### Doğrulama
+
+- 770 test (yeni: 3 hız sınırı kovası, 4 kuyruk tur sınırı, kapanışta exit, uzantısız
+  çıktı, sihirbaz Ctrl+C, kilit kalkanı).
+- Düzeltmeler tek tek geri alınıp sınandı: yeni testler eski kodda düşüyor. Tek istisna
+  instance kilidi — gerçek yarış iki süreç gerektirir, oradaki test devralma kurallarının
+  bozulmadığını sınayan bir kalkan (testin kendi yorumunda yazıyor).
+- Uçtan uca gerçek ffmpeg koşusu tekrarlandı (Faz K'daki kareler): komut bozulmadı.

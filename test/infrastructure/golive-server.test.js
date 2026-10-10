@@ -222,9 +222,41 @@ test('hız sınırı aşılınca 429', () => withServer(
   { goLiveService: fakeService(), now: () => 1000 }, // sabit zaman: pencere ilerlemiyor
   async ({ call }) => {
     const codes = [];
-    for (let i = 0; i < 22; i++) codes.push((await call('/status')).status);
+    for (let i = 0; i < 62; i++) codes.push((await call('/status')).status);
     assert.ok(codes.includes(429), 'bir noktada 429 dönmeli');
     assert.equal(codes[0], 200);
+  },
+));
+
+// 10 Ekim 2026: tek global sayaç vardı ve /status yoklaması /go-live'ı kilitliyordu.
+test('sık /status yoklaması /go-live bütçesini YEMEZ (ayrı kovalar)', () => withServer(
+  { goLiveService: fakeService(), now: () => 1000 },
+  async ({ call }) => {
+    for (let i = 0; i < 61; i++) await call('/status'); // kendi kovasını doldur
+    assert.equal((await call('/status')).status, 429, '/status kovası dolmuş olmalı');
+    assert.equal((await call('/go-live', { method: 'POST' })).status, 202, 'yayın açma hâlâ çalışmalı');
+  },
+));
+
+test('yetkisiz istekler meşru kullanıcının bütçesini YEMEZ', () => withServer(
+  { goLiveService: fakeService(), now: () => 1000 },
+  async ({ call }) => {
+    const codes = [];
+    for (let i = 0; i < 25; i++) codes.push((await call('/status', { token: 'yanlis-token' })).status);
+    assert.ok(codes.includes(401), 'yetkisiz istek 401 almalı');
+    assert.ok(codes.includes(429), 'yetkisiz istekler de kendi kovasında sınırlı');
+    assert.equal((await call('/status')).status, 200, 'tokenı olanın yolu açık kalmalı');
+  },
+));
+
+test('/go-live kendi (dar) bütçesinde sınırlanır', () => withServer(
+  { goLiveService: fakeService(), now: () => 1000 },
+  async ({ call }) => {
+    const codes = [];
+    for (let i = 0; i < 12; i++) codes.push((await call('/go-live', { method: 'POST' })).status);
+    assert.equal(codes[0], 202);
+    assert.ok(codes.includes(429));
+    assert.equal((await call('/status')).status, 200, 'durum sorgusu etkilenmemeli');
   },
 ));
 

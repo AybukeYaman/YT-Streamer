@@ -67,7 +67,7 @@ async function ensureStreamClip({ sourcePath, runtimeDir, log, name = 'break-bac
   fs.mkdirSync(runtimeDir, { recursive: true });
   const result = await convertAny(sourcePath, out);
   if (!result.ok) {
-    log.warn(`mola görseli hazırlanamadı: ${result.stderr.trim().split(/\r?\n/).slice(-1)[0]}`);
+    log.warn(`${clipLabel} hazırlanamadı: ${result.stderr.trim().split(/\r?\n/).slice(-1)[0]}`);
     return null;
   }
   try {

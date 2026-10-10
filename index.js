@@ -231,6 +231,10 @@ async function main() {
     shuttingDown = true;
     log.info(`${reason} alındı`);
     await controlService.stop(); // supervisor.stop()'a delege eder: bekleyen yeniden başlatma da iptal
+    // Süre önbelleği gecikmeli yazılıyor (son eklemeden 1 sn sonra) ve zamanlayıcısı
+    // unref'li: kapanış o pencereye denk gelirse ölçümler diske HİÇ yazılmıyordu ve
+    // sonraki açılış boşuna yeniden ffprobe'luyordu. Kapanışta bekleyeni boşalt.
+    durationCache.flush();
     if (tui) tui.close(); // terminali eski haline getir (imleç, raw mode, stdin serbest)
     lock.release(); // runtime kilidini bırak (idempotent)
     log.info('temiz kapanış tamamlandı');

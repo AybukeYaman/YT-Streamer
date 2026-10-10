@@ -20,8 +20,24 @@ const http = require('http');
 const crypto = require('crypto');
 
 const MAX_BODY_BYTES = 4096;
-// Kaba hız sınırı: canlı yayın açan bir endpoint için istek hacmi zaten çok düşük.
-const RATE_LIMIT = { windowMs: 60000, max: 20 };
+// Hız sınırı ROUTE BAŞINA ve yetkilendirmeden SONRA (10 Ekim 2026). Eskiden tek bir
+// global sayaç vardı (60 sn'de 20 istek) ve auth'tan ÖNCE işliyordu; iki ayrı sorun:
+//   1. /status'un yorumu "telefon sık yoklayabilsin" diyor ama 3 sn'de bir yoklayan bir
+//      Shortcuts/widget dakikada 20'yi aşıyor ve AYNI pencerede /go-live 429 alıyordu —
+//      yani sık yoklamak yayını açma yeteneğini kilitliyordu.
+//   2. Sayaç auth'tan önce olduğu için yetkisiz istekler de onu dolduruyordu: tokenı
+//      olmayan biri sahibi kilitleyebiliyordu.
+// Çözüm: /go-live kendi (dar) bütçesinde, /status kendi (geniş) bütçesinde. Yetkisiz
+// istekler ayrı bir kovada sayılır — kaba kuvvet denemesi yine sınırlı ama meşru
+// kullanıcının bütçesinden yemiyor.
+const RATE_LIMITS = Object.freeze({
+  // Canlı yayın açan endpoint: hacim zaten çok düşük, dar tutulur.
+  '/go-live': { windowMs: 60000, max: 10 },
+  // Salt okuma ve API'ye gitmiyor (diskten): telefon rahatça yoklayabilsin.
+  '/status': { windowMs: 60000, max: 60 },
+  // Yetkisiz denemeler: tek kova, tüm route'lar ortak.
+  unauthorized: { windowMs: 60000, max: 20 },
+});
 
 const sha256 = (value) => crypto.createHash('sha256').update(String(value)).digest();
 
@@ -72,7 +88,7 @@ class GoLiveServer {
     this.port = port;
     this.now = now;
     this.healthProvider = healthProvider;
-    this.hits = [];
+    this.hits = new Map(); // kova adı → istek zaman damgaları
     this.server = http.createServer((req, res) => this.#handle(req, res));
   }
 
@@ -122,11 +138,16 @@ class GoLiveServer {
     }
   }
 
-  #rateLimited() {
-    const cutoff = this.now() - RATE_LIMIT.windowMs;
-    this.hits = this.hits.filter((t) => t > cutoff);
-    if (this.hits.length >= RATE_LIMIT.max) return true;
-    this.hits.push(this.now());
+  // bucket: RATE_LIMITS anahtarı. Her kovanın kendi penceresi ve sayacı var; bir kovanın
+  // dolması diğerlerini etkilemez.
+  #rateLimited(bucket) {
+    const limit = RATE_LIMITS[bucket];
+    if (!limit) return false; // sınırı olmayan route (ör. /healthz)
+    const cutoff = this.now() - limit.windowMs;
+    const kept = (this.hits.get(bucket) ?? []).filter((t) => t > cutoff);
+    this.hits.set(bucket, kept);
+    if (kept.length >= limit.max) return true;
+    kept.push(this.now());
     return false;
   }
 
@@ -141,15 +162,21 @@ class GoLiveServer {
         return this.#json(res, 200, { ok: true });
       }
 
-      if (this.#rateLimited()) {
-        this.log.warn(`hız sınırı aşıldı (${route})`);
-        return this.#json(res, 429, { error: 'rate_limited' });
-      }
-
+      // Sıra önemli: önce auth. Yetkisiz istekler meşru kullanıcının route bütçesini
+      // yemesin, ama kendi kovalarında yine sınırlı kalsın (kaba kuvvet).
       if (!this.#authorized(req)) {
+        if (this.#rateLimited('unauthorized')) {
+          this.log.warn(`yetkisiz istek hız sınırına takıldı (${route})`);
+          return this.#json(res, 429, { error: 'rate_limited' });
+        }
         // Hangi yolun denendiği loglanır, token ASLA loglanmaz.
         this.log.warn(`yetkisiz istek: ${req.method} ${route}`);
         return this.#json(res, 401, { error: 'unauthorized' });
+      }
+
+      if (this.#rateLimited(route)) {
+        this.log.warn(`hız sınırı aşıldı (${route})`);
+        return this.#json(res, 429, { error: 'rate_limited' });
       }
 
       if (route === '/go-live') {
@@ -210,4 +237,4 @@ class GoLiveServer {
   }
 }
 
-module.exports = { GoLiveServer, MAX_BODY_BYTES, RATE_LIMIT };
+module.exports = { GoLiveServer, MAX_BODY_BYTES, RATE_LIMITS };

@@ -177,6 +177,16 @@ test('runNumber verilirse local çıktı tura göre ayrı dosya; rtmp hedefi de�
   assert.equal(rtmp.at(-1), 'rtmps://a.rtmps.youtube.com/live2/k');
 });
 
+test('uzantısız local çıktıda tur numarası sona eklenir (ad bozulmaz)', () => {
+  // Eskiden lastIndexOf('.') = -1 → slice(0,-1) son karakteri kesip "out" → "ou-2t"
+  // gibi bozuk bir ad üretiyordu.
+  const args = buildFfmpegArgs({
+    profile, backgroundPath: BG, playlistPath: 'p', runNumber: 2,
+    output: { mode: 'local', localPath: 'C:/runtime/out' },
+  });
+  assert.equal(args.at(-1), 'C:/runtime/out-2');
+});
+
 test('boşluklu yollar tek argüman olarak kalır', () => {
   const args = buildFfmpegArgs({ profile, backgroundPath: BG, audioPath: AUDIO, output: LOCAL });
   assert.ok(args.includes(BG));
