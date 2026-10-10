@@ -11,12 +11,15 @@
 // Varsayılan bind 127.0.0.1. Dışarıya açmak `tailscale serve` ile yapılır — bkz.
 // scripts/deploy/README.md.
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const { Logger } = require('../src/infrastructure/logger');
 const { loadConfig } = require('../src/config/load-config');
 const { instanceLabel } = require('../src/config/parse-args');
 const { loadYoutubeCredentials } = require('../src/infrastructure/youtube-credentials');
 const { buildGoLive } = require('../src/composition/go-live-wiring');
+const { buildConfigService } = require('../src/composition/config-wiring');
+const { ConfigApi } = require('../src/application/config-api');
 const { GoLiveServer } = require('../src/infrastructure/golive-server');
 const { HealthMonitor } = require('../src/application/health-monitor');
 const { IngestCheck } = require('../src/application/checks/ingest-check');
@@ -27,6 +30,10 @@ const { WebhookAlerter, createAlivePinger } = require('../src/infrastructure/web
 const { readMtimeMs, fileExists } = require('../src/infrastructure/file-stat');
 
 const DEFAULT_PORT = 8787;
+// /config'te "Kaydet ve Yeniden Başlat" bu unit'i hedefler. index.js'teki --plan-only
+// --restart ile AYNI unit adı (bkz. plan-only-control-service.js kullanan yer) — ikisi
+// de VPS'teki tek yayın birimini yeniden başlatıyor.
+const STREAM_UNIT = 'yt-streamer.service';
 // Park işareti ve .env yolları repo köküne göre çözülür (çalışma dizininden bağımsız,
 // systemd WorkingDirectory'si değişse de doğru).
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -91,6 +98,34 @@ async function main() {
   const { service } = buildGoLive({
     configFile: args.configFile, envFile: args.envFile, logger, encoderCheck, alerter,
   });
+
+  // /config (Faz N2): yayın motorunu KURMAZ, yalnızca StreamConfigService (plan okuma/
+  // yazma, klip hazırlama). restartStream systemctl sarmalıyor — index.js'teki
+  // --plan-only --restart ile aynı desen (bkz. plan-only-control-service.js).
+  const configService = buildConfigService({
+    config,
+    logger,
+    controlService: {
+      async restart() {
+        const res = spawnSync('systemctl', ['restart', STREAM_UNIT], { encoding: 'utf8' });
+        if (res.error) throw new Error(`systemctl çalıştırılamadı: ${res.error.message}`);
+        if (res.status !== 0) throw new Error(`systemctl restart başarısız (kod ${res.status}): ${(res.stderr || '').trim()}`);
+      },
+    },
+  });
+  await configService.prepareActive();
+  const configApi = new ConfigApi({
+    configService,
+    restartStream: async () => {
+      try {
+        await configService.restart();
+        return { ok: true, message: `${STREAM_UNIT} yeniden başlatıldı` };
+      } catch (err) {
+        return { ok: false, message: err.message };
+      }
+    },
+    log: logger.child('config'),
+  });
   const monitor = new HealthMonitor({
     checks: [
       new IngestCheck({ goLiveService: service }),
@@ -115,11 +150,12 @@ async function main() {
     // /status periyodik izlemenin son gördüğü durumu da gösterir: API'ye gitmeden
     // (kota harcamadan) "encoder yazıyor mu, ingest akıyor mu" sorusunun cevabı.
     healthProvider: () => monitor.snapshot(),
+    configApi,
   });
 
   await server.listen();
   log.info(`yayın başlığı: "${config.broadcast.title}" (${config.broadcast.privacyStatus})`);
-  log.info('POST /go-live · GET /status · GET /healthz');
+  log.info('POST /go-live · GET /status · GET /healthz · GET+POST /config');
 
   monitor.start();
 

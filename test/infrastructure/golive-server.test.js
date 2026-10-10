@@ -266,3 +266,128 @@ test('varsayılan bind 127.0.0.1 (dışarıya açılmaz)', () => {
   assert.equal(server.host, '127.0.0.1');
   assert.equal(server.port, 8787);
 });
+
+// ─── /config (Faz N2) ──────────────────────────────────────────────────────
+
+function fakeConfigApi({ saveResult = { ok: true, plan: {}, warnings: [], restarted: false, restartError: null } } = {}) {
+  const saveCalls = [];
+  return {
+    saveCalls,
+    form: async () => ({ plan: { name: 'adsız', pomodoro: { enabled: false, type: '50+10', studyVideos: [], breakVideos: [] } }, clips: ['/clips/a.mp4'] }),
+    save: async (fields) => { saveCalls.push(fields); return saveResult; },
+  };
+}
+
+test('configApi verilmezse /config 404 döner (mevcut kurulumlar etkilenmez)', () => withServer(
+  { goLiveService: fakeService() },
+  async ({ call }) => {
+    const res = await call('/config');
+    assert.equal(res.status, 404);
+  },
+));
+
+test('GET /config: HTML döner, configApi.form() çağrılır', () => withServer(
+  { goLiveService: fakeService(), configApi: fakeConfigApi() },
+  async ({ base }) => {
+    const res = await fetch(`${base}/config?token=${TOKEN}`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /text\/html/);
+    const html = await res.text();
+    assert.match(html, /<!doctype html>/i);
+  },
+));
+
+test('GET /config: token olmadan 401 (auth diğer route\'larla aynı)', () => withServer(
+  { goLiveService: fakeService(), configApi: fakeConfigApi() },
+  async ({ call }) => {
+    const res = await call('/config', { token: null });
+    assert.equal(res.status, 401);
+  },
+));
+
+test('/config kendi hız sınırı kovasında', () => withServer(
+  { goLiveService: fakeService(), configApi: fakeConfigApi(), now: () => 1000 },
+  async ({ base }) => {
+    const codes = [];
+    for (let i = 0; i < 32; i++) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await fetch(`${base}/config?token=${TOKEN}`);
+      codes.push(res.status);
+    }
+    assert.ok(codes.includes(429), '30 isteklik sınır aşılmalı');
+  },
+));
+
+test('POST /config: form alanları configApi.save\'e doğru şekilde taşınır', async () => {
+  const { log } = fakeLog();
+  const api = fakeConfigApi();
+  const server = new GoLiveServer({ authToken: TOKEN, log, port: 0, goLiveService: fakeService(), configApi: api });
+  await server.listen();
+  const base = `http://127.0.0.1:${server.boundPort}`;
+  try {
+    const body = new URLSearchParams();
+    body.append('pomodoroEnabled', 'on');
+    body.append('pomodoroType', '45+15');
+    body.append('studyVideos', '/clips/a.mp4');
+    body.append('studyVideos', '/clips/b.mp4');
+    body.append('breakVideos', '/clips/c.mp4');
+    body.append('action', 'save_restart');
+    const res = await fetch(`${base}/config?token=${TOKEN}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(api.saveCalls.length, 1);
+    assert.deepEqual(api.saveCalls[0], {
+      pomodoroEnabled: true,
+      pomodoroType: '45+15',
+      studyVideos: ['/clips/a.mp4', '/clips/b.mp4'],
+      breakVideos: ['/clips/c.mp4'],
+      restart: true,
+    });
+  } finally {
+    await server.close();
+  }
+});
+
+test('POST /config: başarısız save hatayla aynı sayfayı basar, 200 döner', async () => {
+  const { log } = fakeLog();
+  const api = fakeConfigApi({ saveResult: { ok: false, error: 'listede olmayan klip yolu reddedildi: /etc/passwd' } });
+  const server = new GoLiveServer({ authToken: TOKEN, log, port: 0, goLiveService: fakeService(), configApi: api });
+  await server.listen();
+  const base = `http://127.0.0.1:${server.boundPort}`;
+  try {
+    const res = await fetch(`${base}/config?token=${TOKEN}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'studyVideos=%2Fetc%2Fpasswd',
+    });
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /listede olmayan klip yolu reddedildi/);
+  } finally {
+    await server.close();
+  }
+});
+
+test('POST /config: başarılı restart notice\'ta görünür', async () => {
+  const { log } = fakeLog();
+  const api = fakeConfigApi({
+    saveResult: { ok: true, plan: {}, warnings: [], restarted: true, restartError: null },
+  });
+  const server = new GoLiveServer({ authToken: TOKEN, log, port: 0, goLiveService: fakeService(), configApi: api });
+  await server.listen();
+  const base = `http://127.0.0.1:${server.boundPort}`;
+  try {
+    const res = await fetch(`${base}/config?token=${TOKEN}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'action=save_restart',
+    });
+    const html = await res.text();
+    assert.match(html, /yeniden başlatıldı/);
+  } finally {
+    await server.close();
+  }
+});

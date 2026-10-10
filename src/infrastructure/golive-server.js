@@ -16,10 +16,16 @@
 //   POST /go-live   → yayını canlıya al (idempotent; süren istek varsa 409)
 //   GET  /status    → durum (?refresh=1 API'den taze bilgi; varsayılan diskten)
 //   GET  /healthz   → auth'suz, yalnızca "ayakta mıyım" (izleme/uptime içinmuş)
+//   GET  /config    → mobil yapılandırma sayfası (configApi verilmişse; Faz N2)
+//   POST /config    → sayfadaki formu uygular
 const http = require('http');
 const crypto = require('crypto');
+const { renderConfigPage } = require('../ui/config-page');
 
 const MAX_BODY_BYTES = 4096;
+// /config formu: çok sayıda klip yolu (checkbox) taşıyabilir — /go-live'ın boş gövdesinden
+// çok daha büyük olabilir, o yüzden ayrı (daha geniş) bir sınır.
+const CONFIG_MAX_BODY_BYTES = 65536;
 // Hız sınırı ROUTE BAŞINA ve yetkilendirmeden SONRA (10 Ekim 2026). Eskiden tek bir
 // global sayaç vardı (60 sn'de 20 istek) ve auth'tan ÖNCE işliyordu; iki ayrı sorun:
 //   1. /status'un yorumu "telefon sık yoklayabilsin" diyor ama 3 sn'de bir yoklayan bir
@@ -35,6 +41,9 @@ const RATE_LIMITS = Object.freeze({
   '/go-live': { windowMs: 60000, max: 10 },
   // Salt okuma ve API'ye gitmiyor (diskten): telefon rahatça yoklayabilsin.
   '/status': { windowMs: 60000, max: 60 },
+  // Yapılandırma sayfası: telefondan elle doldurulan bir form, /go-live kadar sık değil
+  // ama /status kadar da okuma-ağırlıklı değil — kendi (orta) kovası.
+  '/config': { windowMs: 60000, max: 30 },
   // Yetkisiz denemeler: tek kova, tüm route'lar ortak.
   unauthorized: { windowMs: 60000, max: 20 },
 });
@@ -65,15 +74,38 @@ function drainBody(req, limit = MAX_BODY_BYTES) {
   });
 }
 
+// drainBody'nin tersine gövdeyi METİN olarak döndürür — /config formu
+// (application/x-www-form-urlencoded) bunu OKUMAK zorunda.
+function readBody(req, limit = CONFIG_MAX_BODY_BYTES) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        req.pause();
+        reject(Object.assign(new Error('gövde çok büyük'), { statusCode: 413 }));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
 class GoLiveServer {
   // goLiveService: { goLive(), getStatus({refresh}) }; log: { info, warn, error }
   // healthProvider: () => ({ <kontrol>: { status, message, ... } }) — periyodik izlemenin
   // son gördüğü durum; /status'a eklenir. Verilmezse /status eskisi gibi döner.
+  // configApi: ConfigApi — verilmezse /config 404 döner (mevcut kurulumlar etkilenmez,
+  // projenin "özellik opsiyonel" deseni — bkz. ReconfigurablePomodoroPlanner).
   constructor({
     goLiveService, authToken, log,
     host = '127.0.0.1', port = 8787,
     now = () => Date.now(),
     healthProvider = null,
+    configApi = null,
   }) {
     if (typeof authToken !== 'string' || authToken.trim().length < 32) {
       // Fail-closed: auth'suz ayağa kalkmak sessiz bir güvenlik açığı olurdu.
@@ -88,6 +120,7 @@ class GoLiveServer {
     this.port = port;
     this.now = now;
     this.healthProvider = healthProvider;
+    this.configApi = configApi;
     this.hits = new Map(); // kova adı → istek zaman damgaları
     this.server = http.createServer((req, res) => this.#handle(req, res));
   }
@@ -118,6 +151,15 @@ class GoLiveServer {
       'Content-Length': Buffer.byteLength(body),
       'Cache-Control': 'no-store',
       ...extraHeaders,
+    });
+    res.end(body);
+  }
+
+  #html(res, statusCode, body) {
+    res.writeHead(statusCode, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Length': Buffer.byteLength(body),
+      'Cache-Control': 'no-store',
     });
     res.end(body);
   }
@@ -222,6 +264,40 @@ class GoLiveServer {
         // yüzden refresh=0 çağrısına da eklenir — telefon sık yoklayabilsin.
         const health = this.healthProvider ? this.healthProvider() : undefined;
         return this.#json(res, 200, { ok: true, ...status, ...(health ? { health } : {}) });
+      }
+
+      if (route === '/config') {
+        if (!this.configApi) return this.#json(res, 404, { error: 'not_found' });
+        // Token form action'ına query olarak gömülür — gövdeden okumak auth'tan ÖNCE
+        // gövdeyi okumayı gerektirirdi (bkz. dosya başındaki route listesi notu).
+        const token = url.searchParams.get('token') ?? '';
+        if (req.method === 'GET') {
+          const { plan, clips } = await this.configApi.form();
+          return this.#html(res, 200, renderConfigPage({ plan, clips, token }));
+        }
+        if (req.method === 'POST') {
+          const text = await readBody(req);
+          const params = new URLSearchParams(text);
+          const result = await this.configApi.save({
+            pomodoroEnabled: params.has('pomodoroEnabled'),
+            pomodoroType: params.get('pomodoroType') || '',
+            studyVideos: params.getAll('studyVideos'),
+            breakVideos: params.getAll('breakVideos'),
+            restart: params.get('action') === 'save_restart',
+          });
+          if (!result.ok) {
+            const { plan, clips } = await this.configApi.form();
+            return this.#html(res, 200, renderConfigPage({ plan, clips, token, error: result.error }));
+          }
+          const notice = result.restarted
+            ? 'Plan kaydedildi ve yayın yeniden başlatıldı.'
+            : result.restartError
+              ? `Plan kaydedildi — ${result.restartError}`
+              : 'Plan kaydedildi.';
+          const { plan, clips } = await this.configApi.form();
+          return this.#html(res, 200, renderConfigPage({ plan, clips, token, notice }));
+        }
+        return this.#json(res, 405, { error: 'method_not_allowed' });
       }
 
       return this.#json(res, 404, { error: 'not_found' });

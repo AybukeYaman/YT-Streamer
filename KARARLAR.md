@@ -1950,3 +1950,58 @@ klip override kaldırıldı), `src/infrastructure/ffmpeg-encoder.js`
   kullanıldı) renkli test klipleriyle `buildFfmpegArgs` çağrılıp gerçek ffmpeg çalıştırıldı;
   t=1/4/8 sn karelerinde beklenen renkler (kırmızı/yeşil/kırmızı) birebir çıktı — split
   tabanlı overlay zinciri doğru çalışıyor.
+
+---
+
+## [Faz N2] Web yapılandırma sayfası: `/config` — SSH'sız yapılandırma — 11 Ekim 2026
+
+**Soru:** N1 (`--plan-only`) SSH gerektiriyor; kullanıcının asıl isteği "SSH ve JSON
+olmadan" yapılandırma. Çözüm: `yt-golive` sunucusuna (zaten tailscale üzerinden
+telefondan erişilen HTTP servisi) `/config` route'u eklemek.
+
+**Karar ve mimari:**
+- `src/ui/config-page.js` (yeni) — saf fonksiyon (`renderConfigPage`), veri → HTML.
+  `fs`/`http` yok, testte kolay. Mobil: viewport meta, tek sütun, ≥44px dokunma hedefleri,
+  dosya adları HTML-kaçışlı (XSS kapatılır).
+- `src/application/config-api.js` (yeni) — `ConfigApi`: form↔StreamConfigService köprüsü.
+  `save()` kuralları: `studyVideos`/`breakVideos` YALNIZCA `listClips()`'teki yollardan
+  biri olabilir (yol sızması/traversal KAPALI); pomodoro açıkken tür `resolvePomodoroType`
+  ile doğrulanır; mevcut planın `music`/`cover`/`metadata` alanları `StreamPlan#with()` ile
+  KORUNUR; doğrulama hatasında plan YAZILMAZ; restart istenip `restartStream` verilmemişse
+  ya da hata verirse `ok` BOZULMAZ (plan zaten kaydedildi), yalnızca mesajda belirtilir.
+- `src/infrastructure/golive-server.js` — `configApi` opsiyonel (verilmezse `/config` 404,
+  mevcut kurulumlar etkilenmez). `GET /config` sayfayı basar, `POST /config` formu okur
+  (`readBody` — `drainBody`'nin tersi, `/go-live`'ın boş gövdesinden büyük olabileceği için
+  ayrı limit, 64 KB) ve sonucu `notice`/`error` ile AYNI sayfaya yeniden basar. Token form
+  `action`'ına **query** olarak gömülür (`/config?token=...`) — gövdeden okumak auth'tan
+  ÖNCE gövdeyi okumayı gerektirirdi, mevcut `#authorized` değişmeden kullanılabildi. Kendi
+  hız sınırı kovası (`/config`: 30/dk — `/go-live` kadar dar değil, `/status` kadar da
+  gevşek değil).
+- `src/composition/config-wiring.js` (yeni) — `buildConfigService`: go-live sürecinin
+  kendi `StreamConfigService`'i. **v1 sadeleştirmesi (öneri (a) seçildi):** albüm taraması
+  YAPILMAZ (`albumRepository: { list: async () => [] }`) — `AlbumRepository.list()` ffprobe
+  zinciri demek ve go-live süreci her `/config` açılışında kütüphaneyi tarayıp
+  `runtime/durations.json` önbelleğine YAYIN SÜRECİYLE BİRLİKTE (iki süreç) yazardı. Klip
+  adayları yalnızca `MediaLibrary.videos()` (ffprobe gerektirmez, dosya tarar) — zaten v1'de
+  müzik seçimi web formunda yok, albüm listesine ihtiyaç da yok.
+- `scripts/golive-server.js` — `buildConfigService` + `ConfigApi` kurulur, `restartStream`
+  `systemctl restart yt-streamer.service` sarar (N1'deki `PlanOnlyControlService` ile aynı
+  desen, iki ayrı yerde kopyalanmasın diye birebir aynı unit adı ve hata mesajı biçimi).
+
+**Açık kararlar çözüldü:**
+- Web formunda müzik/albüm seçimi v1'e GİRMEDİ (önerilen karar) — 498 parça telefonda
+  seçtirmek kullanışsız, albüm seçimi `npm run plan` sihirbazında kalıyor.
+- POST sonrası aynı sayfa `notice`/`error` ile yeniden basılıyor (303+GET yerine basit yol).
+
+**Etki:** `src/ui/config-page.js` (yeni), `src/application/config-api.js` (yeni),
+`src/composition/config-wiring.js` (yeni), `src/infrastructure/golive-server.js`
+(`/config` route'ları + `readBody` + hız sınırı kovası), `scripts/golive-server.js`
+(kurulum), `scripts/deploy/README.md` (kullanım + "ana ekrana ekle" talimatı).
+
+### Doğrulama
+
+- 822 test (yeni: 10 `ConfigApi`, 8 `config-page`, 7 `/config` route — 404 opsiyonel,
+  auth, hız sınırı, form→save alan eşlemesi, başarı/hata sonucu aynı sayfaya basma).
+- Gerçek tarayıcı testi (Android Chrome / iPad Safari) YAPILMADI — VPS'e deploy edildikten
+  sonra scripts/deploy/README.md'deki adımla elle doğrulanmalı (headless ortamda telefon
+  tarayıcısı simüle edilemiyor).

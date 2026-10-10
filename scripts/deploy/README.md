@@ -349,6 +349,29 @@ ile `POST` at. URL'deki token tarayıcı geçmişine ve sunucu loglarına düşe
 > Düz HTTP üzerinden bearer token göndermek onu sızdırır. Canlı yayın başlatabilen bir
 > endpoint için kabul edilemez, bu yüzden TLS'siz dışa açma **yapılmaz**.
 
+## Yayın yapılandırması: telefondan, SSH'sız (`/config`)
+
+Çalışma/mola görselini veya Pomodoro süresini değiştirmek için eskiden SSH'tan elle
+JSON yazmak gerekiyordu. Artık `yt-golive` servisinin verdiği `/config` sayfası aynı
+tailnet adresinden açılır — **SSH gerekmez**, `/go-live` ile aynı token kullanılır:
+
+```
+https://<makine>.<tailnet-adi>.ts.net/config?token=<GOLIVE_AUTH_TOKEN>
+```
+
+Açılan sayfada Pomodoro aç/kapa, süre (`50+10`, `30+10` ya da serbest `<çalışma>+<mola>`)
+ve çalışma/mola görselleri (ÇOKLU seçim — her session havuzdan rastgele bir klip kullanır,
+ardışık iki session aynı klibi tekrarlamaz) değiştirilip **Kaydet** ya da **Kaydet ve
+Yeniden Başlat** ile uygulanır. Müzik/albüm seçimi bu sayfada YOK — "tüm kütüphane"
+varsayılanı korunur; albüm seçimi için VPS'te `npm run plan` (bkz. ana README).
+
+**Ana ekrana kısayol (önerilir, tek dokunuşla açılsın, token her seferinde yazılmasın):**
+- **Android Chrome:** sayfayı aç → ⋮ menü → "Ana ekrana ekle"
+- **iPad Safari:** sayfayı aç → Paylaş → "Ana Ekrana Ekle"
+
+Bu, go-live tetiği için önerilen iOS Shortcuts kullanımının yerini TUTMAZ — `/go-live`
+hâlâ Shortcuts'tan tetiklenir, `/config` yalnızca yapılandırma ekranıdır.
+
 ## Yayın ölürse haber alma (sağlık izleme)
 
 `yt-golive` servisi, yayın yapmanın yanında **60 saniyede bir iki şeyi yokluyor**:
