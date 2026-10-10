@@ -66,24 +66,38 @@ test('plan: overlay metinleri ve bip zamanları encoder biçiminde döner', () =
   assert.equal(pomodoro.statusTexts[1].end, null, 'son faz açık uçlu olmalı');
   assert.equal(writes.get('/ov/pomodoro-001.txt'), 'STUDY');
   assert.equal(writes.get('/ov/pomodoro-002.txt'), 'BREAK');
-  assert.equal(writes.get('/ov/pomodoro-label.txt'), 'POMODORO 50+10');
-  assert.equal(pomodoro.labelTextFile, '/ov/pomodoro-label.txt');
   assert.deepEqual(beepTimes, [18.2, 18.8, 19.4]);
 });
 
-test('30+10 türü etikete ve çizelgeye yansır', () => {
-  const { planner, writes } = setup({ type: '30+10' });
+test('"POMODORO 50+10" etiketi artık YAZILMAZ (sağ üst sayaca ve duruma ayrıldı)', () => {
+  const { planner, writes } = setup();
+  const { pomodoro } = planner.plan({ durationSeconds: 600 });
+  assert.equal(writes.get('/ov/pomodoro-label.txt'), undefined);
+  assert.equal(pomodoro.labelTextFile, undefined);
+});
+
+test('30+10 türü çizelgeye yansır', () => {
+  const { planner } = setup({ type: '30+10' });
   const { pomodoro } = planner.plan({ durationSeconds: 2500 });
-  assert.equal(writes.get('/ov/pomodoro-label.txt'), 'POMODORO 30+10');
   assert.deepEqual(pomodoro.statusTexts.map((s) => s.start), [0, 1800, 2400]);
 });
 
-test('durum yazısı parça başlığından ayrı konum ve punto alır', () => {
+test('geri sayım döngünün ölçüleriyle birlikte döner (çalıştırmaya göreli offset)', () => {
+  // Döngü 55 dk önce başladı → çalıştırma döngünün 3300. saniyesinde yakalıyor
+  const store = fakeStore(T0 - 55 * 60_000);
+  const { planner } = setup({ store });
+  const { pomodoro } = planner.plan({ durationSeconds: 600 });
+  assert.deepEqual(pomodoro.countdown, {
+    studySeconds: 3000, cycleSeconds: 3600, offsetSeconds: 3300,
+  });
+});
+
+test('durum yazısı parça başlığından ayrı konum ve punto alır; sayaçla iki satır', () => {
   const { planner } = setup();
   const { pomodoro } = planner.plan({ durationSeconds: 600 });
   assert.equal(pomodoro.fontSize, 56);
-  assert.equal(pomodoro.statusPosition, 'center');
-  assert.equal(pomodoro.labelPosition, 'top-right');
+  assert.equal(pomodoro.statusPosition, 'top-right');
+  assert.equal(pomodoro.lineGap, 14, 'satır aralığı punto ile orantılı');
 });
 
 // ── Mola arkaplanı ───────────────────────────────────────────────────────────

@@ -121,6 +121,24 @@ class PomodoroCycle {
     return segments;
   }
 
+  // Ekrandaki geri sayımın (sağ üst) ffmpeg'e verilecek ham verisi — zamanlar yine
+  // ÇALIŞTIRMAYA GÖRELİ: offsetSeconds, çalıştırma başladığında döngünün kaçıncı
+  // saniyesinde olduğumuzdur.
+  //
+  // NEDEN SEGMENT LİSTESİ DEĞİL: geri sayım saniyede bir değişiyor, yani faz başına bir
+  // metin dosyası yazma yöntemi (STUDY/BREAK) burada işlemiyor — saatlik bir çalıştırmada
+  // binlerce dosya ve binlerce drawtext demekti. Bunun yerine kalan süreyi ffmpeg'in
+  // KENDİ zaman damgasından (t) hesaplıyoruz: döngü periyodik olduğu için tek bir
+  // ifade tüm çalıştırma boyunca geçerli (bkz. ffmpeg-encoder.js countdownText).
+  // Zamanlama yine ffmpeg'in elinde — overlay'in geri kalanıyla aynı ilke.
+  countdownFor({ nowMs }) {
+    return {
+      studySeconds: this.studySeconds,
+      cycleSeconds: this.cycleSeconds,
+      offsetSeconds: +(this.elapsedAt(nowMs) % this.cycleSeconds).toFixed(3),
+    };
+  }
+
   // Session geçişlerindeki uyarı bipleri — zamanlar yine ÇALIŞTIRMAYA GÖRELİ.
   // Yalnızca bu çalıştırma içinde kalan geçişler döner; çalıştırma ortasında başlayan
   // ilk faz için bip YOKTUR (o geçiş önceki çalıştırmada olmuş ya da hiç olmamıştır).

@@ -43,7 +43,9 @@ class PomodoroPlanner {
     const cycle = this.#resolveCycle();
     const nowMs = this.now();
     const segments = cycle.segmentsFor({ nowMs, durationSeconds });
-    const pomodoro = this.overlayWriter.write(cycle, segments);
+    // Geri sayım da aynı nowMs'ten: sayaç ile STUDY/BREAK yazısı tek kaynaktan geldiği
+    // için birbirinden kayamaz (mola arkaplanındaki ilkenin aynısı).
+    const pomodoro = this.overlayWriter.write(segments, cycle.countdownFor({ nowMs }));
     const beepTimes = cycle.beepTimesFor({ nowMs, durationSeconds });
     // Mola arkaplanı: molanın zaman pencereleri BREAK yazısıyla aynı segmentlerden
     // türüyor — görsel ile yazı tek kaynaktan geldiği için birbirinden kayamaz.

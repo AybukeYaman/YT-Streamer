@@ -669,12 +669,14 @@ test('pomodoroPlanner verilmezse encoder\'a pomodoro argümanı GİTMEZ', async 
   assert.deepEqual(Object.keys(encoder.starts[0]).sort(), ['backgroundPath', 'playlistPath', 'runNumber']);
 });
 
+const COUNTDOWN = { studySeconds: 3000, cycleSeconds: 3600, offsetSeconds: 120 };
+
 test('pomodoroPlanner verilirse plan çalıştırma süresiyle çağrılır, sonucu encoder\'a geçer', async () => {
   const calls = [];
   const planner = {
     plan(args) {
       calls.push(args);
-      return { pomodoro: { statusTexts: [], labelTextFile: '/ov/l.txt' }, beepTimes: [5.5], phase: 'study' };
+      return { pomodoro: { statusTexts: [], countdown: COUNTDOWN }, beepTimes: [5.5], phase: 'study' };
     },
   };
   const encoder = new FakeEncoder();
@@ -690,7 +692,7 @@ test('pomodoroPlanner verilirse plan çalıştırma süresiyle çağrılır, son
   // 2 parça × 60 sn = 120 sn
   assert.deepEqual(calls, [{ durationSeconds: 120 }]);
   assert.deepEqual(encoder.starts[0].beepTimes, [5.5]);
-  assert.equal(encoder.starts[0].pomodoro.labelTextFile, '/ov/l.txt');
+  assert.deepEqual(encoder.starts[0].pomodoro.countdown, COUNTDOWN);
 });
 
 test('her playlist yeniden başlatmasında plan tazelenir (faz gerçek zamanda ilerler)', async () => {

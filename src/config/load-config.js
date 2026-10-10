@@ -18,9 +18,11 @@ const POMODORO_DEFAULTS = Object.freeze({
   // Molada gösterilecek görsel/video (ham dosya — açılışta klibe çevrilir).
   // null: mola boyunca normal arkaplan rotasyonu devam eder.
   breakBackground: null,
-  fontSize: 56,
-  statusPosition: 'center',
-  labelPosition: 'top-right',
+  // Sayaç ve STUDY/BREAK yazısının punto'su (ikisi de sağ üstte, alt alta). Parça
+  // başlığından ayrı: 40, iki satırın köşeye sığdığı ve 720p'de uzaktan okunduğu değer.
+  fontSize: 40,
+  // Sağ üst: 1. satır geri sayım, 2. satır STUDY/BREAK. Parça başlığı sol altta kalır.
+  statusPosition: 'top-right',
 });
 const PRIVACY_STATUSES = ['public', 'unlisted', 'private'];
 
@@ -178,10 +180,8 @@ function loadConfig({
       problems.push('"pomodoro.breakBackground" dosya yolu (metin) ya da null olmalı');
     }
     // Konum değerlerinin geçerliliğini drawtext'i kuran encoder doğruluyor (tek kaynak).
-    for (const key of ['statusPosition', 'labelPosition']) {
-      if (rawPomodoro[key] !== undefined && !isNonEmptyString(rawPomodoro[key])) {
-        problems.push(`"pomodoro.${key}" metin olmalı`);
-      }
+    if (rawPomodoro.statusPosition !== undefined && !isNonEmptyString(rawPomodoro.statusPosition)) {
+      problems.push('"pomodoro.statusPosition" metin olmalı');
     }
   }
 

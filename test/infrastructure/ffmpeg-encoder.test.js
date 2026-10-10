@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
 
-const { FfmpegEncoder, buildFfmpegArgs, parseProgressLine, escapeFilterPath } = require('../../src/infrastructure/ffmpeg-encoder');
+const { FfmpegEncoder, buildFfmpegArgs, parseProgressLine, escapeFilterPath, countdownText } = require('../../src/infrastructure/ffmpeg-encoder');
 const { Encoder } = require('../../src/application/encoder');
 const { StreamProfile } = require('../../src/domain/stream-profile');
 
@@ -387,10 +387,10 @@ test('start: rotasyon listesi verilince kurulumdaki backgroundPath kullanılmaz'
 // ── Pomodoro ─────────────────────────────────────────────────────────────────
 const POMO = {
   statusTexts: [{ textFile: '/ov/pomodoro-001.txt', start: 0, end: 600 }, { textFile: '/ov/pomodoro-002.txt', start: 600, end: null }],
-  labelTextFile: '/ov/pomodoro-label.txt',
-  fontSize: 56,
-  statusPosition: 'center',
-  labelPosition: 'top-right',
+  countdown: { studySeconds: 3000, cycleSeconds: 3600, offsetSeconds: 120 },
+  fontSize: 40,
+  statusPosition: 'top-right',
+  lineGap: 10,
 };
 
 test('pomodoro kapalıyken komut bugünküyle BİREBİR aynı (regresyon kalkanı)', () => {
@@ -401,16 +401,39 @@ test('pomodoro kapalıyken komut bugünküyle BİREBİR aynı (regresyon kalkan�
   assert.ok(withoutArgs.includes('-vf'));
 });
 
-test('pomodoro açık: durum yazıları kendi aralığında, tür etiketi sürekli', () => {
+test('pomodoro acik: sag ustte sayac, hemen altinda durum yazisi', () => {
   const args = buildFfmpegArgs({ profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL, overlay: OVERLAY, overlayTexts: [], pomodoro: POMO });
   const vf = args[args.indexOf('-vf') + 1];
   // Ters bolu iceren enable ifadesi: duz metin karsilastirmasi (regex kacisi kirilgan)
   assert.ok(vf.includes("textfile='/ov/pomodoro-001.txt':enable='gte(t\\,0.000)*lt(t\\,600.000)'"));
   assert.ok(vf.includes("textfile='/ov/pomodoro-002.txt':enable='gte(t\\,600.000)'"));
-  // Etiket son drawtext ve enable TASIMIYOR (hep ekranda)
-  assert.ok(vf.endsWith("textfile='/ov/pomodoro-label.txt'"));
-  assert.ok(vf.includes('fontsize=56:fontcolor=white:x=(w-tw)/2:y=(h-th)/2'), 'durum ortada ve buyuk punto');
-  assert.ok(vf.includes('fontsize=28:fontcolor=white:x=w-tw-40:y=40'), 'etiket sag ustte, normal punto');
+  // 1. satir: sayac sag ustte (y=40) ve enable TASIMIYOR — hep ekranda, faz fark etmez
+  assert.ok(vf.includes('fontsize=40:fontcolor=white:x=w-tw-40:y=40'), 'sayac sag ustte');
+  // 2. satir: durum yazisi, sayacin punto + lineGap kadar altinda (y: 40 + 40 + 10)
+  assert.ok(vf.includes('fontsize=40:fontcolor=white:x=w-tw-40:y=90'), 'durum sayacin hemen altinda');
+  // "POMODORO 50+10" etiketi KALDIRILDI
+  assert.ok(!vf.includes('pomodoro-label.txt'));
+});
+
+test('sayac metni ifadeden gelir: kalan sure ffmpeg zaman damgasindan hesaplanir', () => {
+  const args = buildFfmpegArgs({ profile, backgroundPath: BG, playlistPath: 'p', output: LOCAL, overlay: OVERLAY, overlayTexts: [], pomodoro: POMO });
+  const vf = args[args.indexOf('-vf') + 1];
+  assert.ok(vf.includes('mod(t+120.000\\,3600)'), 'donguye gore konum: t + offset');
+  // Metin ifadeden geliyor: bu drawtext'te expansion=none ve textfile OLMAMALI
+  const timer = vf.split(',').find((f) => f.includes('%{eif'));
+  assert.ok(timer, 'sayac drawtext bulunmali');
+  assert.ok(!timer.includes('expansion=none'));
+  assert.ok(!timer.includes('textfile='));
+});
+
+test('sayac ifadesi: tamami tek tirnakli, : ve , kacisli (ffmpeg ile dogrulandi)', () => {
+  // study 3000, cycle 3600, offset 2402.5 → kalan 597.5 → ceil 598 → "09:58"
+  const text = countdownText({ studySeconds: 3000, cycleSeconds: 3600, offsetSeconds: 2402.5 });
+  assert.ok(text.startsWith("'") && text.endsWith("'"), 'tamami tek tirnak icinde');
+  const inner = text.slice(1, -1);
+  assert.ok(!/[^\\]:/.test(inner), 'kacissiz iki nokta kalmamali');
+  assert.ok(!/[^\\],/.test(inner), 'kacissiz virgul kalmamali');
+  assert.ok(inner.includes('ceil(if(lt('), 'faz bitisine kalan sure');
 });
 
 test('pomodoro ve parça başlığı aynı anda, ayrı drawtext olarak', () => {
@@ -418,7 +441,7 @@ test('pomodoro ve parça başlığı aynı anda, ayrı drawtext olarak', () => {
   const vf = args[args.indexOf('-vf') + 1];
   assert.ok(vf.includes('track-'), 'parça başlığı korunmalı');
   assert.ok(vf.includes('pomodoro-001.txt'));
-  assert.equal((vf.match(/drawtext=/g) || []).length, TEXTS.length + 3, 'parça sayısı + 2 durum + 1 etiket');
+  assert.equal((vf.match(/drawtext=/g) || []).length, TEXTS.length + 3, 'parça sayısı + 1 sayaç + 2 durum');
 });
 
 test('bip varsa lavfi sine girişi eklenir ve ses amix ile karışır', () => {

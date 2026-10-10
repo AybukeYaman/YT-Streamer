@@ -1630,3 +1630,62 @@ npm run tui           # panel; yayın otomatik başlar, [C] sihirbazı açar
 
 Sihirbaz tuşları: `↑↓` gez · `Enter` seç · `Space` işaretle · `a`/`Tab` görünenleri
 işaretle · `/` ara · `Shift+↑↓` sırala · `x` çıkar · `m` sıra modu · `Esc` geri.
+
+---
+
+## [Faz K] Pomodoro ekran yerleşimi: sağ üstte geri sayım + durum — 10 Ekim 2026
+
+**Soru:** Pomodoro'nun ekrandaki yazıları nerede dursun ve kalan süre nasıl gösterilsin?
+
+**Karar:** Sağ üstte iki satır — 1. satır geri sayım (`12:34`), 2. satır durum
+(`STUDY` / `BREAK`). "POMODORO 50+10" tür etiketi KALDIRILDI. Parça başlığı sol altta
+kalıyor (değişmedi).
+
+**Gerekçe:**
+- Durum yazısı eskiden ORTADAYDI (`statusPosition: 'center'`) — görselin tam ortasında
+  duran büyük bir yazı, arkaplanın kendisini kapatıyordu.
+- Tür etiketi ("POMODORO 50+10") ile geri sayım aynı köşeye sığmıyor ve etiketin bilgi
+  değeri yok: süreler zaten sayaçtan ve STUDY/BREAK yazısından okunuyor.
+- Kalan süre bugüne kadar HİÇ gösterilmiyordu; izleyicinin en çok istediği bilgi buydu.
+
+**Geri sayım neden dosyadan değil İFADEDEN:** Sayaç saniyede bir değişiyor. Projedeki
+mevcut iki yöntem de burada çalışmıyordu:
+- Metin dosyasını Node'dan güncellemek ~12 sn geç kalıyor (Faz 4.4'te ölçüldü, ffmpeg
+  videoyu kuyrukta önden işliyor).
+- Faz başına bir dosya + `enable` penceresi (STUDY/BREAK yöntemi) saniye başına bir dosya
+  demekti: saatlik bir çalıştırmada binlerce dosya ve binlerce drawtext.
+
+Bunun yerine kalan süre ffmpeg'in KENDİ zaman damgasından (`t`) hesaplanıyor. Pomodoro
+döngüsü periyodik olduğu için TEK bir ifade tüm çalıştırma boyunca geçerli:
+
+```
+x   = mod(t + offset, cycle)                       döngü içindeki konum
+rem = x < study ? study - x : cycle - x            fazın bitişine kalan
+```
+
+`offset` = çalıştırma başladığında döngünün kaçıncı saniyesinde olduğumuz
+(`PomodoroCycle.countdownFor`). Böylece ilke değişmiyor: zamanlamayı ffmpeg yapıyor,
+Node yalnızca başlangıç verisini geçiyor — yeniden başlatma, çökme, deploy döngüyü
+kaydırmıyor (duvar saati hâlâ tek kaynak).
+
+**Kaçış (en sık takılınan yer):** İfadedeki `:` ve `,` drawtext'in kendi ayrıştırıcısı
+için `\` ile kaçışlanır ve tamamı tek tırnak içine alınır — ffmpeg dokümanındaki `%{eif}`
+örneğiyle aynı biçim. Tırnaksız ya da kaçışsız hali filtreyi sessizce bozuyor
+(`escapeFilterPath`'teki dersin aynısı). Gerçek ffmpeg ile doğrulandı.
+
+**Etki:**
+- `src/domain/pomodoro.js` — yeni `countdownFor({ nowMs })` (saf, I/O yok).
+- `src/application/pomodoro-overlay-writer.js` — etiket dosyası kalktı, tarif
+  `countdown` + `lineGap` taşıyor; varsayılan konum `top-right`.
+- `src/infrastructure/ffmpeg-encoder.js` — `countdownText()`, `drawtextExpr()` ve
+  konumlara `lineOffset` (aynı köşede alt alta satır).
+- `src/config/load-config.js` — `pomodoro.statusPosition` varsayılanı `center` →
+  `top-right`, `fontSize` 56 → 40 (iki satır köşeye sığsın), `labelPosition` kaldırıldı.
+
+### Doğrulama
+
+- 746 test (yeni: geri sayım verisi, sayaç ifadesinin kaçışı, iki satırın `y` konumları,
+  etiketin artık yazılmadığı).
+- Uçtan uca gerçek ffmpeg: çalışmanın bitimine 20 sn kala başlayan bir çalıştırmada
+  10. sn karesi `00:10 / STUDY`, 25. sn karesi `09:55 / BREAK` — geçişte sayaç yeni faza
+  sarıyor, yazı ile sayaç aynı anda dönüyor (ikisi de tek `nowMs`'ten).

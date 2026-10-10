@@ -146,7 +146,6 @@ async function main() {
             writeFile: writeFileAtomic,
             fontSize: config.pomodoro.fontSize,
             statusPosition: config.pomodoro.statusPosition,
-            labelPosition: config.pomodoro.labelPosition,
           }),
           store: new PomodoroStore({
             file: path.join(config.paths.runtime, 'pomodoro.json'),

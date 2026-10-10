@@ -57,23 +57,29 @@ function escapeFilterPath(filePath) {
 // Üst konumların kenar payı sabit 40 — ayarlanabilirlik şimdilik sadece alt konumlar için.
 const DEFAULT_BOTTOM_OFFSET = 80;
 
+// lineOffset: aynı köşeye alt alta birden çok satır yazmak için, KENARDAN İÇERİ doğru
+// kayma (px). Üst konumlarda aşağı, alt konumlarda yukarı gider — yani "ikinci satır"
+// her köşede köşenin bir içine düşer. Pomodoro sağ üstte iki satır kullanıyor:
+// sayaç (0) ve STUDY/BREAK (fontSize + boşluk).
 const OVERLAY_POSITIONS = {
-  'bottom-left': (bottom) => ({ x: '40', y: `h-${bottom}` }),
-  'bottom-right': (bottom) => ({ x: 'w-tw-40', y: `h-${bottom}` }),
-  'top-left': () => ({ x: '40', y: '40' }),
-  'top-right': () => ({ x: 'w-tw-40', y: '40' }),
-  // Pomodoro durumu için: parça başlığıyla aynı yere düşmesin diye ortada.
-  center: () => ({ x: '(w-tw)/2', y: '(h-th)/2' }),
+  'bottom-left': (bottom, line) => ({ x: '40', y: `h-${bottom + line}` }),
+  'bottom-right': (bottom, line) => ({ x: 'w-tw-40', y: `h-${bottom + line}` }),
+  'top-left': (_bottom, line) => ({ x: '40', y: String(40 + line) }),
+  'top-right': (_bottom, line) => ({ x: 'w-tw-40', y: String(40 + line) }),
+  center: (_bottom, line) => ({ x: '(w-tw)/2', y: line ? `(h-th)/2+${line}` : '(h-th)/2' }),
 };
 
 // bottomOffset verilmezse (eski config) 80 — mevcut davranış korunur.
-function overlayPosition(position, bottomOffset = DEFAULT_BOTTOM_OFFSET) {
+function overlayPosition(position, bottomOffset = DEFAULT_BOTTOM_OFFSET, lineOffset = 0) {
   const build = OVERLAY_POSITIONS[position];
   if (!build) throw new Error(`desteklenmeyen overlay.position "${position}" — ${Object.keys(OVERLAY_POSITIONS).join(', ')}`);
   if (!Number.isFinite(bottomOffset) || bottomOffset <= 0) {
     throw new Error(`overlay.bottomOffset pozitif sayı olmalı (${bottomOffset})`);
   }
-  return build(bottomOffset);
+  if (!Number.isFinite(lineOffset) || lineOffset < 0) {
+    throw new Error(`lineOffset negatif olmayan sayı olmalı (${lineOffset})`);
+  }
+  return build(bottomOffset, lineOffset);
 }
 
 // Saniye → enable ifadesi, yarı açık aralık start ≤ t < end (end null: sona kadar).
@@ -88,8 +94,8 @@ function enableExpr(start, end) {
 // aralığında görünür. Zamanlama ffmpeg'in video zaman damgasına (t) bağlı: sesle senkron.
 // (textfile + reload=1 ile dosyayı Node'dan güncellemek ~12 sn geç kalıyordu — KARARLAR.md.)
 // Ortak drawtext gövdesi: konum + yazı tipi + gölge.
-function drawtextStyle({ fontFile, fontSize, position, bottomOffset }) {
-  const pos = overlayPosition(position, bottomOffset);
+function drawtextStyle({ fontFile, fontSize, position, bottomOffset, lineOffset }) {
+  const pos = overlayPosition(position, bottomOffset, lineOffset);
   return [
     `fontfile=${escapeFilterPath(fontFile)}`,
     `fontsize=${fontSize}`,
@@ -107,15 +113,43 @@ function drawtext(style, textFile, enable) {
   return parts.join(':');
 }
 
+// Pomodoro geri sayımı: "12:34", fazın bitişine kalan süre.
+//
+// Metin DOSYADAN DEĞİL ifadeden geliyor (tek istisna): sayaç saniyede bir değişiyor,
+// dosya yöntemi (ffmpeg açılışta bir kez okur) burada işlemez ve faz başına bir dosya
+// yazma yöntemi saatlik çalıştırmada binlerce drawtext demek olurdu. Döngü periyodik
+// olduğu için tek bir ifade tüm çalıştırma boyunca geçerli:
+//   x   = döngü içindeki konum          mod(t + offset, cycle)
+//   rem = fazın bitişine kalan          x < study ? study-x : cycle-x
+// ceil: son saniye ekranda 00:00 değil 00:01 görünsün (geri sayımın okunuşu).
+//
+// Kaçış: ifadedeki : ve , drawtext'in kendi ayrıştırıcısı için \ ile kaçışlanır ve
+// tamamı tek tırnak içine alınır — ffmpeg dokümanındaki %{eif} örneğiyle aynı biçim.
+// Gerçek ffmpeg ile doğrulandı (10 Ekim 2026): tırnaksız ya da kaçışsız hali filtreyi
+// bozuyor (bkz. escapeFilterPath'teki aynı ders).
+const escapeExpr = (expr) => expr.replace(/[:,]/g, '\\$&');
+
+function countdownText({ studySeconds, cycleSeconds, offsetSeconds }) {
+  const x = `mod(t+${offsetSeconds.toFixed(3)},${cycleSeconds})`;
+  const rem = `ceil(if(lt(${x},${studySeconds}),${studySeconds}-${x},${cycleSeconds}-${x}))`;
+  return `'${escapeExpr(`%{eif:trunc((${rem})/60):d:2}:%{eif:mod((${rem}),60):d:2}`)}'`;
+}
+
+// Metni ifadeden üreten drawtext (sayaç). expansion=none YOK: %{...} burada tam olarak
+// yorumlanmak isteniyor — parça başlıklarının tersi, orada metin düz okunmalı.
+function drawtextExpr(style, text) {
+  return `drawtext=${style}:text=${text}`;
+}
+
 // overlay: { fontFile, fontSize, position, bottomOffset } ya da null (overlay kapalı → sadece scale).
 // overlayTexts: [{ textFile, start, end }] — parça başına bir drawtext, sadece kendi zaman
 // aralığında görünür. Zamanlama ffmpeg'in video zaman damgasına (t) bağlı: sesle senkron.
 // (textfile + reload=1 ile dosyayı Node'dan güncellemek ~12 sn geç kalıyordu — KARARLAR.md.)
 //
-// pomodoro: { statusTexts: [{ textFile, start, end }], labelTextFile, fontSize,
-//             statusPosition, labelPosition } ya da null. Parça başlığından AYRI bir
-// drawtext kümesi: kendi konumu, kendi punto'su. Böylece "Track Name / STUDY /
-// POMODORO 50+10" aynı anda, üst üste binmeden görünür.
+// pomodoro: { statusTexts: [{ textFile, start, end }], countdown, fontSize,
+//             statusPosition, lineGap } ya da null. Parça başlığından AYRI bir
+// drawtext kümesi: kendi konumu, kendi punto'su. Böylece sol altta "Track Name",
+// sağ üstte "12:34 / STUDY" aynı anda, üst üste binmeden görünür.
 // Birden çok zaman aralığını tek enable ifadesinde birleştirir: (a1)+(a2)+… — ffmpeg'de
 // toplama mantıksal VEYA gibi davranır (sıfırdan büyük = etkin).
 function enableAny(windows) {
@@ -135,21 +169,28 @@ function videoFilter(profile, overlay, overlayTexts = [], pomodoro = null) {
   }
 
   if (pomodoro) {
-    // Durum (STUDY/BREAK): faz başına bir drawtext, kendi zaman aralığında.
+    if (!overlay) throw new Error('pomodoro overlay gerektirir: yazı tipi overlay.fontFile\'dan geliyor');
+    const lineGap = pomodoro.lineGap ?? 0;
+    // Sağ üstte iki satır, aynı köşede alt alta:
+    //   1. satır  geri sayım (enable yok — sayaç hep ekranda, faz fark etmez)
+    //   2. satır  STUDY/BREAK (faz başına bir drawtext, kendi zaman aralığında)
+    if (pomodoro.countdown) {
+      const timerStyle = drawtextStyle({
+        fontFile: overlay.fontFile,
+        fontSize: pomodoro.fontSize,
+        position: pomodoro.statusPosition,
+      });
+      filters.push(drawtextExpr(timerStyle, countdownText(pomodoro.countdown)));
+    }
     const statusStyle = drawtextStyle({
       fontFile: overlay.fontFile,
       fontSize: pomodoro.fontSize,
       position: pomodoro.statusPosition,
+      // Sayaç varsa durum yazısı ikinci satıra iner; yoksa köşenin kendisinde kalır.
+      lineOffset: pomodoro.countdown ? pomodoro.fontSize + lineGap : 0,
     });
     filters.push(...pomodoro.statusTexts.map(({ textFile, start, end }) =>
       drawtext(statusStyle, textFile, enableExpr(start, end))));
-    // Tür etiketi: enable yok, hep ekranda.
-    const labelStyle = drawtextStyle({
-      fontFile: overlay.fontFile,
-      fontSize: overlay.fontSize,
-      position: pomodoro.labelPosition,
-    });
-    filters.push(drawtext(labelStyle, pomodoro.labelTextFile));
   }
 
   return [scale, ...filters].join(',');
@@ -421,4 +462,4 @@ class FfmpegEncoder extends Encoder {
   }
 }
 
-module.exports = { FfmpegEncoder, buildFfmpegArgs, parseProgressLine, escapeFilterPath };
+module.exports = { FfmpegEncoder, buildFfmpegArgs, parseProgressLine, escapeFilterPath, countdownText };

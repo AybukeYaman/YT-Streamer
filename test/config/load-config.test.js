@@ -272,7 +272,7 @@ test('background bölümü nesne değilse hata', () => {
 test('pomodoro verilmezse kapalı ve varsayılanlarla gelir', () => {
   assert.deepEqual(load().result.pomodoro, {
     enabled: false, type: '50+10', breakBackground: null,
-    fontSize: 56, statusPosition: 'center', labelPosition: 'top-right',
+    fontSize: 40, statusPosition: 'top-right',
   });
 });
 
@@ -282,7 +282,7 @@ test('pomodoro verilen alanları ezer, kalanı varsayılandan', () => {
   const p = load({ config }).result.pomodoro;
   assert.equal(p.enabled, true);
   assert.equal(p.type, '30+10');
-  assert.equal(p.fontSize, 56);
+  assert.equal(p.fontSize, 40);
 });
 
 test('bilinmeyen pomodoro türü reddedilir', () => {
