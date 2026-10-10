@@ -9,7 +9,10 @@
 //   node index.js --config config.stream1.json --env .env.stream1
 //
 // Yollar proje köküne göre çözülür (bkz. loadConfig).
-const DEFAULTS = { tui: false, configure: false, configFile: 'config.json', envFile: '.env' };
+const DEFAULTS = {
+  tui: false, configure: false, configFile: 'config.json', envFile: '.env',
+  planOnly: false, restartService: false,
+};
 
 function value(raw, flag) {
   if (raw === undefined || raw === '' || raw.startsWith('-')) {
@@ -27,6 +30,14 @@ function parseArgs(args = []) {
     // --configure panelle birlikte açılır: sihirbazın "START STREAM"i yayını BU süreçte
     // başlatıyor, ayrı bir giriş noktası (ve ikinci bir composition root) gerekmiyor.
     if (a === '--configure') { out.configure = true; out.tui = true; continue; }
+    // --plan-only: sihirbazı yayın motoru kurmadan ve runtime kilidi almadan açar
+    // (VPS'te yayın ÇALIŞIRKEN SSH'tan plan düzenlemek için — bkz. PLAN-yapilandirma-ui.md).
+    // tui+configure zaten açık olmalı: motor yoksa panoda gösterilecek bir şey yok.
+    if (a === '--plan-only') { out.planOnly = true; out.tui = true; out.configure = true; continue; }
+    // --restart: yalnızca --plan-only ile anlamlı (plan kaydedilince yt-streamer'ı
+    // yeniden başlatır). Tek başına sessizce yoksayılmaz — projenin üslubu bu
+    // (bkz. bilinmeyen argüman hatası aşağıda).
+    if (a === '--restart') { out.restartService = true; continue; }
     if (a === '--config' || a === '-c') { out.configFile = value(args[++i], a); continue; }
     if (a === '--env' || a === '-e') { out.envFile = value(args[++i], a); continue; }
     if (a.startsWith('--config=')) { out.configFile = value(a.slice('--config='.length), '--config'); continue; }
@@ -34,6 +45,9 @@ function parseArgs(args = []) {
     // Sessizce yoksaymak yerine hata: yazım hatası (--confg) fark edilmeden yanlış
     // config'le yayına çıkmaktan iyidir.
     throw new Error(`bilinmeyen argüman: ${a}`);
+  }
+  if (out.restartService && !out.planOnly) {
+    throw new Error('--restart yalnızca --plan-only ile kullanılabilir');
   }
   return out;
 }

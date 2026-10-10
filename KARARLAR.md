@@ -1833,3 +1833,49 @@ Kesmenin bedeli bir restart boşluğu (~225 ms, Faz 3.1 ölçümü).
   instance kilidi — gerçek yarış iki süreç gerektirir, oradaki test devralma kurallarının
   bozulmadığını sınayan bir kalkan (testin kendi yorumunda yazıyor).
 - Uçtan uca gerçek ffmpeg koşusu tekrarlandı (Faz K'daki kareler): komut bozulmadı.
+
+---
+
+## [Faz N1] `--plan-only` kipi: sihirbazı VPS'te kilide takılmadan açmak — 11 Ekim 2026
+
+**Soru:** Yayın VPS'te `yt-streamer.service` olarak çalışırken (runtime kilidini tutarken)
+kullanıcı study/break videosunu, Pomodoro süresini değiştirmek istiyor. Bugün tek yol
+SSH + elle `cat > runtime/stream-plan.json` — kullanıcının terminali ~80 karakterde satır
+kırıyor, heredoc pratik değil. `npm run configure` ise ikinci bir `index.js` süreci açıp
+kilide çarpıyor: `runtime klasörü başka bir instance tarafından kullanılıyor (PID ...)`.
+
+**Karar:** Yeni bayrak `--plan-only` (→ `npm run plan`): sihirbazı (aynı `ConfigWizard`,
+aynı Ink) açar ama altında yayın motoru YOK — `acquireLock` hiç çağrılmaz, ffmpeg/
+orchestrator/supervisor/StateStore/SpeedAlarm/WebhookAlerter kurulmaz. Kontrol katmanı
+gerçek `StreamControlService` yerine yeni `PlanOnlyControlService`: aynı sözleşmeyi
+(getStatus/getCurrentTrack/getUpcomingQueue/start/stop/restart) karşılar ama hiçbiri
+yayına dokunmaz; panoyu bozmamak için `getStatus()` hep "durmuş" görünümü döner.
+`--restart` bayrağı eklenirse (yalnızca `--plan-only` ile birlikte anlamlı, tek başına
+hata verir) `restart()` `systemctl restart yt-streamer.service` çalıştırır.
+
+**Gerekçe (kilit neden güvenle atlanabiliyor):** Kilit "iki yayın MOTORU aynı runtime'ı
+paylaşmasın" diye var (playlist.txt/state.json çakışması + aynı stream key'e iki
+bağlantı). Plan-only süreç bir motor DEĞİL: ffmpeg başlatmaz, playlist.txt/state.json/
+pomodoro.json'a dokunmaz, yalnızca `stream-plan.json` ve hazırlanan klip dosyalarını
+(study-background.mp4, break-background.mp4) yazar. Klip dosyaları çalışan ffmpeg
+tarafından açık tutuluyor olabilir ama Linux'ta `rename` yeni bir inode oluşturur —
+çalışan süreç eski içeriği görmeye devam eder, yeni içerik yalnızca BİR SONRAKİ
+başlatmada devreye girer. Zararsız ve zaten istenen davranış.
+
+**`restart()` neden hata FIRLATMIYOR:** `StreamConfigService.applyAndRestart` önce
+`apply()` ile planı ZATEN diske yazmıştır; `restart()` o andan sonra çağrılır. systemctl
+yoksa/başarısızsa hata sihirbaza "başlatılamadı" olarak dönerse kullanıcı planın
+kaydedildiğini SANMAZ. Bunun yerine `PlanOnlyControlService.restart()` hatayı yakalar,
+log'a elle `systemctl restart yt-streamer` talimatı yazar; sihirbaz "plan kaydedildi"
+demeye devam eder.
+
+**Etki:** `src/config/parse-args.js` (yeni bayraklar `--plan-only`/`--restart`),
+`src/application/plan-only-control-service.js` (yeni), `index.js` (`runPlanOnly` ayrı
+kurulum yolu, `main()`'den `args.planOnly` ile dallanıyor — mevcut yol hiç değişmedi),
+`package.json` (`npm run plan`).
+
+### Doğrulama
+
+- 780 test (yeni: 7 `PlanOnlyControlService`, 3 parse-args bayrak/hata).
+- `npm test` yeşil; mevcut 770 test davranış değişmeden geçiyor (DEFAULTS'a yeni alan
+  eklenmesi dışında `parseArgs` çıktısı eski çağrılarda aynı).

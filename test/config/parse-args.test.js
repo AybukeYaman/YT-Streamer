@@ -6,6 +6,7 @@ const { parseArgs, instanceLabel, DEFAULTS } = require('../../src/config/parse-a
 test('argümansız: varsayılanlar (mevcut tek-yayın davranışı korunur)', () => {
   assert.deepEqual(parseArgs([]), {
     tui: false, configure: false, configFile: 'config.json', envFile: '.env',
+    planOnly: false, restartService: false,
   });
   assert.deepEqual(parseArgs(), DEFAULTS);
 });
@@ -37,6 +38,7 @@ test('bayraklar birlikte kullanılabilir (--tui + çoklu yayın)', () => {
   const a = parseArgs(['--tui', '--config', 'config.stream2.json', '--env', '.env.stream2']);
   assert.deepEqual(a, {
     tui: true, configure: false, configFile: 'config.stream2.json', envFile: '.env.stream2',
+    planOnly: false, restartService: false,
   });
 });
 
@@ -57,6 +59,25 @@ test('değer eksikse hata (sessizce yanlış config ile başlamasın)', () => {
 test('bilinmeyen argüman hata verir (yazım hatası fark edilsin)', () => {
   assert.throws(() => parseArgs(['--confg', 'x.json']), /bilinmeyen argüman: --confg/);
   assert.throws(() => parseArgs(['fazladan']), /bilinmeyen argüman: fazladan/);
+});
+
+// --plan-only: sihirbaz açılır ama yayın motoru kurulmaz, kilit alınmaz (bkz. index.js).
+test('--plan-only tui+configure\'ı da açar', () => {
+  const a = parseArgs(['--plan-only']);
+  assert.equal(a.planOnly, true);
+  assert.equal(a.tui, true);
+  assert.equal(a.configure, true);
+  assert.equal(a.restartService, false);
+});
+
+test('--plan-only --restart: plan kaydedilince servis yeniden başlatılır', () => {
+  const a = parseArgs(['--plan-only', '--restart']);
+  assert.equal(a.planOnly, true);
+  assert.equal(a.restartService, true);
+});
+
+test('--restart tek başına (--plan-only olmadan) hata verir', () => {
+  assert.throws(() => parseArgs(['--restart']), /--restart yalnızca --plan-only ile kullanılabilir/);
 });
 
 // instanceLabel: bildirimlerde hangi yayından geldiğini göstermek için. Yayın süreci ve

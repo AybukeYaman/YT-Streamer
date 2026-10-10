@@ -21,6 +21,7 @@ const { DurationCache } = require('./src/infrastructure/duration-cache');
 const { ffprobeDuration } = require('./src/infrastructure/track-repository');
 const { Supervisor } = require('./src/application/supervisor');
 const { StreamControlService } = require('./src/application/stream-control-service');
+const { PlanOnlyControlService } = require('./src/application/plan-only-control-service');
 const { NullAlerter } = require('./src/application/alerter');
 const { SpeedAlarm } = require('./src/application/speed-alarm');
 const { FfmpegEncoder } = require('./src/infrastructure/ffmpeg-encoder');
@@ -32,6 +33,11 @@ const { Logger } = require('./src/infrastructure/logger');
 const { StateStore } = require('./src/infrastructure/state-store');
 const { StreamTui } = require('./src/ui/stream-tui');
 const { LogBuffer } = require('./src/ui/log-buffer');
+const { spawnSync } = require('child_process');
+
+// --plan-only (--restart ile): plan kaydedilince devreye almak için.
+// Unit adı sabit — ileride --service bayrağıyla değiştirilebilir, bugün gerek yok.
+const STREAM_UNIT = 'yt-streamer.service';
 
 // Temiz kapanıştan sonra sürecin kendi kendine kapanması için tanınan süre. systemd'nin
 // TimeoutStopSec=30'unun belirgin altında: kesme kararı bizde kalsın, sebebi loglanabilsin.
@@ -42,6 +48,16 @@ async function main() {
   // Bayraksız çağrı varsayılanları kullanır → mevcut tek-yayın davranışı değişmez.
   const args = parseArgs(process.argv.slice(2));
   const config = loadConfig({ configFile: args.configFile, envFile: args.envFile });
+
+  // --plan-only: sihirbazı yayın motoru kurmadan açar (VPS'te yayın ÇALIŞIRKEN SSH'tan
+  // plan düzenlemek için — bkz. PLAN-yapilandirma-ui.md Faz N1). Kilit ALINMAZ: bu süreç
+  // ffmpeg başlatmaz, playlist/state/pomodoro dosyalarına dokunmaz, yalnızca
+  // stream-plan.json ve hazırlanan klipleri yazar. Klip dosyalarını çalışan ffmpeg açık
+  // tutuyor olabilir ama Linux'ta rename yeni bir inode oluşturur — çalışan süreç eski
+  // içeriği görmeye devam eder, yeni içerik bir sonraki başlatmada devreye girer. Bu
+  // zararsız ve zaten istenen davranış (plan ayrı, motor ayrı süreç).
+  if (args.planOnly) return runPlanOnly(args, config);
+
   // --tui: aynı engine'i yöneten terminal paneli.
   const useTui = args.tui;
 
@@ -300,6 +316,83 @@ async function main() {
     lock.release();
     throw err;
   }
+}
+
+// --plan-only: yayın motoru YOK (ffmpeg, orchestrator, supervisor, StateStore,
+// WebhookAlerter, SpeedAlarm, pomodoro planlayıcı/overlay kurulmaz) — sihirbaz yalnızca
+// plan kaydetmek için. Kilit alınmaz (bkz. main() içindeki gerekçe).
+async function runPlanOnly(args, config) {
+  const logBuffer = new LogBuffer({ capacity: 500 });
+  const logger = new Logger({ dir: path.join(config.paths.runtime, 'logs'), out: logBuffer });
+  const log = logger.child('plan-only');
+
+  const durationCache = new DurationCache({
+    file: path.join(config.paths.runtime, 'durations.json'),
+    writeFile: writeFileAtomic,
+    log: logger.child('süre'),
+  });
+  const probeDuration = durationCache.wrap((f) => ffprobeDuration(f));
+
+  const albumRepository = config.paths.albums
+    ? new AlbumRepository({ dir: config.paths.albums, log: logger.child('albums'), probeDuration })
+    : new SingleAlbumRepository({
+      musicDir: config.paths.music, backgroundPath: config.paths.background, log: logger.child('tracks'), probeDuration,
+    });
+  const planStore = new StreamPlanStore({
+    runtimeDir: config.paths.runtime, writeFile: writeFileAtomic, log: logger.child('plan'),
+  });
+
+  // --restart: plan kaydedilince systemctl ile devreye al. systemctl yoksa/başarısızsa
+  // sonuç PlanOnlyControlService üzerinden sihirbazın uyarı satırına düşer — hata atılmaz.
+  const runRestart = args.restartService
+    ? async () => {
+      const res = spawnSync('systemctl', ['restart', STREAM_UNIT], { encoding: 'utf8' });
+      if (res.error) return { ok: false, message: `systemctl çalıştırılamadı: ${res.error.message}` };
+      if (res.status !== 0) {
+        return { ok: false, message: `systemctl restart başarısız (kod ${res.status}): ${(res.stderr || '').trim()}` };
+      }
+      return { ok: true, message: `${STREAM_UNIT} yeniden başlatıldı` };
+    }
+    : null;
+
+  const configService = new StreamConfigService({
+    planStore,
+    albumRepository,
+    controlService: new PlanOnlyControlService({ runRestart, log: logger.child('control') }),
+    config,
+    log: logger.child('plan'),
+    mediaLibrary: new MediaLibrary({
+      albumsDir: config.paths.albums ?? null,
+      assetsDir: path.join(__dirname, 'assets'),
+      rootDir: __dirname,
+    }),
+    prepareClip: ensureStreamClip,
+    fallbackPlan: {
+      name: 'config.json',
+      music: { order: config.queue.mode, albums: [] },
+      pomodoro: {
+        // Overlay kapalıysa pomodoro da kapalı sayılır (drawtext'e bağlı) — main()
+        // yolundaki aynı kural (bkz. yukarıdaki fallbackPlan).
+        enabled: config.pomodoro.enabled && config.overlay.enabled,
+        type: config.pomodoro.type,
+        breakVideo: config.pomodoro.breakBackground,
+      },
+    },
+  });
+  await configService.prepareActive();
+
+  const tui = new StreamTui({
+    controlService: configService.controlService,
+    configService,
+    logBuffer,
+    onQuit: () => {
+      tui.close();
+      durationCache.flush();
+      process.exitCode = 0;
+    },
+  });
+  await tui.open();
+  await tui.openWizard(); // --plan-only her zaman doğrudan sihirbazla açılır (pano gösterecek yayın yok)
 }
 
 main().catch((err) => {
