@@ -1945,6 +1945,8 @@ klip override kaldırıldı), `src/infrastructure/ffmpeg-encoder.js`
   `ffmpeg-encoder.test.js` hem `pomodoro-planner.test.js`'te korundu; "eski tekil
   studyVideo/breakVideo tek elemanlı listeye çevrilir" VPS'teki mevcut planın
   bozulmayacağını doğruluyor.
-- Gerçek ffmpeg ile uçtan uca doğrulama (farklı fazlara denk gelen kareler) BU OTURUMDA
-  YAPILMADI — VPS'e deploy edilmeden önce plan dosyasındaki "Doğrulama yöntemi"
-  bölümündeki adımlarla elle doğrulanmalı.
+- Gerçek ffmpeg ile uçtan uca doğrulama YAPILDI (yerel Windows ffmpeg 9.0.1): kırmızı
+  (study), yeşil (break), kırmızı (study — AYNI klip split ile çoğaltılıp ikinci kez
+  kullanıldı) renkli test klipleriyle `buildFfmpegArgs` çağrılıp gerçek ffmpeg çalıştırıldı;
+  t=1/4/8 sn karelerinde beklenen renkler (kırmızı/yeşil/kırmızı) birebir çıktı — split
+  tabanlı overlay zinciri doğru çalışıyor.
