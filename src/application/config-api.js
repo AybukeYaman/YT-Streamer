@@ -14,13 +14,31 @@ class ConfigApi {
   // streamControl: { start(), stop(), status() } | null — yayın sürecini (yt-streamer)
   //   başlatır/durdurur. status(): 'running' | 'stopped' | 'unknown'. Verilmezse sayfada
   //   başlat/durdur düğmeleri çıkmaz (özellik opsiyonel, mevcut kurulumlar etkilenmez).
+  // saveCover: (buffer) => Promise<string> — yüklenen görseli işleyip kaydeder, mutlak yolu
+  //   döner (infrastructure'dan enjekte: application fs/ffmpeg bilmez). Verilmezse yükleme yok.
   constructor({
-    configService, restartStream = null, streamControl = null, log,
+    configService, restartStream = null, streamControl = null, saveCover = null, log,
   }) {
     this.configService = configService;
     this.restartStream = restartStream;
     this.streamControl = streamControl;
+    this.saveCover = saveCover;
     this.log = log;
+  }
+
+  // Galeriden gelen görseli kaydeder; PLANA DOKUNMAZ (kapak seçimi ayrıca Kaydet ile yapılır).
+  // Dönen yol listede (covers) hemen görünür: MediaLibrary her çağrıda diski yeniden tarar.
+  // @returns {Promise<{ ok: boolean, path?: string, error?: string }>}
+  async uploadCover(buffer) {
+    if (!this.saveCover) return { ok: false, error: 'bu sunucu görsel yüklemeyi desteklemiyor' };
+    try {
+      const saved = await this.saveCover(buffer);
+      this.log?.info?.(`kapak yüklendi: ${saved}`);
+      return { ok: true, path: saved };
+    } catch (err) {
+      this.log?.warn?.(`kapak yüklenemedi: ${err.message}`);
+      return { ok: false, error: `görsel yüklenemedi: ${err.message}` };
+    }
   }
 
   // Form açılışında gösterilecek veri: mevcut plan + klip adayları + kapak adayları +

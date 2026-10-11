@@ -151,7 +151,50 @@ async function updateVideoPrivacy({ accessToken, videoId, privacyStatus }) {
   return { skipped: false, previous, privacyStatus };
 }
 
+// Kanaldaki yayınlar (en yeni önce): /config'teki yayın seçici için. broadcastStatus=all:
+// canlı, hazır, oluşturulmuş ve bitmiş hepsi. 1 kota birimi. part'ta contentDetails YOK:
+// listeleme için gerekmiyor, yanıtı küçük tutar.
+async function listBroadcasts({ accessToken, maxResults = 25 }) {
+  const data = await apiRequest({
+    accessToken,
+    path: 'liveBroadcasts',
+    params: { part: 'id,snippet,status', broadcastStatus: 'all', maxResults },
+  });
+  return data.items ?? [];
+}
+
+// Başlık ve açıklamayı günceller (broadcast = video, aynı id).
+//
+// updateVideoPrivacy ile AYNI gerekçe: videos.update part'ta gönderilen bölümü bir BÜTÜN
+// olarak değiştirir. Yalnızca title/description gönderirsek tags, categoryId,
+// defaultLanguage gibi kardeş alanlar silinir; bu yüzden önce okunur ve YAZILABİLİR alanlar
+// geri gönderilir. (publishedAt, thumbnails gibi salt-okunur alanlar bilerek gönderilmez.)
+// Video yoksa { skipped: true } döner, ATMAZ.
+async function updateVideoDetails({
+  accessToken, videoId, title, description,
+}) {
+  const current = await apiRequest({
+    accessToken,
+    path: 'videos',
+    params: { part: 'snippet', id: videoId },
+  });
+  const snippet = current.items?.[0]?.snippet;
+  if (!snippet) return { skipped: true, reason: 'video bulunamadı' };
+  const writable = { categoryId: snippet.categoryId, title, description };
+  if (snippet.tags) writable.tags = snippet.tags;
+  if (snippet.defaultLanguage) writable.defaultLanguage = snippet.defaultLanguage;
+  if (snippet.defaultAudioLanguage) writable.defaultAudioLanguage = snippet.defaultAudioLanguage;
+  await apiRequest({
+    accessToken,
+    method: 'PUT',
+    path: 'videos',
+    params: { part: 'snippet' },
+    body: { id: videoId, snippet: writable },
+  });
+  return { skipped: false, previousTitle: snippet.title ?? null };
+}
+
 module.exports = {
   insertBroadcast, bindBroadcast, transitionBroadcast, getBroadcast, setThumbnail,
-  findStreamIdByKey, getStreamStatus, updateVideoPrivacy,
+  findStreamIdByKey, getStreamStatus, updateVideoPrivacy, listBroadcasts, updateVideoDetails,
 };

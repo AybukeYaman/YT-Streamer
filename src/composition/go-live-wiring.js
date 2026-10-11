@@ -91,7 +91,9 @@ function buildGoLive({
     alerter,
   });
 
-  return { service, config, credentials };
+  // api: /config'teki yayın seçici (BroadcastAdmin) de aynı YouTube istemcisini kullanır —
+  // ikinci bir OAuth/istek katmanı kurulmasın.
+  return { service, config, credentials, api };
 }
 
 module.exports = { buildGoLive };

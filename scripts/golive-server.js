@@ -20,7 +20,9 @@ const { loadYoutubeCredentials } = require('../src/infrastructure/youtube-creden
 const { buildGoLive } = require('../src/composition/go-live-wiring');
 const { buildConfigService } = require('../src/composition/config-wiring');
 const { ConfigApi } = require('../src/application/config-api');
+const { BroadcastAdmin } = require('../src/application/broadcast-admin');
 const { ensureThumbnail } = require('../src/infrastructure/video-thumbnail');
+const { saveUploadedCover } = require('../src/infrastructure/cover-upload');
 const { GoLiveServer } = require('../src/infrastructure/golive-server');
 const { HealthMonitor } = require('../src/application/health-monitor');
 const { IngestCheck } = require('../src/application/checks/ingest-check');
@@ -96,7 +98,7 @@ async function main() {
     statePath: path.join(config.paths.runtime, 'state.json'),
     readMtimeMs,
   });
-  const { service } = buildGoLive({
+  const { service, api: youtubeApi } = buildGoLive({
     configFile: args.configFile, envFile: args.envFile, logger, encoderCheck, alerter,
   });
 
@@ -141,9 +143,14 @@ async function main() {
       return state === 'inactive' || state === 'failed' ? 'stopped' : 'unknown';
     },
   };
+  // Galeriden yüklenen kapaklar assets/covers/ altına (assets/ git'te yok sayılır, deploy
+  // etkilemez) ve MediaLibrary bir alt seviyesini tarar, yani yüklenen hemen listede görünür.
+  const coverDir = path.join(REPO_ROOT, 'assets', 'covers');
+  const coverLog = logger.child('kapak');
   const configApi = new ConfigApi({
     configService,
     streamControl,
+    saveCover: (buffer) => saveUploadedCover({ buffer, dir: coverDir, log: coverLog }),
     restartStream: async () => {
       try {
         await configService.restart();
@@ -186,6 +193,9 @@ async function main() {
     healthProvider: () => monitor.snapshot(),
     configApi,
     thumbnailProvider,
+    // /config'teki yayın seçici: kanaldaki var olan yayınlar üzerinde işlem (başlık, görünürlük,
+    // kapak, bitirme). Aynı YouTube istemcisi (go-live ile ortak OAuth).
+    broadcastAdmin: new BroadcastAdmin({ api: youtubeApi, log: logger.child('yayin-yonetimi') }),
   });
 
   await server.listen();

@@ -123,3 +123,85 @@ test('başlat/durdur düğmeleri ana formdan AYRI: ayar alanları onlarla gönde
   assert.ok(startIdx > 0 && startIdx < titleIdx);
   assert.ok(html.slice(startIdx, titleIdx).includes('</form>'));
 });
+
+// ─── Yayın seçici + galeri yükleme ─────────────────────────────────────────
+
+const PB1 = {
+  id: 'b1', title: 'Canlı <Yayın>', description: 'açıklama', privacyStatus: 'public', lifeCycleStatus: 'live', finished: false,
+};
+const PB2 = {
+  id: 'b2', title: 'Eski', description: '', privacyStatus: 'private', lifeCycleStatus: 'complete', finished: true,
+};
+
+test('broadcasts verilmezse yayın seçici hiç çıkmaz', () => {
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
+  assert.doesNotMatch(html, /YouTube Yayınları/);
+});
+
+test('seçici: aktif ve biten yayınlar ayrı gruplarda, durum+görünürlük etiketli, seçili işaretli', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 'tk', broadcasts: { items: [PB1, PB2] }, selectedId: 'b1',
+  });
+  assert.match(html, /<optgroup label="Aktif \/ yaklaşan">/);
+  assert.match(html, /<optgroup label="Biten">/);
+  assert.match(html, /Canlı &lt;Yayın&gt; · Canlı · Herkese açık/);
+  assert.match(html, /Eski · Bitti · Gizli/);
+  assert.match(html, /<option value="\/config\?token=tk&amp;broadcast=b1" selected>/);
+  assert.match(html, /onchange="location\.href=this\.value"/);
+});
+
+test('seçili yayının MEVCUT başlığı/açıklaması/görünürlüğü formda dolu (kaçışlı)', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { items: [PB1] }, selectedId: 'b1',
+  });
+  assert.match(html, /name="broadcastId" value="b1"/);
+  assert.match(html, /name="title" value="Canlı &lt;Yayın&gt;"/);
+  assert.match(html, />açıklama<\/textarea>/);
+  assert.match(html, /<option value="public" selected>Herkese açık<\/option>/);
+  assert.match(html, /action="\/config\/broadcast\?token=t&amp;broadcast=b1"/);
+});
+
+test('Yayını Bitir yalnızca canlı/test yayında çıkar ve onay ister', () => {
+  const live = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { items: [PB1] }, selectedId: 'b1' });
+  assert.match(live, /value="end"/);
+  assert.match(live, /confirm\('Bu yayın BİTİRİLSİN mi\?/);
+  const done = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { items: [PB2] }, selectedId: 'b2' });
+  assert.doesNotMatch(done, /value="end"/);
+});
+
+test('kapak seçeneği: "Değiştirme" varsayılan, kapak adayları listelenir', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], covers: ['X:/c/a.jpg'], token: 't', broadcasts: { items: [PB1] }, selectedId: 'b1',
+  });
+  assert.match(html, /<select name="cover"><option value="">Değiştirme<\/option><option value="X:\/c\/a\.jpg">/);
+});
+
+test('seçici: hata ve boş liste durumunda kısa not', () => {
+  const err = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { error: true } });
+  assert.match(err, /Yayın listesi şu an okunamadı/);
+  const empty = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { items: [] } });
+  assert.match(empty, /Kanalda henüz yayın yok/);
+});
+
+test('seçili yayın diğer formların action\'ına taşınır (kaydet sonrası seçim bozulmaz)', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 'tk', broadcasts: { items: [PB1] }, selectedId: 'b1', streamState: 'running',
+  });
+  assert.match(html, /<form method="post" action="\/config\?token=tk&amp;broadcast=b1">/);
+  assert.match(html, /action="\/config\/upload\?token=tk&amp;broadcast=b1"/);
+});
+
+test('galeri yükleme: multipart form ana formun DIŞINDA, dosya alanı form= ile bağlı', () => {
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 'tk' });
+  assert.match(html, /<form id="coverUpload" method="post" enctype="multipart\/form-data" action="\/config\/upload\?token=tk"><\/form>/);
+  assert.match(html, /<input type="file" name="coverFile" accept="image\/jpeg,image\/png,image\/webp" form="coverUpload"/);
+  assert.match(html, /<button class="secondary" type="submit" form="coverUpload">Yükle<\/button>/);
+});
+
+test('yüklenen kapak (pendingCover) listede işaretli gelir', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], covers: ['X:/c/a.jpg', 'X:/c/galeri-1.jpg'], token: 't', pendingCover: 'X:/c/galeri-1.jpg',
+  });
+  assert.match(html, /name="cover" value="X:\/c\/galeri-1\.jpg" checked/);
+  assert.doesNotMatch(html, /name="cover" value="X:\/c\/a\.jpg" checked/);
+});

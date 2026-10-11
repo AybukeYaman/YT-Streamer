@@ -504,3 +504,234 @@ test('POST /config action=start: control hata dönerse hata sayfada görünür',
     await server.close();
   }
 });
+
+// ─── Yayın seçici ve /config/broadcast ─────────────────────────────────────
+
+function fakeAdmin(items, { failList = false } = {}) {
+  const calls = [];
+  const byId = (id) => items.find((b) => b.id === id) ?? null;
+  return {
+    calls,
+    list: async () => { if (failList) throw new Error('kota doldu'); return items; },
+    get: async (id) => byId(id),
+    updateDetails: async (id, v) => { calls.push(['details', id, v.title, v.description]); },
+    setPrivacy: async (id, p) => { calls.push(['privacy', id, p]); },
+    setThumbnail: async (id, f) => { calls.push(['thumb', id, f]); },
+    end: async (id) => { calls.push(['end', id]); },
+  };
+}
+
+const B1 = {
+  id: 'b1', title: 'Canlı Yayın', description: 'açıklama 1', privacyStatus: 'unlisted', lifeCycleStatus: 'live', finished: false,
+};
+const B2 = {
+  id: 'b2', title: 'Hazır Yayın', description: 'açıklama 2', privacyStatus: 'private', lifeCycleStatus: 'ready', finished: false,
+};
+
+function apiWithCovers(covers = ['/c/a.jpg']) {
+  const api = fakeConfigApi();
+  const base = api.form;
+  api.form = async () => ({ ...(await base()), covers });
+  return api;
+}
+
+async function postBroadcast(base, query, fields) {
+  return fetch(`${base}/config/broadcast?token=${TOKEN}${query}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(fields).toString(),
+  });
+}
+
+test('GET /config: yayın seçici listeyi gösterir, kayıtlı (go-live) yayın seçili gelir', () => withServer(
+  {
+    goLiveService: fakeService({ status: { broadcastId: 'b2' } }),
+    configApi: apiWithCovers(),
+    broadcastAdmin: fakeAdmin([B1, B2]),
+  },
+  async ({ base }) => {
+    const html = await (await fetch(`${base}/config?token=${TOKEN}`)).text();
+    assert.match(html, /Canlı Yayın/);
+    assert.match(html, /Hazır Yayın/);
+    assert.match(html, /<option value="[^"]*broadcast=b2"[^>]* selected>/);
+    // Seçili yayının YouTube'daki mevcut değerleri formda dolu.
+    assert.match(html, /name="title" value="Hazır Yayın"/);
+    assert.match(html, />açıklama 2<\/textarea>/);
+  },
+));
+
+test('GET /config?broadcast=b1: istenen yayın seçilir', () => withServer(
+  {
+    goLiveService: fakeService({ status: { broadcastId: 'b2' } }),
+    configApi: apiWithCovers(),
+    broadcastAdmin: fakeAdmin([B1, B2]),
+  },
+  async ({ base }) => {
+    const html = await (await fetch(`${base}/config?token=${TOKEN}&broadcast=b1`)).text();
+    assert.match(html, /name="title" value="Canlı Yayın"/);
+    assert.match(html, /Yayını Bitir/); // canlı → bitirilebilir
+  },
+));
+
+test('GET /config: listede olmayan broadcast id yok sayılır (kayıtlı/ilk aktif yayına düşer)', () => withServer(
+  { goLiveService: fakeService(), configApi: apiWithCovers(), broadcastAdmin: fakeAdmin([B2, B1]) },
+  async ({ base }) => {
+    const html = await (await fetch(`${base}/config?token=${TOKEN}&broadcast=baskasinin`)).text();
+    assert.doesNotMatch(html, /baskasinin/);
+    assert.match(html, /name="title" value="Hazır Yayın"/); // ilk aktif
+  },
+));
+
+test('GET /config: YouTube listesi okunamazsa sayfa yine açılır, kısa not gösterilir', () => withServer(
+  { goLiveService: fakeService(), configApi: apiWithCovers(), broadcastAdmin: fakeAdmin([], { failList: true }) },
+  async ({ base }) => {
+    const res = await fetch(`${base}/config?token=${TOKEN}`);
+    assert.equal(res.status, 200);
+    assert.match(await res.text(), /Yayın listesi şu an okunamadı/);
+  },
+));
+
+test('broadcastAdmin yoksa /config/broadcast 404, sayfada seçici yok', () => withServer(
+  { goLiveService: fakeService(), configApi: apiWithCovers() },
+  async ({ base }) => {
+    assert.equal((await postBroadcast(base, '', { action: 'end', broadcastId: 'b1' })).status, 404);
+    assert.doesNotMatch(await (await fetch(`${base}/config?token=${TOKEN}`)).text(), /YouTube Yayınları/);
+  },
+));
+
+test('POST /config/broadcast apply: yalnızca DEĞİŞEN alanlar API\'ye gider', () => {
+  const admin = fakeAdmin([B1]);
+  return withServer(
+    { goLiveService: fakeService(), configApi: apiWithCovers(), broadcastAdmin: admin },
+    async ({ base }) => {
+      const res = await postBroadcast(base, '&broadcast=b1', {
+        action: 'apply', broadcastId: 'b1', title: 'Canlı Yayın', description: 'açıklama 1', privacy: 'unlisted', cover: '',
+      });
+      assert.equal(res.status, 200);
+      assert.match(await res.text(), /Değişiklik yok/);
+      assert.deepEqual(admin.calls, []);
+
+      await postBroadcast(base, '&broadcast=b1', {
+        action: 'apply', broadcastId: 'b1', title: 'Yeni Başlık', description: 'açıklama 1', privacy: 'public', cover: '/c/a.jpg',
+      });
+      assert.deepEqual(admin.calls, [
+        ['details', 'b1', 'Yeni Başlık', 'açıklama 1'],
+        ['privacy', 'b1', 'public'],
+        ['thumb', 'b1', '/c/a.jpg'],
+      ]);
+    },
+  );
+});
+
+test('POST /config/broadcast apply: kapak listesinde olmayan dosya REDDEDİLİR', () => {
+  const admin = fakeAdmin([B1]);
+  return withServer(
+    { goLiveService: fakeService(), configApi: apiWithCovers(['/c/a.jpg']), broadcastAdmin: admin },
+    async ({ base }) => {
+      const res = await postBroadcast(base, '', {
+        action: 'apply', broadcastId: 'b1', title: 'Canlı Yayın', description: 'açıklama 1', privacy: 'unlisted', cover: '/etc/passwd',
+      });
+      assert.match(await res.text(), /listede olmayan dosya reddedildi/);
+      assert.deepEqual(admin.calls, []);
+    },
+  );
+});
+
+test('POST /config/broadcast apply: bir adım hata verirse diğerleri uygulanır, sonuç özetlenir', () => {
+  const admin = fakeAdmin([B1]);
+  admin.setPrivacy = async () => { throw new Error('YouTube reddetti'); };
+  return withServer(
+    { goLiveService: fakeService(), configApi: apiWithCovers(), broadcastAdmin: admin },
+    async ({ base }) => {
+      const res = await postBroadcast(base, '', {
+        action: 'apply', broadcastId: 'b1', title: 'Yeni', description: 'açıklama 1', privacy: 'public', cover: '',
+      });
+      const html = await res.text();
+      assert.match(html, /görünürlük: YouTube reddetti/);
+      assert.match(html, /uygulananlar: başlık\/açıklama/);
+      assert.equal(admin.calls[0][0], 'details');
+    },
+  );
+});
+
+test('POST /config/broadcast end: yayın bitirilir; hata sayfada görünür', () => {
+  const admin = fakeAdmin([B1]);
+  return withServer(
+    { goLiveService: fakeService(), configApi: apiWithCovers(), broadcastAdmin: admin },
+    async ({ base }) => {
+      const ok = await postBroadcast(base, '', { action: 'end', broadcastId: 'b1' });
+      assert.match(await ok.text(), /Yayın bitirildi/);
+      assert.deepEqual(admin.calls, [['end', 'b1']]);
+
+      admin.end = async () => { throw new Error('yayın şu an canlı değil'); };
+      const bad = await postBroadcast(base, '', { action: 'end', broadcastId: 'b1' });
+      assert.match(await bad.text(), /canlı değil/);
+    },
+  );
+});
+
+test('POST /config/broadcast: bilinmeyen işlem reddedilir; GET 405; yetkisiz 401', () => withServer(
+  { goLiveService: fakeService(), configApi: apiWithCovers(), broadcastAdmin: fakeAdmin([B1]) },
+  async ({ base, call }) => {
+    assert.match(await (await postBroadcast(base, '', { action: 'sil', broadcastId: 'b1' })).text(), /bilinmeyen işlem/);
+    assert.equal((await call('/config/broadcast')).status, 405);
+    assert.equal((await call('/config/broadcast', { method: 'POST', token: null })).status, 401);
+  },
+));
+
+// ─── /config/upload ────────────────────────────────────────────────────────
+
+function multipartBody(parts) {
+  const boundary = '----testboundary123';
+  const chunks = [];
+  for (const p of parts) {
+    chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${p.name}"; filename="${p.filename ?? 'a.jpg'}"\r\nContent-Type: image/jpeg\r\n\r\n`));
+    chunks.push(p.data, Buffer.from('\r\n'));
+  }
+  chunks.push(Buffer.from(`--${boundary}--\r\n`));
+  return { body: Buffer.concat(chunks), type: `multipart/form-data; boundary=${boundary}` };
+}
+
+test('POST /config/upload: görsel uploadCover\'a iletilir ve yeni kapak seçili gelir', () => {
+  const api = apiWithCovers(['/c/a.jpg', '/c/galeri-1.jpg']);
+  let received = null;
+  api.uploadCover = async (buf) => { received = buf; return { ok: true, path: '/c/galeri-1.jpg' }; };
+  return withServer(
+    { goLiveService: fakeService(), configApi: api },
+    async ({ base }) => {
+      const data = Buffer.from([0xff, 0xd8, 0xff, 0x00, 0x0d, 0x0a, 0x01]);
+      const { body, type } = multipartBody([{ name: 'coverFile', data }]);
+      const res = await fetch(`${base}/config/upload?token=${TOKEN}`, { method: 'POST', headers: { 'Content-Type': type }, body });
+      assert.equal(res.status, 200);
+      const html = await res.text();
+      assert.deepEqual([...received], [...data], 'ikili veri bozulmadan ulaşmalı');
+      assert.match(html, /Görsel eklendi/);
+      assert.match(html, /name="cover" value="\/c\/galeri-1\.jpg" checked/);
+    },
+  );
+});
+
+test('POST /config/upload: dosya seçilmemişse / uploadCover hata verirse mesajla aynı sayfa', () => {
+  const api = apiWithCovers();
+  api.uploadCover = async () => ({ ok: false, error: 'görsel yüklenemedi: desteklenmeyen biçim' });
+  return withServer(
+    { goLiveService: fakeService(), configApi: api },
+    async ({ base }) => {
+      const empty = multipartBody([{ name: 'coverFile', data: Buffer.alloc(0) }]);
+      const r1 = await fetch(`${base}/config/upload?token=${TOKEN}`, { method: 'POST', headers: { 'Content-Type': empty.type }, body: empty.body });
+      assert.match(await r1.text(), /görsel seçilmedi/);
+      const some = multipartBody([{ name: 'coverFile', data: Buffer.from('x') }]);
+      const r2 = await fetch(`${base}/config/upload?token=${TOKEN}`, { method: 'POST', headers: { 'Content-Type': some.type }, body: some.body });
+      assert.match(await r2.text(), /desteklenmeyen biçim/);
+    },
+  );
+});
+
+test('POST /config/upload: uploadCover yoksa 404; yetkisiz 401; GET 405', () => withServer(
+  { goLiveService: fakeService(), configApi: apiWithCovers() },
+  async ({ call }) => {
+    assert.equal((await call('/config/upload', { method: 'POST' })).status, 404);
+    assert.equal((await call('/config/upload', { method: 'POST', token: null })).status, 401);
+    assert.equal((await call('/config/upload')).status, 405);
+  },
+));

@@ -17,11 +17,16 @@
 //   GET  /status    → durum (?refresh=1 API'den taze bilgi; varsayılan diskten)
 //   GET  /healthz   → auth'suz, yalnızca "ayakta mıyım" (izleme/uptime içinmuş)
 //   GET  /config    → mobil yapılandırma sayfası (configApi verilmişse; Faz N2)
-//   POST /config    → sayfadaki formu uygular
+//   POST /config    → sayfadaki formu uygular (ya da action=start|stop: yayını başlat/durdur)
+//   POST /config/upload → telefon galerisinden kapak yükler (multipart, coverFile alanı)
+//   POST /config/broadcast → YouTube'daki SEÇİLİ yayına işlem (action=apply|end)
+//   (GET /config?broadcast=<id> yayın seçiciyi o yayına açar)
+//   GET  /config/thumb  → klip/kapak önizleme JPEG'i
 const http = require('http');
 const crypto = require('crypto');
 const fs = require('fs');
 const { renderConfigPage } = require('../ui/config-page');
+const { parseMultipart } = require('./multipart');
 
 const MAX_BODY_BYTES = 4096;
 // /config formu: çok sayıda klip yolu (checkbox) taşıyabilir — /go-live'ın boş gövdesinden
@@ -48,6 +53,10 @@ const RATE_LIMITS = Object.freeze({
   // Sayfa açılışında klip sayısı kadar önizleme isteği gider (onlarca olabilir) — /config
   // sayfasından çok daha geniş bir bütçe gerekiyor.
   '/config/thumb': { windowMs: 60000, max: 120 },
+  // Galeriden kapak yükleme: her istek ffmpeg çalıştırır ve 15 MB'a kadar bellek tutar.
+  '/config/upload': { windowMs: 60000, max: 6 },
+  // YouTube'a yazan işlemler (her biri 50 kota birimi): dar bütçe.
+  '/config/broadcast': { windowMs: 60000, max: 10 },
   // Yetkisiz denemeler: tek kova, tüm route'lar ortak.
   unauthorized: { windowMs: 60000, max: 20 },
 });
@@ -98,6 +107,28 @@ function readBody(req, limit = CONFIG_MAX_BODY_BYTES) {
   });
 }
 
+// Galeri yüklemesi (ham fotoğraf): telefon fotoğrafı birkaç MB, 48MP çekimler 10+ MB olabilir.
+const CONFIG_UPLOAD_MAX_BYTES = 15 * 1024 * 1024;
+
+// readBody'nin ikili hali: multipart gövdede baytlar utf8'e çevrilirse bozulur.
+function readBodyBuffer(req, limit) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        req.pause();
+        reject(Object.assign(new Error('gövde çok büyük'), { statusCode: 413 }));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
 class GoLiveServer {
   // goLiveService: { goLive(), getStatus({refresh}) }; log: { info, warn, error }
   // healthProvider: () => ({ <kontrol>: { status, message, ... } }) — periyodik izlemenin
@@ -114,6 +145,7 @@ class GoLiveServer {
     healthProvider = null,
     configApi = null,
     thumbnailProvider = null,
+    broadcastAdmin = null,
   }) {
     if (typeof authToken !== 'string' || authToken.trim().length < 32) {
       // Fail-closed: auth'suz ayağa kalkmak sessiz bir güvenlik açığı olurdu.
@@ -130,6 +162,7 @@ class GoLiveServer {
     this.healthProvider = healthProvider;
     this.configApi = configApi;
     this.thumbnailProvider = thumbnailProvider;
+    this.broadcastAdmin = broadcastAdmin;
     this.hits = new Map(); // kova adı → istek zaman damgaları
     this.server = http.createServer((req, res) => this.#handle(req, res));
   }
@@ -183,6 +216,105 @@ class GoLiveServer {
       'Cache-Control': 'private, max-age=3600',
     });
     res.end(buffer);
+  }
+
+  // YouTube'daki yayın listesi (yayın seçici). Opsiyonel ve HATA-TOLERANSLI: broadcastAdmin
+  // yoksa null; API hata verirse { error: true } — yapılandırma ekranı YouTube API'sine
+  // bağımlı olmamalı, sayfa seçicisiz de açılır.
+  async #broadcastList() {
+    if (!this.broadcastAdmin) return null;
+    try {
+      return { items: await this.broadcastAdmin.list() };
+    } catch (err) {
+      this.log.warn(`yayın listesi okunamadı (${err.message}) — sayfa seçicisiz açıldı`);
+      return { error: true };
+    }
+  }
+
+  // Seçili yayın: istenen id (listede varsa) > kayıtlı (go-live'ın açtığı) yayın > ilk
+  // aktif/yaklaşan yayın > listenin başı. getStatus() yalnızca diskten okur (API'ye gitmez).
+  async #pickBroadcast(list, wantedId) {
+    const items = list?.items;
+    if (!items?.length) return null;
+    if (wantedId && items.some((b) => b.id === wantedId)) return wantedId;
+    try {
+      const recorded = (await this.goLiveService.getStatus({ refresh: false }))?.broadcastId;
+      if (recorded && items.some((b) => b.id === recorded)) return recorded;
+    } catch {
+      // kayıt okunamadı: sıradaki kurala düş
+    }
+    return (items.find((b) => !b.finished) ?? items[0]).id;
+  }
+
+  // Seçili yayına işlem uygular; { notice } ya da { error } döner (atmaz: sayfa her durumda açılır).
+  // 'apply': yalnızca DEĞİŞEN alanlar API'ye gider (her yazma 50 kota birimi). Bir adım
+  // başarısız olsa diğerleri denenir; sonuç tek mesajda özetlenir.
+  async #broadcastAction(params, id) {
+    const admin = this.broadcastAdmin;
+    const action = params.get('action');
+    try {
+      if (action === 'end') {
+        await admin.end(id);
+        return { notice: 'Yayın bitirildi.' };
+      }
+      if (action !== 'apply') return { error: `bilinmeyen işlem: ${action}` };
+
+      const current = await admin.get(id);
+      if (!current) return { error: 'yayın bulunamadı (silinmiş olabilir)' };
+      const done = [];
+      const failed = [];
+      const attempt = async (label, fn) => {
+        try {
+          await fn();
+          done.push(label);
+        } catch (err) {
+          failed.push(`${label}: ${err.message}`);
+        }
+      };
+
+      const title = params.has('title') ? params.get('title') : current.title;
+      const description = params.has('description') ? params.get('description').replace(/\r\n/g, '\n').trim() : current.description;
+      if (title.trim() !== current.title || description !== current.description.trim()) {
+        await attempt('başlık/açıklama', () => admin.updateDetails(id, { title, description }));
+      }
+      const privacy = params.get('privacy');
+      if (privacy && privacy !== current.privacyStatus) {
+        await attempt('görünürlük', () => admin.setPrivacy(id, privacy));
+      }
+      const cover = params.get('cover');
+      if (cover) {
+        const { covers = [] } = await this.configApi.form();
+        // Yalnızca kapak listesindeki dosyalar (aynı "listede olmayan yol reddedilir" kuralı).
+        if (!covers.includes(cover)) failed.push('kapak: listede olmayan dosya reddedildi');
+        else await attempt('kapak', () => admin.setThumbnail(id, cover));
+      }
+
+      if (!done.length && !failed.length) return { notice: 'Değişiklik yok.' };
+      if (failed.length) {
+        return { error: `${failed.join(' · ')}${done.length ? ` (uygulananlar: ${done.join(', ')})` : ''}` };
+      }
+      return { notice: `Yayına uygulandı: ${done.join(', ')}.` };
+    } catch (err) {
+      this.log.warn(`yayın işlemi başarısız (${action}): ${err.message}`);
+      return { error: err.message };
+    }
+  }
+
+  // /config sayfasının TEK basım yeri: form verisi + yayın listesi + (varsa) mesaj.
+  async #configPage(res, token, extra = {}, headers = {}, wantedBroadcastId = null) {
+    const form = await this.configApi.form();
+    const broadcasts = await this.#broadcastList();
+    const selectedId = await this.#pickBroadcast(broadcasts, wantedBroadcastId);
+    const body = renderConfigPage({
+      ...form, token, broadcasts, selectedId, ...extra,
+    });
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Length': Buffer.byteLength(body),
+      'Cache-Control': 'no-store',
+      ...headers,
+    });
+    res.end(body);
   }
 
   #authorized(req) {
@@ -306,10 +438,9 @@ class GoLiveServer {
         // Token form action'ına query olarak gömülür — gövdeden okumak auth'tan ÖNCE
         // gövdeyi okumayı gerektirirdi (bkz. dosya başındaki route listesi notu).
         const token = url.searchParams.get('token') ?? '';
-        if (req.method === 'GET') {
-          const form = await this.configApi.form();
-          return this.#html(res, 200, renderConfigPage({ ...form, token }));
-        }
+        // Seçili yayın URL'de taşınır (?broadcast=<id>): kaydet/başlat/durdur sonrası seçim bozulmaz.
+        const wanted = url.searchParams.get('broadcast');
+        if (req.method === 'GET') return this.#configPage(res, token, {}, {}, wanted);
         if (req.method === 'POST') {
           const text = await readBody(req);
           const params = new URLSearchParams(text);
@@ -317,10 +448,7 @@ class GoLiveServer {
           const action = params.get('action');
           if ((action === 'start' || action === 'stop') && typeof this.configApi.control === 'function') {
             const result = await this.configApi.control(action);
-            const form = await this.configApi.form();
-            return this.#html(res, 200, renderConfigPage({
-              ...form, token, ...(result.ok ? { notice: result.message } : { error: result.error }),
-            }));
+            return this.#configPage(res, token, result.ok ? { notice: result.message } : { error: result.error }, {}, wanted);
           }
           const fields = {
             pomodoroEnabled: params.has('pomodoroEnabled'),
@@ -335,19 +463,55 @@ class GoLiveServer {
           if (params.has('description')) fields.description = params.get('description');
           if (params.has('cover')) fields.cover = params.get('cover');
           const result = await this.configApi.save(fields);
-          if (!result.ok) {
-            const form = await this.configApi.form();
-            return this.#html(res, 200, renderConfigPage({ ...form, token, error: result.error }));
-          }
+          if (!result.ok) return this.#configPage(res, token, { error: result.error }, {}, wanted);
           const notice = result.restarted
             ? 'Plan kaydedildi ve yayın yeniden başlatıldı.'
             : result.restartError
               ? `Plan kaydedildi — ${result.restartError}`
               : 'Plan kaydedildi.';
-          const form = await this.configApi.form();
-          return this.#html(res, 200, renderConfigPage({ ...form, token, notice }));
+          return this.#configPage(res, token, { notice }, {}, wanted);
         }
         return this.#json(res, 405, { error: 'method_not_allowed' });
+      }
+
+      // YouTube'daki SEÇİLİ yayın üzerinde işlem: başlık/açıklama, görünürlük, kapak, bitirme.
+      // Plan (sonraki yayın ayarları) ile ilgisi YOK; ayrı form, ayrı route. İşlem yapılabilen
+      // id'ler yalnızca kanalın kendi listesindekiler (bkz. BroadcastAdmin).
+      if (route === '/config/broadcast') {
+        if (!this.configApi || !this.broadcastAdmin) return this.#json(res, 404, { error: 'not_found' });
+        if (req.method !== 'POST') return this.#json(res, 405, { error: 'method_not_allowed' });
+        const token = url.searchParams.get('token') ?? '';
+        const params = new URLSearchParams(await readBody(req));
+        const id = params.get('broadcastId') ?? '';
+        const outcome = await this.#broadcastAction(params, id);
+        return this.#configPage(res, token, outcome, {}, id);
+      }
+
+      // Telefon galerisinden kapak yükleme (multipart). Ham dosya sınırı CONFIG_UPLOAD_MAX_BYTES;
+      // aşılırsa JSON 413 yerine aynı sayfa hata mesajıyla döner (telefonda ham JSON anlamsız).
+      if (route === '/config/upload') {
+        if (!this.configApi) return this.#json(res, 404, { error: 'not_found' });
+        if (req.method !== 'POST') return this.#json(res, 405, { error: 'method_not_allowed' });
+        const token = url.searchParams.get('token') ?? '';
+        const wanted = url.searchParams.get('broadcast');
+        if (typeof this.configApi.uploadCover !== 'function') return this.#json(res, 404, { error: 'not_found' });
+        let body;
+        try {
+          body = await readBodyBuffer(req, CONFIG_UPLOAD_MAX_BYTES);
+        } catch (err) {
+          if (err.statusCode !== 413) throw err;
+          return this.#configPage(res, token, {
+            error: `dosya çok büyük (en fazla ${Math.round(CONFIG_UPLOAD_MAX_BYTES / 1048576)} MB)`,
+          }, { Connection: 'close' }, wanted);
+        }
+        const part = parseMultipart(body, req.headers['content-type']).find((p) => p.name === 'coverFile');
+        if (!part || part.data.length === 0) return this.#configPage(res, token, { error: 'görsel seçilmedi' }, {}, wanted);
+        const result = await this.configApi.uploadCover(part.data);
+        if (!result.ok) return this.#configPage(res, token, { error: result.error }, {}, wanted);
+        return this.#configPage(res, token, {
+          notice: 'Görsel eklendi ve listede seçildi. Kapağı uygulamak için Kaydet\'e bas.',
+          pendingCover: result.path,
+        }, {}, wanted);
       }
 
       return this.#json(res, 404, { error: 'not_found' });

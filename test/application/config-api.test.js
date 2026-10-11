@@ -223,3 +223,29 @@ test('control: hata mesajla döner; bilinmeyen işlem ve streamControl yokluğu 
   const none = new ConfigApi({ configService: fakeConfigService(), log: {} });
   assert.equal((await none.control('start')).ok, false);
 });
+
+// ─── Galeriden kapak yükleme ───────────────────────────────────────────────
+
+test('uploadCover: saveCover yoksa reddedilir', async () => {
+  const api = new ConfigApi({ configService: fakeConfigService(), log: {} });
+  const r = await api.uploadCover(Buffer.from('x'));
+  assert.equal(r.ok, false);
+  assert.match(r.error, /desteklemiyor/);
+});
+
+test('uploadCover: kaydedilen yol döner ve plana DOKUNULMAZ', async () => {
+  const configService = fakeConfigService();
+  const api = new ConfigApi({ configService, saveCover: async (buf) => `/assets/covers/${buf.length}.jpg`, log: {} });
+  const r = await api.uploadCover(Buffer.alloc(7));
+  assert.deepEqual(r, { ok: true, path: '/assets/covers/7.jpg' });
+  assert.equal(configService.applied.length, 0);
+});
+
+test('uploadCover: saveCover hata fırlatırsa mesajla ok:false', async () => {
+  const api = new ConfigApi({
+    configService: fakeConfigService(), saveCover: async () => { throw new Error('desteklenmeyen biçim'); }, log: {},
+  });
+  const r = await api.uploadCover(Buffer.from('x'));
+  assert.equal(r.ok, false);
+  assert.match(r.error, /görsel yüklenemedi: desteklenmeyen biçim/);
+});

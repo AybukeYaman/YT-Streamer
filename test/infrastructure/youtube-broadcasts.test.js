@@ -7,7 +7,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { setThumbnail, insertBroadcast, updateVideoPrivacy } = require('../../src/infrastructure/youtube-broadcasts');
+const {
+  setThumbnail, insertBroadcast, updateVideoPrivacy, listBroadcasts, updateVideoDetails,
+} = require('../../src/infrastructure/youtube-broadcasts');
 
 const BROADCAST_ID = 'bid-1';
 
@@ -162,6 +164,69 @@ test('video yoksa (elle silinmiş) ATMAZ, skipped döner — kuyrukta sonsuza ta
     const result = await updateVideoPrivacy({ accessToken: 'at', videoId: 'yok', privacyStatus: 'unlisted' });
     assert.equal(result.skipped, true);
     assert.match(result.reason, /bulunamadı/);
+    assert.equal(calls.length, 1);
+  });
+});
+
+// ── listBroadcasts / updateVideoDetails ─────────────────────────────────────
+
+test('listBroadcasts: broadcastStatus=all ile çağrılır, items döner (1 kota)', async () => {
+  await withFetch([{ body: { items: [{ id: 'a' }, { id: 'b' }] } }], async (calls) => {
+    const items = await listBroadcasts({ accessToken: 'at' });
+    assert.deepEqual(items.map((i) => i.id), ['a', 'b']);
+    assert.match(calls[0].url, /liveBroadcasts\?/);
+    assert.match(calls[0].url, /broadcastStatus=all/);
+    assert.match(calls[0].url, /part=id%2Csnippet%2Cstatus|part=id,snippet,status/);
+  });
+});
+
+test('listBroadcasts: items yoksa boş dizi', async () => {
+  await withFetch([{ body: {} }], async () => {
+    assert.deepEqual(await listBroadcasts({ accessToken: 'at' }), []);
+  });
+});
+
+test('başlık/açıklama: mevcut snippet okunur, YAZILABİLİR alanlar korunarak geri yazılır', async () => {
+  await withFetch([
+    {
+      body: {
+        items: [{
+          id: 'v1',
+          snippet: {
+            title: 'Eski', description: 'eski açıklama', categoryId: '10', tags: ['lofi', 'study'],
+            defaultLanguage: 'tr', publishedAt: '2026-01-01T00:00:00Z', channelId: 'UC1', thumbnails: { default: {} },
+          },
+        }],
+      },
+    },
+    { body: {} },
+  ], async (calls) => {
+    const result = await updateVideoDetails({
+      accessToken: 'at', videoId: 'v1', title: 'Yeni', description: 'yeni açıklama',
+    });
+    assert.deepEqual(result, { skipped: false, previousTitle: 'Eski' });
+    assert.equal(calls[1].options.method, 'PUT');
+    const body = JSON.parse(calls[1].options.body);
+    assert.equal(body.id, 'v1');
+    assert.equal(body.snippet.title, 'Yeni');
+    assert.equal(body.snippet.description, 'yeni açıklama');
+    // videos.update part'ı BÜTÜN olarak değiştirir: bunlar gövdede olmasa silinirdi.
+    assert.equal(body.snippet.categoryId, '10');
+    assert.deepEqual(body.snippet.tags, ['lofi', 'study']);
+    assert.equal(body.snippet.defaultLanguage, 'tr');
+    // Salt-okunur alanlar GÖNDERİLMEZ.
+    assert.equal(body.snippet.publishedAt, undefined);
+    assert.equal(body.snippet.channelId, undefined);
+    assert.equal(body.snippet.thumbnails, undefined);
+  });
+});
+
+test('başlık/açıklama: video yoksa ATMAZ, skipped döner ve yazma çağrısı yapılmaz', async () => {
+  await withFetch([{ body: { items: [] } }], async (calls) => {
+    const result = await updateVideoDetails({
+      accessToken: 'at', videoId: 'yok', title: 'x', description: 'y',
+    });
+    assert.equal(result.skipped, true);
     assert.equal(calls.length, 1);
   });
 });
