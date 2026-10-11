@@ -68,9 +68,9 @@ test('her klip satırında önizleme <img> var, token ile', () => {
   assert.match(html, /onerror="this\.style\.display='none'"/);
 });
 
-test('dokunma hedefleri en az 44px (CSS --tap token\'ı)', () => {
+test('dokunma hedefleri en az 40px (CSS --tap token\'ı; sade görünüm için 44\'ten indirildi)', () => {
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
-  assert.match(html, /--tap:\s*(4[4-9]|[5-9]\d)px/);
+  assert.match(html, /--tap:\s*(4\d|[5-9]\d)px/);
   assert.match(html, /button\s*\{[^}]*min-height:\s*var\(--tap\)/);
 });
 
@@ -574,7 +574,7 @@ test('klip havuzları: 2 sütunlu kart ızgarası, canlı "N seçili" özeti iç
 test('betik: yalnızca kolaylık (JS yoksa da çalışır); HTML etiketi benzeri dize ve kapanış etiketi içermez', () => {
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
-  assert.equal(scripts.length, 2);
+  assert.equal(scripts.length, 3);
   for (const s of scripts) assert.doesNotMatch(s, /<\w|<\//, 'betik HTML etiketi içermemeli');
 });
 
@@ -684,19 +684,34 @@ const contrast = (a, b) => {
 
 test('kontrast: metin ≥ 4.5:1, bileşen kenarı/durum noktası ≥ 3:1 (token çiftleri)', () => {
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
-  const tok = Object.fromEntries([...html.matchAll(/--([\w-]+):\s*(#[0-9a-fA-F]{6})/g)].map((m) => [m[1], m[2]]));
+  // Her tema bloğu (:root = pembe, html[data-theme=...]) ayrı ayrı sınanır.
+  const styleCss = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
+  const blocks = [...styleCss.matchAll(/(:root|html\[data-theme=\w+\])\s*\{([^}]*)\}/g)];
+  assert.deepEqual(blocks.map((b) => b[1]), [':root', 'html[data-theme=gece]', 'html[data-theme=orman]', 'html[data-theme=kagit]']);
+  const base = Object.fromEntries([...blocks[0][2].matchAll(/--([\w-]+):\s*(#[0-9a-fA-F]{6})/g)].map((m) => [m[1], m[2]]));
+  for (const [, themeName, body] of blocks) {
+    const own = Object.fromEntries([...body.matchAll(/--([\w-]+):\s*(#[0-9a-fA-F]{6})/g)].map((m) => [m[1], m[2]]));
+    const missing = Object.keys(base).filter((k) => !(k in own));
+    assert.deepEqual(missing, [], `${themeName}: eksik renk token'ları`);
+    checkContrast(own, themeName);
+  }
+});
+
+function checkContrast(tok, themeName) {
+  {
   const textPairs = [
     ['text', 'bg'], ['text', 'surface'], ['text', 'surface-2'], ['muted', 'bg'], ['muted', 'surface'], ['muted', 'surface-2'],
-    ['head', 'bg'], ['focus', 'surface'],
+    ['head', 'bg'], ['focus', 'surface'], ['soft', 'bg'], ['err', 'surface'], ['err', 'bg'], ['err', 'error-bg'],
   ];
-  for (const [fg, bg] of textPairs) assert.ok(contrast(tok[fg], tok[bg]) >= 4.5, `${fg} on ${bg}: ${contrast(tok[fg], tok[bg]).toFixed(2)}`);
+  for (const [fg, bg] of textPairs) assert.ok(contrast(tok[fg], tok[bg]) >= 4.5, `${themeName}: ${fg} on ${bg}: ${contrast(tok[fg], tok[bg]).toFixed(2)}`);
   // Düğme metinleri (beyaz): birincil (accent-strong) ve tehlike.
-  for (const bg of ['accent-strong', 'danger']) assert.ok(contrast('#ffffff', tok[bg]) >= 4.5, `beyaz on ${bg}`);
+  for (const bg of ['accent-strong', 'danger']) assert.ok(contrast('#ffffff', tok[bg]) >= 4.5, `${themeName}: beyaz on ${bg}`);
   // Bileşen sınırları ve durum noktaları (WCAG 1.4.11): kart yüzeyinde ve zeminde ≥ 3:1.
   // Anahtar açıkken (accent-strong dolgu) ve seçili kart kenarı (accent) kart zemininde seçilebilir kalmalı.
   assert.ok(contrast(tok.accent, tok.surface) >= 3, 'accent on surface (anahtar dolgusu, seçili kart kenarı)');
   assert.ok(contrast('#ffffff', tok.accent) >= 3, 'anahtar topuzu (beyaz) accent dolgusunda');
   for (const fg of ['border-strong', 'ok', 'warn', 'idle', 'danger-edge']) {
-    for (const bg of ['bg', 'surface']) assert.ok(contrast(tok[fg], tok[bg]) >= 3, `${fg} on ${bg}: ${contrast(tok[fg], tok[bg]).toFixed(2)}`);
+    for (const bg of ['bg', 'surface']) assert.ok(contrast(tok[fg], tok[bg]) >= 3, `${themeName}: ${fg} on ${bg}: ${contrast(tok[fg], tok[bg]).toFixed(2)}`);
   }
-});
+  }
+}

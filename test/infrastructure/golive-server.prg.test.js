@@ -362,6 +362,6 @@ test('/config/upload?for=b: kapak seçili yayının panelinde seçili gelir (fla
     const page = await (await fetch(`${base}${res.headers.get('location')}`)).text();
     assert.match(page, /id="b-cover-[^"]*" name="cover" value="\/c\/galeri-1\.jpg" checked/);
     assert.doesNotMatch(page, /id="p-cover-[^"]*" name="cover" value="\/c\/galeri-1\.jpg" checked/);
-    assert.match(page, /<details class="fold"\s+open><summary>Yayını düzenle/);
+    assert.match(page, /<details class="fold autoopen" open><summary>Yayını düzenle/);
   },
 ));

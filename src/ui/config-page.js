@@ -106,6 +106,9 @@ function switchInput(id, name, checked, text) {
 // alanını açar, bu yüzden kısayol listesi hiçbir değeri kısıtlamaz.
 const POMO_PRESETS = ['50+10', '30+10', '45+15'];
 
+// Sağ üstteki küçük tema noktaları: [id, ad]. Renkler STYLE'daki html[data-theme=...] bloklarında.
+const THEMES = [['pembe', 'Pembe'], ['gece', 'Gece'], ['orman', 'Orman'], ['kagit', 'Kâğıt']];
+
 const STATE_LABELS ={ running: 'Çalışıyor', stopped: 'Durmuş', unknown: 'Bilinmiyor' };
 const STATE_TONE = { running: 'ok', stopped: 'idle', unknown: 'unk' };
 // Durum rozeti: simge (CSS) + kısa kelime. tone: ok | idle | warn | done | bad | unk
@@ -292,7 +295,7 @@ ${covers.length ? '' : '<p class="hint">Kapak adayı yok.</p>'}
     ${picker}
     <p class="state">${chip(lifeTone, LIFECYCLE_LABELS[b.lifeCycleStatus] ?? b.lifeCycleStatus ?? 'Bilinmiyor')}${privacyChip(b.privacyStatus)}${when}</p>
     <form id="coverUploadB" method="post" enctype="multipart/form-data" action="${esc(uploadB)}"></form>
-    ${fold('Yayını düzenle', 'başlık, görünürlük, kapak', editForm, { open: pendingHere })}
+    ${fold('Yayını düzenle', 'başlık, görünürlük, kapak', editForm, { open: pendingHere, cls: 'autoopen' })}
     ${canEnd ? fold('Yayını bitir…', null, `<p class="hint">Yayını YouTube'da sonlandırır; geri alınamaz.</p>
         <form method="post" action="${esc(act)}" onsubmit="return confirm('Bu yayın BİTİRİLSİN mi? Geri alınamaz.')">
           <input type="hidden" name="broadcastId" value="${esc(b.id)}">
@@ -383,7 +386,32 @@ const STYLE = `
     --border-strong: #9d5b80; --text: #fbe6f0; --muted: #c98cae; --head: #ffd3ea;
     --accent: #ec4899; --accent-strong: #be185d; --focus: #f472b6;
     --danger: #7a1f3d; --danger-edge: #e0699f; --ok: #34d399; --warn: #fbbf24; --idle: #a38a99;
-    --radius: 10px; --tap: 44px;
+    --soft: #f3b7d6; --notice-bg: #3a1430; --notice-edge: #d6459b; --error-bg: #3a1420; --err: #ff9ec4;
+    --radius: 10px; --tap: 40px;
+  }
+  html[data-theme=gece] {
+    color-scheme: dark;
+    --bg: #0f1722; --surface: #162131; --surface-2: #1d2b3f; --line: #263650;
+    --border-strong: #5b86b8; --text: #e6eefb; --muted: #94b0d6; --head: #cfe2ff;
+    --accent: #3b82f6; --accent-strong: #1d4ed8; --focus: #60a5fa;
+    --danger: #7f1d1d; --danger-edge: #f87171; --ok: #34d399; --warn: #fbbf24; --idle: #8a9ab0;
+    --soft: #a9c8f5; --notice-bg: #14284a; --notice-edge: #3b82f6; --error-bg: #3a1a1f; --err: #fca5a5;
+  }
+  html[data-theme=orman] {
+    color-scheme: dark;
+    --bg: #0d1a14; --surface: #13241c; --surface-2: #1a3026; --line: #24402f;
+    --border-strong: #5fa37a; --text: #e4f5ea; --muted: #8fc7a4; --head: #c9f0d7;
+    --accent: #16a34a; --accent-strong: #15803d; --focus: #4ade80;
+    --danger: #7f1d1d; --danger-edge: #f87171; --ok: #34d399; --warn: #fbbf24; --idle: #8aa595;
+    --soft: #a6dfba; --notice-bg: #12361f; --notice-edge: #16a34a; --error-bg: #3a1a1f; --err: #fca5a5;
+  }
+  html[data-theme=kagit] {
+    color-scheme: light;
+    --bg: #f7f5f6; --surface: #ffffff; --surface-2: #f0ecee; --line: #ddd5da;
+    --border-strong: #8a6a7c; --text: #2a1a24; --muted: #6b4f60; --head: #4a1d38;
+    --accent: #db2777; --accent-strong: #be185d; --focus: #be185d;
+    --danger: #9f1239; --danger-edge: #be123c; --ok: #15803d; --warn: #b45309; --idle: #6b7280;
+    --soft: #7a2d58; --notice-bg: #fce7f3; --notice-edge: #db2777; --error-bg: #ffe4e6; --err: #9f1239;
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
@@ -397,7 +425,7 @@ const STYLE = `
   .sub { margin: 0; color: var(--muted); font-size: 12px; }
   section { margin-bottom: 20px; }
   h2 { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; margin: 0 0 8px; color: var(--head); }
-  h3 { font-size: 13px; font-weight: 600; margin: 14px 0 6px; color: #f3b7d6; }
+  h3 { font-size: 13px; font-weight: 600; margin: 14px 0 6px; color: var(--soft); }
   .card h3 { margin-top: 0; }
   .lbl { display: block; font-size: 12px; font-weight: 600; margin: 10px 0 4px; color: var(--muted); }
   .hint { font-size: 12px; color: var(--muted); margin: 4px 0 8px; }
@@ -422,12 +450,12 @@ const STYLE = `
   select { margin-bottom: 8px; }
   :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   button {
-    width: 100%; padding: 9px 14px; font: inherit; font-size: 14px; font-weight: 600; border-radius: 10px;
+    width: 100%; padding: 6px 12px; font: inherit; font-size: 13.5px; font-weight: 500; border-radius: 8px;
     border: 1px solid transparent; margin-top: 8px; min-height: var(--tap); cursor: pointer; color: var(--text);
   }
   .primary { background: var(--accent-strong); color: #fff; }
-  .secondary { background: transparent; border-color: var(--border-strong); color: var(--text); }
-  .danger { background: var(--danger); border-color: var(--danger-edge); color: #fff; }
+  .secondary { background: transparent; border-color: var(--line); color: var(--text); }
+  .danger { background: transparent; border-color: var(--danger-edge); color: var(--err); }
   button:disabled { opacity: .5; cursor: not-allowed; }
   .card, .state { padding: 10px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); }
   .card { margin-bottom: 8px; }
@@ -459,13 +487,13 @@ const STYLE = `
   .picklist { border-top: 1px solid var(--line); max-height: 60vh; overflow-y: auto; }
   .pickrow { display: flex; align-items: center; gap: 12px; padding: 8px 12px; min-height: 48px; color: var(--text); text-decoration: none; }
   .picklist .pickrow { border-bottom: 1px solid var(--line); }
-  .pickrow.sel { background: #3a1430; }
+  .pickrow.sel { background: var(--notice-bg); }
   .pickrow span:not(.thumb) { overflow-wrap: anywhere; flex: 1; font-size: 13px; }
   .pickrow .thumb { width: 64px; height: 36px; object-fit: cover; border-radius: 4px; background: var(--surface-2); flex-shrink: 0; display: inline-block; }
   .pickgroup { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0; padding: 8px 12px; background: var(--bg); }
   input[type=file] { width: 100%; padding: 10px 0; color: var(--text); }
-  .notice { background: #3a1430; border: 1px solid #d6459b; padding: 9px 12px; font-size: 13px; border-radius: var(--radius); margin-bottom: 12px; }
-  .error { background: #3a1420; border: 1px solid #e0699f; padding: 9px 12px; font-size: 13px; border-radius: var(--radius); margin-bottom: 12px; }
+  .notice { background: var(--notice-bg); border: 1px solid var(--notice-edge); padding: 9px 12px; font-size: 13px; border-radius: var(--radius); margin-bottom: 12px; }
+  .error { background: var(--error-bg); border: 1px solid var(--danger-edge); padding: 9px 12px; font-size: 13px; border-radius: var(--radius); margin-bottom: 12px; }
   .savebar { margin-top: 8px; }
   .newlink {
     display: flex; align-items: center; justify-content: center; min-height: var(--tap);
@@ -488,7 +516,7 @@ const STYLE = `
 
   /* Aç/kapa anahtarı: gerçek onay kutusu */
   .sw { position: absolute; opacity: 0; width: 1px; height: 1px; }
-  .swl { display: flex; align-items: center; gap: 10px; font-size: 14px; min-height: var(--tap); cursor: pointer; font-weight: 600; }
+  .swl { display: flex; align-items: center; gap: 10px; font-size: 14px; min-height: var(--tap); cursor: pointer; font-weight: 500; }
   .track { position: relative; width: 48px; height: 28px; flex-shrink: 0; border-radius: 14px; border: 2px solid var(--border-strong); background: var(--surface-2); }
   .track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: var(--text); }
   .sw:checked + .swl .track { background: var(--accent); border-color: var(--accent); }
@@ -515,7 +543,7 @@ const STYLE = `
   .tin:focus-visible ~ .tw { outline: 3px solid var(--focus); outline-offset: 2px; }
 
   /* JS varsa Pomodoro süre kısayolları görünür; yoksa yalnızca metin alanı */
-  .field-error { color: #ff9ec4; margin: 6px 0 0; font-size: 14px; font-weight: 600; }
+  .field-error { color: var(--err); margin: 6px 0 0; font-size: 14px; font-weight: 600; }
   .field-error[hidden] { display: none; }
   input[aria-invalid="true"] { border-color: var(--danger-edge); }
   /* "i" ipucu: kapalıyken yalnızca küçük bir daire; dokununca açıklama açılır */
@@ -571,7 +599,7 @@ const STYLE = `
   .chip i { display: inline-block; flex: none; width: 14px; height: 14px; background: currentColor; -webkit-mask: var(--i) center / contain no-repeat; mask: var(--i) center / contain no-repeat; }
   .chip.ok { color: var(--ok); border-color: currentColor; }
   .chip.warn { color: var(--warn); }
-  .chip.bad { color: #ff9ec4; }
+  .chip.bad { color: var(--err); }
   .chip.pv { padding: 3px 8px; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .chip.ok i { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='2' fill='black'/%3E%3Cpath d='M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 4.9a10 10 0 0 0 0 14.2M19.1 4.9a10 10 0 0 1 0 14.2'/%3E%3C/svg%3E"); }
@@ -585,6 +613,26 @@ const STYLE = `
   .chip i.pv-private { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='11' width='14' height='10' rx='2'/%3E%3Cpath d='M8 11V8a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E"); }
   .chip i.t-clock { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3 2'/%3E%3C/svg%3E"); }
   .chip i.t-done { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E"); }
+  /* Başlık satırı: sağ üstte küçük tema noktaları (yalnızca JS varken) */
+  .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .themes { display: none; gap: 6px; padding-top: 4px; }
+  html.js .themes { display: flex; }
+  .tdot { width: 22px; height: 22px; min-height: 0; margin: 0; padding: 0; border-radius: 50%; border: 2px solid var(--line); }
+  .tdot[aria-pressed=true] { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg); }
+  .tdot[data-theme=pembe] { background: linear-gradient(135deg, #ec4899 50%, #1c0f17 50%); }
+  .tdot[data-theme=gece] { background: linear-gradient(135deg, #3b82f6 50%, #0f1722 50%); }
+  .tdot[data-theme=orman] { background: linear-gradient(135deg, #16a34a 50%, #0d1a14 50%); }
+  .tdot[data-theme=kagit] { background: linear-gradient(135deg, #db2777 50%, #f7f5f6 50%); }
+  /* Adımlar: JS varken tek seferde tek adım görünür; JS yoksa hepsi alt alta (sekme çubuğu gizli) */
+  .steps { display: none; }
+  html.js .steps { display: flex; gap: 4px; margin: 0 0 14px; border-bottom: 1px solid var(--line); }
+  .steps button { flex: 1; margin: 0; min-height: 36px; padding: 6px 4px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); font-size: 13px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .steps button[aria-selected=true] { color: var(--text); border-bottom-color: var(--accent); }
+  html.js .step:not(.on) { display: none; }
+  html.js .step h2 { display: none; }
+  html.js details.autoopen > summary { display: none; }
+  html.js details.autoopen { border: 0; background: none; margin: 0; }
+  html.js details.autoopen > .foldbody { padding: 0; }
   .js-only { display: none; }
   html.js .js-only { display: flex; }
   html.js .pt-custom { display: none; }
@@ -696,6 +744,54 @@ const SCRIPT = `
   d.addEventListener('submit', function (e) {
     if (e.target && e.target.id === 'planForm' && !pomoValid()) e.preventDefault();
   });
+
+  // Adımlar: tek seferde tek adım. Öncelik: adreste #adım > sunucunun zorladığı adım > son açık adım > ilk adım.
+  // Adım içindeki "düzenle" katları sekme açıkken zaten görünür: kendiliğinden açılır.
+  [].forEach.call(d.querySelectorAll('details.autoopen'), function (el) { el.open = true; });
+  var stepNav = d.getElementById('steps');
+  if (stepNav) {
+    var tabs = [].slice.call(stepNav.querySelectorAll('button[data-step]'));
+    var panelOf = function (id) { return d.getElementById('step-' + id); };
+    var show = function (id, remember) {
+      if (!panelOf(id)) id = tabs[0].getAttribute('data-step');
+      tabs.forEach(function (t) {
+        var on = t.getAttribute('data-step') === id;
+        t.setAttribute('aria-selected', on ? 'true' : 'false');
+        var panel = panelOf(t.getAttribute('data-step'));
+        if (panel) panel.className = on ? 'step on' : 'step';
+      });
+      if (remember) { try { sessionStorage.setItem('yt-step', id); } catch (e) { /* kalıcı değil: sorun yok */ } }
+    };
+    var wanted = (location.hash || '').replace('#', '');
+    var saved = '';
+    try { saved = sessionStorage.getItem('yt-step') || ''; } catch (e) { saved = ''; }
+    var first = stepNav.getAttribute('data-start');
+    var initialStep = panelOf(wanted) ? wanted : (stepNav.hasAttribute('data-force') ? first : (panelOf(saved) ? saved : first));
+    show(initialStep, false);
+    stepNav.addEventListener('click', function (e) {
+      var t = e.target.closest ? e.target.closest('button[data-step]') : null;
+      if (!t) return;
+      if (busy) return;
+      show(t.getAttribute('data-step'), true);
+      window.scrollTo(0, 0);
+    });
+  }
+
+  // Tema noktaları (sağ üst): seçim bu tarayıcıda hatırlanır.
+  var dots = [].slice.call(d.querySelectorAll('.tdot'));
+  var paintDots = function () {
+    var cur = d.documentElement.getAttribute('data-theme') || 'pembe';
+    dots.forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-theme') === cur ? 'true' : 'false'); });
+  };
+  dots.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var t = b.getAttribute('data-theme');
+      d.documentElement.setAttribute('data-theme', t);
+      try { localStorage.setItem('yt-theme', t); } catch (e) { /* kalıcı değil: sorun yok */ }
+      paintDots();
+    });
+  });
+  paintDots();
 
   // Katlı bölümlerin "N seçili" özeti canlı kalsın.
   [].forEach.call(d.querySelectorAll('[data-count-for]'), function (el) {
@@ -835,6 +931,22 @@ function renderConfigPage({
   const action = withNonce(`/config?token=${encodeURIComponent(token)}${keep}`, nonce);
   const uploadAction = withNonce(`/config/upload?token=${encodeURIComponent(token)}${keep}`, nonce);
   const nowSection = streamControls(streamState, action) + instancesSection(instances, token, { keep, nonce });
+  const pickerHtml = broadcastPicker({
+    broadcasts, selectedId, token, covers, canCreate, newMode, newFormHtml: newMode ? newStreamForm({
+      token, covers, albums: catalogAlbums, draft, keep, nonce,
+    }) : '', nonce, pendingCover, pendingFor,
+  });
+  const newLink = canCreate && !newMode ? `<section>
+  <a class="newlink" href="${esc(`/config?token=${encodeURIComponent(token)}&new=1`)}">+ Eşzamanlı yeni yayın aç…</a>
+</section>` : '';
+  const hasBc = Boolean(pickerHtml.trim() || newLink);
+  // Adımlar (JS varken sekme): şu an → yayın → sonraki yayın. Boş adım gösterilmez.
+  const steps = [['now', 'Şu an', Boolean(nowSection)], ['bc', 'Yayın', hasBc], ['next', 'Sonraki', true]]
+    .filter(([, , present]) => present).map(([id, name]) => [id, name]);
+  // Sonuç belirli bir adımı gerektiriyorsa (yeni yayın formu, yüklenen kapak) o adım zorla açılır.
+  const forced = newMode || (pendingCover && pendingFor === 'b') ? 'bc' : (planPending ? 'next' : null);
+  const forceStep = Boolean(forced) && steps.some(([id]) => id === forced);
+  const startStep = forceStep ? forced : steps[0][0];
   // D1: yeniden başlatma canlı yayını keser — her durumda net bir onay (metin duruma göre).
   const restartConfirm = {
     running: 'Yayın şu an ÇALIŞIYOR. Yeniden başlatma yayını kısa süreliğine KESER ve yeni planla baştan başlatır. Devam edilsin mi?',
@@ -851,26 +963,31 @@ function renderConfigPage({
 <title>Yayın Yönetimi</title>
 <style>${STYLE}</style>
 <script>document.documentElement.className += ' js';</script>
+<script>document.documentElement.setAttribute('data-theme',(function(){try{return localStorage.getItem('yt-theme')||'pembe';}catch(e){return 'pembe';}})());</script>
 </head>
 <body>
-<header>
-  <h1>Yayın Yönetimi</h1>
-  <p class="sub">Plan: ${esc(plan.name)}</p>
+<header class="top">
+  <div>
+    <h1>Yayın Yönetimi</h1>
+    <p class="sub">Plan: ${esc(plan.name)}</p>
+  </div>
+  <div class="themes" role="group" aria-label="Tema">${THEMES.map(([id, name]) => `<button type="button" class="tdot" data-theme="${id}" aria-label="Tema: ${name}" title="${name}" aria-pressed="false"></button>`).join('')}</div>
 </header>
 ${notice ? `<div role="status" class="notice">${esc(notice)}</div>` : ''}
 ${error ? `<div role="alert" class="error">${esc(error)}</div>` : ''}
-${nowSection ? `<section>
+<nav class="steps" id="steps" role="tablist" aria-label="Adımlar" data-start="${startStep}"${forceStep ? ' data-force="1"' : ''}>${steps.map(([id, name]) => `<button type="button" role="tab" id="tab-${id}" data-step="${id}" aria-controls="step-${id}" aria-selected="false">${name}</button>`).join('')}</nav>
+${nowSection ? `<div class="step" id="step-now" role="tabpanel" aria-labelledby="tab-now"><section>
   <h2>Şu an</h2>
   ${nowSection}
-</section>` : ''}
-${broadcastPicker({
-  broadcasts, selectedId, token, covers, canCreate, newMode, newFormHtml: newMode ? newStreamForm({
-    token, covers, albums: catalogAlbums, draft, keep, nonce,
-  }) : '', nonce, pendingCover, pendingFor,
-})}
+</section></div>` : ''}
+${hasBc ? `<div class="step" id="step-bc" role="tabpanel" aria-labelledby="tab-bc">
+${pickerHtml}
+${newLink}
+</div>` : ''}
 <!-- Galeri yüklemesi: ana formun DIŞINDA (iç içe form olmaz); cover bölümündeki dosya
      alanı ve düğme form="coverUpload" ile buna bağlanır. -->
 <form id="coverUpload" method="post" enctype="multipart/form-data" action="${esc(uploadAction)}"></form>
+<div class="step" id="step-next" role="tabpanel" aria-labelledby="tab-next">
 <form id="planForm" method="post" action="${esc(action)}" data-guard${planPending ? ' data-pending' : ''}>
   <h2>Sonraki yayın</h2>
   ${fold('Ayarları düzenle', planNote, `
@@ -911,7 +1028,7 @@ ${broadcastPicker({
     </div>`)}
 
     <p class="muted">${esc(musicNote)}</p>
-  `, { open: Boolean(planPending), cls: 'planfold' })}
+  `, { open: Boolean(planPending), cls: 'planfold autoopen' })}
 
   <div class="savebar">
     <p class="dirtynote" id="dirtyNote" role="status" aria-live="polite"></p>
@@ -920,9 +1037,7 @@ ${broadcastPicker({
   </div>
   ${tip('Kaydet yalnızca planı kaydeder, çalışan yayına dokunmaz. "Kaydet ve Yeniden Başlat" kaydeder ve yayını kısa süreliğine keserek yeni planla başlatır.')}
 </form>
-${canCreate && !newMode ? `<section>
-  <a class="newlink" href="${esc(`/config?token=${encodeURIComponent(token)}&new=1`)}">+ Eşzamanlı yeni yayın aç…</a>
-</section>` : ''}
+</div>
 <script>${SCRIPT}</script>
 </body>
 </html>`;

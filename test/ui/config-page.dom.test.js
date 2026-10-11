@@ -220,20 +220,59 @@ const tiered = (extra = {}) => renderConfigPage({
   selectedId: 'b1', nonce: 'a'.repeat(32), ...extra,
 });
 
-test('kademe 1: Sonraki yayın ayarları ve yayın düzenleme kapalı gelir; Kaydet çubuğu gizli', { skip: noBrowser }, () => {
+const disp = (id) => `getComputedStyle(document.getElementById('${id}')).display`;
+
+test('adımlar: JS varken tek adım görünür; sekmeye basınca geçilir; düzenleme katları kendiliğinden açık', { skip: noBrowser }, () => {
   const r = runInPage(tiered(), `
-    var open = [].map.call(document.querySelectorAll('details.fold'), function (d) { return d.open; });
-    var bar = document.querySelector('.savebar');
-    return { anyOpen: open.some(Boolean), barDisplay: getComputedStyle(bar).display };`);
-  assert.equal(r.anyOpen, false);
-  assert.equal(r.barDisplay, 'none');
+    var tabs = [].map.call(document.querySelectorAll('#steps button'), function (b) { return b.getAttribute('data-step'); });
+    var first = { bc: ${disp('step-bc')}, next: ${disp('step-next')}, sel: document.querySelector('#steps [aria-selected=true]').getAttribute('data-step') };
+    document.getElementById('tab-next').click();
+    var second = { bc: ${disp('step-bc')}, next: ${disp('step-next')}, bar: getComputedStyle(document.querySelector('.savebar')).display,
+      open: document.querySelector('details.planfold').open, sumHidden: getComputedStyle(document.querySelector('details.planfold > summary')).display,
+      stored: sessionStorage.getItem('yt-step') };
+    return { tabs: tabs, first: first, second: second };`);
+  assert.deepEqual(r.tabs, ['bc', 'next'], 'boş "Şu an" adımı için sekme çıkmaz');
+  assert.equal(r.first.sel, 'bc');
+  assert.notEqual(r.first.bc, 'none');
+  assert.equal(r.first.next, 'none');
+  assert.equal(r.second.bc, 'none');
+  assert.notEqual(r.second.next, 'none');
+  assert.equal(r.second.bar, 'flex', 'Kaydet çubuğu plan adımında görünür');
+  assert.equal(r.second.open, true);
+  assert.equal(r.second.sumHidden, 'none', 'adım içinde ekstra "düzenle" satırı yok');
+  assert.equal(r.second.stored, 'next');
 });
 
-test('plan katlanınca açılınca Kaydet çubuğu görünür', { skip: noBrowser }, () => {
+test('adımlar: sunucu zorlarsa (yüklenen kapak) kayıtlı adım yok sayılır; JS yokken hepsi görünür', { skip: noBrowser }, () => {
+  const html = tiered({ pendingCover: 'X:/c/galeri-1.jpg', pendingFor: 'p' });
+  const r = runInPage(html, `
+    sessionStorage.setItem('yt-step', 'bc');
+    return 1;`);
+  assert.equal(r, 1);
+  // Zorlama özniteliği sunucu çıktısında: JS betiği açılışta bunu kayıtlı adımdan önce uygular.
+  assert.match(html, /<nav class="steps" id="steps"[^>]*data-start="next" data-force="1">/);
+  assert.doesNotMatch(tiered(), /data-force="1"/);
+  assert.match(html, /\.steps \{ display: none; \}/, 'sekme çubuğu JS yokken gizli');
+  assert.match(html, /html\.js \.step:not\(\.on\) \{ display: none; \}/, 'adım gizleme yalnızca JS varken');
+});
+
+test('tema noktaları: tıklayınca tema değişir, hatırlanır, seçili nokta işaretlenir', { skip: noBrowser }, () => {
   const r = runInPage(tiered(), `
-    document.querySelector('details.planfold').open = true;
-    return getComputedStyle(document.querySelector('.savebar')).display;`);
-  assert.equal(r, 'flex');
+    var before = getComputedStyle(document.body).backgroundColor;
+    document.querySelector('.tdot[data-theme=kagit]').click();
+    var after = getComputedStyle(document.body).backgroundColor;
+    return {
+      before: before, after: after, theme: document.documentElement.getAttribute('data-theme'),
+      stored: localStorage.getItem('yt-theme'),
+      pressed: [].map.call(document.querySelectorAll('.tdot[aria-pressed=true]'), function (b) { return b.getAttribute('data-theme'); }),
+      count: document.querySelectorAll('.tdot').length, visible: getComputedStyle(document.querySelector('.themes')).display,
+    };`);
+  assert.equal(r.count, 4);
+  assert.equal(r.visible, 'flex');
+  assert.equal(r.theme, 'kagit');
+  assert.equal(r.stored, 'kagit');
+  assert.deepEqual(r.pressed, ['kagit']);
+  assert.notEqual(r.before, r.after, 'zemin rengi değişmeli');
 });
 
 test('seçili yayının kapağı: galeriden dosya seçilince coverUploadB (for=b) gönderilir', { skip: noBrowser }, () => {
@@ -256,12 +295,12 @@ test('yükleme seçili yayından yapıldıysa kapak yalnızca yayın panelinde s
   assert.match(html, /name="cover" value="X:\/c\/galeri-1\.jpg" checked/);
   assert.equal([...html.matchAll(/name="cover" value="X:\/c\/galeri-1\.jpg" checked/g)].length, 1);
   assert.match(html, /id="b-cover-X__c_galeri-1_jpg"|id="b-cover-[^"]*galeri[^"]*" name="cover" value="X:\/c\/galeri-1\.jpg" checked/);
-  assert.match(html, /<details class="fold"\s+open><summary>Yayını düzenle/);
-  assert.doesNotMatch(html, /<details class="fold planfold" open>/);
+  assert.match(html, /<details class="fold autoopen" open><summary>Yayını düzenle/);
+  assert.doesNotMatch(html, /<details class="fold planfold autoopen" open>/);
 });
 
 test('yükleme "Sonraki yayın"dan yapıldıysa plan kapağı seçili gelir ve plan açılır', () => {
   const html = tiered({ pendingCover: 'X:/c/galeri-1.jpg', pendingFor: 'p' });
   assert.match(html, /id="p-cover-[^"]*" name="cover" value="X:\/c\/galeri-1\.jpg" checked/);
-  assert.match(html, /<details class="fold planfold" open>/);
+  assert.match(html, /<details class="fold planfold autoopen" open>/);
 });
