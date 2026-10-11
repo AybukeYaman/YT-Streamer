@@ -351,3 +351,17 @@ test('yeni yayın tekrarı: create bir kez', async () => {
     assert.equal(mgr.calls.filter((c) => c[0] === 'create').length, 1);
   });
 });
+
+test('/config/upload?for=b: kapak seçili yayının panelinde seçili gelir (flash pendingFor=b)', () => withServer(
+  { configApi: fakeApi(), broadcastAdmin: admin },
+  async ({ base, server }) => {
+    const { body, type } = multipart(Buffer.from([0xff, 0xd8, 0xff, 1, 2]));
+    const res = await post(base, `/config/upload?token=${TOKEN}&broadcast=b1&for=b`, body, { 'Content-Type': type });
+    assert.equal(res.status, 303);
+    assert.equal(server.flash.get(flashOf(res)).pendingFor, 'b');
+    const page = await (await fetch(`${base}${res.headers.get('location')}`)).text();
+    assert.match(page, /id="b-cover-[^"]*" name="cover" value="\/c\/galeri-1\.jpg" checked/);
+    assert.doesNotMatch(page, /id="p-cover-[^"]*" name="cover" value="\/c\/galeri-1\.jpg" checked/);
+    assert.match(page, /<details class="fold"\s+open><summary>Yayını düzenle/);
+  },
+));

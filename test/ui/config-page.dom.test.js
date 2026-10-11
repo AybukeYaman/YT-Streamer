@@ -193,3 +193,75 @@ test('yeni yayın formunun varsayılan görünürlüğü değişmedi (liste dı�
   assert.match(html, /name="privacy" value="unlisted" checked/);
   assert.ok(!html.includes(NOTE));
 });
+
+// ── Galeriden kapak: dosya seçilince yükleme formu gerçekten gönderilir ─────
+test('galeriden dosya seçilince (change) coverUpload formu gönderilir; yükleme sırasında düğme "Yükleniyor…"', { skip: noBrowser }, () => {
+  const r = runInPage(renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', nonce: 'a'.repeat(32) }), `
+    var sent = [];
+    HTMLFormElement.prototype.submit = function () { sent.push({ id: this.id, action: this.getAttribute('action') }); };
+    var input = document.getElementById('coverFile');
+    var dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array([255, 216, 255, 1])], 'a.jpg', { type: 'image/jpeg' }));
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    var label = document.querySelector('label.filebtn');
+    return { sent: sent, labelFor: label && label.getAttribute('for'), labelVisible: label && getComputedStyle(label).display };`);
+  assert.equal(r.labelFor, 'coverFile');
+  assert.equal(r.labelVisible, 'flex');
+  assert.equal(r.sent.length, 1);
+  assert.equal(r.sent[0].id, 'coverUpload');
+  assert.match(r.sent[0].action, /^\/config\/upload\?token=t&n=a{32}$/);
+});
+
+// ── Kademeli sayfa + seçili yayına galeriden kapak ──────────────────────────
+const tiered = (extra = {}) => renderConfigPage({
+  plan: new StreamPlan({}), clips: [], token: 't', covers: ['X:/c/a.jpg', 'X:/c/galeri-1.jpg'],
+  broadcasts: { items: [{ id: 'b1', title: 'Y', description: '', privacyStatus: 'public', lifeCycleStatus: 'live', finished: false }] },
+  selectedId: 'b1', nonce: 'a'.repeat(32), ...extra,
+});
+
+test('kademe 1: Sonraki yayın ayarları ve yayın düzenleme kapalı gelir; Kaydet çubuğu gizli', { skip: noBrowser }, () => {
+  const r = runInPage(tiered(), `
+    var open = [].map.call(document.querySelectorAll('details.fold'), function (d) { return d.open; });
+    var bar = document.querySelector('.savebar');
+    return { anyOpen: open.some(Boolean), barDisplay: getComputedStyle(bar).display };`);
+  assert.equal(r.anyOpen, false);
+  assert.equal(r.barDisplay, 'none');
+});
+
+test('plan katlanınca açılınca Kaydet çubuğu görünür', { skip: noBrowser }, () => {
+  const r = runInPage(tiered(), `
+    document.querySelector('details.planfold').open = true;
+    return getComputedStyle(document.querySelector('.savebar')).display;`);
+  assert.equal(r, 'flex');
+});
+
+test('seçili yayının kapağı: galeriden dosya seçilince coverUploadB (for=b) gönderilir', { skip: noBrowser }, () => {
+  const r = runInPage(tiered(), `
+    var sent = [];
+    HTMLFormElement.prototype.submit = function () { sent.push({ id: this.id, action: this.getAttribute('action') }); };
+    var input = document.getElementById('b-coverFile');
+    var dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array([255, 216, 255, 1])], 'a.jpg', { type: 'image/jpeg' }));
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return sent;`);
+  assert.equal(r.length, 1);
+  assert.equal(r[0].id, 'coverUploadB');
+  assert.match(r[0].action, /^\/config\/upload\?token=t&broadcast=b1&for=b&n=a{32}$/);
+});
+
+test('yükleme seçili yayından yapıldıysa kapak yalnızca yayın panelinde seçili gelir ve panel açılır', () => {
+  const html = tiered({ pendingCover: 'X:/c/galeri-1.jpg', pendingFor: 'b' });
+  assert.match(html, /name="cover" value="X:\/c\/galeri-1\.jpg" checked/);
+  assert.equal([...html.matchAll(/name="cover" value="X:\/c\/galeri-1\.jpg" checked/g)].length, 1);
+  assert.match(html, /id="b-cover-X__c_galeri-1_jpg"|id="b-cover-[^"]*galeri[^"]*" name="cover" value="X:\/c\/galeri-1\.jpg" checked/);
+  assert.match(html, /<details class="fold"\s+open><summary>Yayını düzenle/);
+  assert.doesNotMatch(html, /<details class="fold planfold" open>/);
+});
+
+test('yükleme "Sonraki yayın"dan yapıldıysa plan kapağı seçili gelir ve plan açılır', () => {
+  const html = tiered({ pendingCover: 'X:/c/galeri-1.jpg', pendingFor: 'p' });
+  assert.match(html, /id="p-cover-[^"]*" name="cover" value="X:\/c\/galeri-1\.jpg" checked/);
+  assert.match(html, /<details class="fold planfold" open>/);
+});

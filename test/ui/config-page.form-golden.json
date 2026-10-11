@@ -48,6 +48,16 @@
     },
     {
       "method": "post",
+      "action": "/config/upload?token=tk&broadcast=b1&for=b",
+      "entries": [
+        [
+          "coverFile",
+          "<file>"
+        ]
+      ]
+    },
+    {
+      "method": "post",
       "action": "/config?token=tk&broadcast=b1",
       "entries": [
         [

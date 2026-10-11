@@ -521,6 +521,7 @@ class GoLiveServer {
             // Yüklenen kapak yalnızca listedeki bir dosyaysa kabul edilir (yol sızması yok).
             if (flashed.pendingCover && ((await this.configApi.form()).covers ?? []).includes(flashed.pendingCover)) {
               extra.pendingCover = flashed.pendingCover;
+              if (flashed.pendingFor === 'b') extra.pendingFor = 'b';
             }
           }
           return this.#configPage(res, token, extra, {}, wanted);
@@ -641,6 +642,7 @@ class GoLiveServer {
         return this.#postResult(res, ctx, {
           notice: 'Görsel eklendi ve listede seçildi. Kapağı uygulamak için Kaydet\'e bas.',
           pendingCover: result.path,
+          pendingFor: url.searchParams.get('for') === 'b' ? 'b' : 'p',
         });
         });
       }

@@ -209,6 +209,7 @@ const existingPrivacyControl = (id, current) => (Object.hasOwn(PRIVACY_LABELS, c
 // canCreate: "+ Yeni yayın" satırı (eşzamanlı ikinci yayın kurma formu, ?new=1).
 function broadcastPicker({
   broadcasts, selectedId, token, covers, canCreate = false, newMode = false, newFormHtml = '', nonce = null,
+  pendingCover = null, pendingFor = null,
 }) {
   if (!broadcasts && !canCreate) return '';
   const head = '<section>\n    <h2>YouTube\'daki yayın</h2>';
@@ -264,26 +265,34 @@ function broadcastPicker({
   const when = formatStart(b.startAt)
     ? `<span class="chip"><i class="${b.started ? 't-done' : 't-clock'}" aria-hidden="true"></i><span class="sr">${b.started ? 'Başladı' : 'Planlanan'}: </span>${esc(formatStart(b.startAt))}</span>`
     : '';
+  // Galeriden yeni yüklenen kapak (for=b) yalnızca bu panelin kapak seçimine konur; "Sonraki yayın" etkilenmez.
+  const pendingHere = Boolean(pendingCover && pendingFor === 'b');
+  const uploadB = withNonce(`/config/upload?token=${t}&broadcast=${encodeURIComponent(b.id)}&for=b`, nonce);
   const detailsBody = `
         <label class="lbl" for="b-desc">Açıklama</label>
         <textarea name="description" id="b-desc" maxlength="${MAX_DESCRIPTION_LENGTH}">${esc(b.description)}</textarea>
         <p class="lbl">Kapak</p>
 ${covers.length ? '' : '<p class="hint">Kapak adayı yok.</p>'}
         ${coverGrid({
-    covers, selected: '', token, scope: 'b-', noneLabel: 'Değiştirme',
-  })}`;
-
-  return `${head}
-    ${picker}
-    <p class="state">${chip(lifeTone, LIFECYCLE_LABELS[b.lifeCycleStatus] ?? b.lifeCycleStatus ?? 'Bilinmiyor')}${privacyChip(b.privacyStatus)}${when}</p>
-    <form method="post" action="${esc(act)}" data-guard>
+    covers, selected: pendingHere ? pendingCover : '', token, scope: 'b-', noneLabel: 'Değiştirme',
+  })}
+        <input type="file" id="b-coverFile" name="coverFile" accept="image/jpeg,image/png,image/webp" form="coverUploadB" onchange="if(window.uploadPick){uploadPick(this)}else{document.getElementById('coverUploadB').submit()}">
+        <label class="filebtn" for="b-coverFile">Galeriden görsel ekle</label>
+        <button class="secondary nojs-only" type="submit" form="coverUploadB">Yükle</button>`;
+  const editForm = `<form method="post" action="${esc(act)}" data-guard${pendingHere ? ' data-pending' : ''}>
       <input type="hidden" name="broadcastId" value="${esc(b.id)}">
       <label class="lbl" for="b-title">Başlık</label>
       <input type="text" id="b-title" name="title" value="${esc(b.title)}" maxlength="${MAX_TITLE_LENGTH}">
       ${existingPrivacyControl('b-privacy', b.privacyStatus)}
-      ${fold('Açıklama ve kapak', `açıklama ${b.description.length} karakter`, detailsBody)}
+      ${fold('Açıklama ve kapak', `açıklama ${b.description.length} karakter`, detailsBody, { open: pendingHere })}
       <button class="primary" type="submit" name="action" value="apply">Bu Yayına Uygula</button>
-    </form>
+    </form>`;
+
+  return `${head}
+    ${picker}
+    <p class="state">${chip(lifeTone, LIFECYCLE_LABELS[b.lifeCycleStatus] ?? b.lifeCycleStatus ?? 'Bilinmiyor')}${privacyChip(b.privacyStatus)}${when}</p>
+    <form id="coverUploadB" method="post" enctype="multipart/form-data" action="${esc(uploadB)}"></form>
+    ${fold('Yayını düzenle', 'başlık, görünürlük, kapak', editForm, { open: pendingHere })}
     ${canEnd ? fold('Yayını bitir…', null, `<p class="hint">Yayını YouTube'da sonlandırır; geri alınamaz.</p>
         <form method="post" action="${esc(act)}" onsubmit="return confirm('Bu yayın BİTİRİLSİN mi? Geri alınamaz.')">
           <input type="hidden" name="broadcastId" value="${esc(b.id)}">
@@ -517,11 +526,13 @@ const STYLE = `
   .tip[open] summary { background: var(--surface-2); color: var(--text); }
   .tip p { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
   /* Galeri: dosya seçici gizli, yerine tek büyük düğme (JS varken seçince kendiliğinden yüklenir) */
-  html.js #coverFile { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+  html.js input[name=coverFile] { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
   html.js .nojs-only { display: none; }
+  /* Plan kapalıyken Kaydet çubuğu da gizli: kademe 1'de yalnızca durum ve ana işlemler görünür */
+  .planfold:not([open]) ~ .savebar, .planfold:not([open]) ~ .tip { display: none; }
   .filebtn { display: none; }
   html.js .filebtn { display: flex; align-items: center; justify-content: center; min-height: var(--tap); margin: 10px 0 4px; border: 1px dashed var(--border-strong); border-radius: var(--radius); color: var(--text); font-weight: 600; cursor: pointer; }
-  html.js #coverFile:focus-visible + .filebtn { outline: 3px solid var(--focus); outline-offset: 2px; }
+  html.js input[name=coverFile]:focus-visible + .filebtn { outline: 3px solid var(--focus); outline-offset: 2px; }
   /* Simgeler: yalnızca CSS (işaretleme/metin değişmez); renk = yazı rengi */
   button[value=start]::before,
   button[value=stop]::before,
@@ -530,7 +541,7 @@ const STYLE = `
   button[value=end]::before,
   button[value=save]::before,
   button[value=save_restart]::before,
-  button[form=coverUpload]::before,
+  button[form^=coverUpload]::before,
   .filebtn::before,
   .seg label[for$=-public]::before,
   .seg label[for$=-unlisted]::before,
@@ -539,7 +550,7 @@ const STYLE = `
     background: currentColor; -webkit-mask: var(--i) center / contain no-repeat; mask: var(--i) center / contain no-repeat;
   }
   button[value=start], button[value=stop], button[value=golive], button[value=apply], button[value=end],
-  button[value=save], button[value=save_restart], button[form=coverUpload], .seg label[for$=-public],
+  button[value=save], button[value=save_restart], button[form^=coverUpload], .seg label[for$=-public],
   .seg label[for$=-unlisted], .seg label[for$=-private] { display: flex; align-items: center; justify-content: center; }
   button[value=start] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 4l13 8-13 8z' fill='black'/%3E%3C/svg%3E"); }
   button[value=stop] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='5' width='14' height='14' rx='2' fill='black'/%3E%3C/svg%3E"); }
@@ -548,7 +559,7 @@ const STYLE = `
   button[value=end] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 21V4M5 4h11l-2 4 2 4H5'/%3E%3C/svg%3E"); }
   button[value=save] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 3h11l3 3v15H5z'/%3E%3Cpath d='M8 3v6h7V3M8 21v-7h8v7'/%3E%3C/svg%3E"); }
   button[value=save_restart] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 11a8 8 0 1 0-2.3 5.7'/%3E%3Cpath d='M20 4v7h-7'/%3E%3C/svg%3E"); }
-  button[form=coverUpload] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 16V4M7 9l5-5 5 5M5 20h14'/%3E%3C/svg%3E"); }
+  button[form^=coverUpload] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 16V4M7 9l5-5 5 5M5 20h14'/%3E%3C/svg%3E"); }
   .filebtn { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='2'/%3E%3Ccircle cx='9' cy='11' r='1.5'/%3E%3Cpath d='M21 16l-5-5-8 8'/%3E%3C/svg%3E"); }
   .seg label[for$=-public] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18'/%3E%3C/svg%3E"); }
   .seg label[for$=-unlisted] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1'/%3E%3C/svg%3E"); }
@@ -670,6 +681,7 @@ const SCRIPT = `
     pomoErr.hidden = false;
     typeInput.setAttribute('aria-invalid', 'true');
     if (custom) custom.className = 'pt-custom show';
+    for (var el = typeInput.parentElement; el; el = el.parentElement) { if (el.tagName === 'DETAILS') el.open = true; }
     typeInput.focus();
     return false;
   }
@@ -713,8 +725,7 @@ const SCRIPT = `
   var initial = guarded.map(snapshot);
   // Galeriden yeni yüklenen kapak seçili gelir ama plana HENÜZ yazılmadı (data-pending):
   // sayfa baştan "kaydedilmemiş değişiklik var" saymalı.
-  var planIndex = guarded.indexOf(d.getElementById('planForm'));
-  if (planIndex >= 0 && guarded[planIndex].hasAttribute('data-pending')) initial[planIndex] = 'bekleyen-kapak';
+  guarded.forEach(function (f, i) { if (f.hasAttribute('data-pending')) initial[i] = 'bekleyen-kapak'; });
   var dirtyForms = function () { return guarded.filter(function (f, i) { return snapshot(f) !== initial[i]; }); };
   var leaving = false;
   var planForm = d.getElementById('planForm');
@@ -756,7 +767,7 @@ const SCRIPT = `
   var busyLabel = function (btn, form) {
     if (btn.getAttribute('data-busy')) return btn.getAttribute('data-busy');
     if (BUSY_BY_ACTION[btn.value]) return BUSY_BY_ACTION[btn.value];
-    if (form && form.id === 'coverUpload') return 'Yükleniyor…';
+    if (form && form.id.indexOf('coverUpload') === 0) return 'Yükleniyor…';
     return 'İşleniyor…';
   };
   var startBusy = function (btn, form) {
@@ -794,8 +805,9 @@ const SCRIPT = `
   window.uploadPick = function (input) {
     if (!input.files || !input.files.length || busy) return;
     if (dirtyForms().length && !askDiscard('Görsel yüklenince sayfa yenilenir ve')) { input.value = ''; return; }
-    var form = d.getElementById('coverUpload');
-    startBusy(d.querySelector('button[form="coverUpload"]'), form);
+    var fid = input.getAttribute('form') || 'coverUpload';
+    var form = d.getElementById(fid);
+    startBusy(d.querySelector('button[form="' + fid + '"]'), form);
     form.submit();
   };
   refresh();
@@ -811,10 +823,13 @@ const SCRIPT = `
 // notice/error: POST sonrası aynı sayfaya basılan sonuç mesajı.
 function renderConfigPage({
   plan, clips, covers = [], token, notice = null, error = null, streamState = null,
-  broadcasts = null, selectedId = null, pendingCover = null,
+  broadcasts = null, selectedId = null, pendingCover = null, pendingFor = null,
   canCreate = false, newMode = false, draft = {}, catalogAlbums = [], instances = null, nonce = null,
 }) {
   const p = plan.pomodoro;
+  // Galeriden yeni yüklenen kapak, yükleme hangi bölümden yapıldıysa yalnızca orada seçili gelir.
+  const planPending = pendingCover && pendingFor !== 'b' ? pendingCover : null;
+  const planNote = `${plan.broadcast?.title ? shorten(plan.broadcast.title, 22) : 'başlık yok'} · Pomodoro ${p.enabled ? p.type : 'kapalı'}`;
   // Seçili yayın URL'de taşınır: kaydet/yükle/başlat sonrası seçim bozulmasın.
   const keep = selectedId ? `&broadcast=${encodeURIComponent(selectedId)}` : '';
   const action = withNonce(`/config?token=${encodeURIComponent(token)}${keep}`, nonce);
@@ -851,14 +866,14 @@ ${nowSection ? `<section>
 ${broadcastPicker({
   broadcasts, selectedId, token, covers, canCreate, newMode, newFormHtml: newMode ? newStreamForm({
     token, covers, albums: catalogAlbums, draft, keep, nonce,
-  }) : '', nonce,
+  }) : '', nonce, pendingCover, pendingFor,
 })}
 <!-- Galeri yüklemesi: ana formun DIŞINDA (iç içe form olmaz); cover bölümündeki dosya
      alanı ve düğme form="coverUpload" ile buna bağlanır. -->
 <form id="coverUpload" method="post" enctype="multipart/form-data" action="${esc(uploadAction)}"></form>
-<form id="planForm" method="post" action="${esc(action)}" data-guard${pendingCover ? ' data-pending' : ''}>
-  <section>
-    <h2>Sonraki yayın</h2>
+<form id="planForm" method="post" action="${esc(action)}" data-guard${planPending ? ' data-pending' : ''}>
+  <h2>Sonraki yayın</h2>
+  ${fold('Ayarları düzenle', planNote, `
     ${tip('Bir SONRAKİ canlıya almada oluşacak yayın içindir; yukarıdaki seçili yayına dokunmaz. Boş bıraktığın alan için config.json\'daki değer kullanılır.')}
 
     <label class="lbl" for="p-title">Başlık</label>
@@ -868,16 +883,16 @@ ${broadcastPicker({
       <label class="lbl" for="p-desc">Açıklama</label>
       <textarea name="description" id="p-desc" maxlength="${MAX_DESCRIPTION_LENGTH}" placeholder="Açıklama">${esc((plan.broadcast?.description) ?? '')}</textarea>`)}
 
-    <h3>Kapak ${tip('Tek seçim; bir sonraki canlıya almada yayının kapağı olur. Galeriden eklenen görsel 1280x720\'ye kırpılır (JPEG/PNG/WebP). Yüklemek sayfayı yeniler: önce yaptığın değişiklikleri Kaydet.')}</h3>
+    ${fold('Kapak', plan.cover ? shortPath(plan.cover) : 'varsayılan', `
+    ${tip('Tek seçim; bir sonraki canlıya almada yayının kapağı olur. Galeriden eklenen görsel 1280x720\'ye kırpılır (JPEG/PNG/WebP). Yüklemek sayfayı yeniler: önce yaptığın değişiklikleri Kaydet.')}
     ${coverGrid({
-    covers, selected: pendingCover ?? plan.cover ?? '', token, scope: 'p-', noneLabel: 'Varsayılan', keepUnknown: true,
+    covers, selected: planPending ?? plan.cover ?? '', token, scope: 'p-', noneLabel: 'Varsayılan', keepUnknown: true,
   })}
     <input type="file" id="coverFile" name="coverFile" accept="image/jpeg,image/png,image/webp" form="coverUpload" onchange="if(window.uploadPick){uploadPick(this)}else{document.getElementById('coverUpload').submit()}">
     <label class="filebtn" for="coverFile">Galeriden görsel ekle</label>
-    <button class="secondary nojs-only" type="submit" form="coverUpload">Yükle</button>
+    <button class="secondary nojs-only" type="submit" form="coverUpload">Yükle</button>`, { open: Boolean(planPending) })}
 
-    <h3>Pomodoro</h3>
-    <div class="pomo">
+    ${fold('Pomodoro', p.enabled ? `açık · ${p.type}` : 'kapalı', `<div class="pomo">
       ${switchInput('pomodoroEnabled', 'pomodoroEnabled', p.enabled, 'Pomodoro açık')}
       <div class="pomo-body">
         <p class="lbl" id="pomoPresets-l">Süre (çalışma + mola, dakika)</p>
@@ -893,10 +908,10 @@ ${broadcastPicker({
         ${fold('Mola görselleri', `${p.breakVideos.length} seçili`, `
           ${clipGrid('breakVideos', clips, p.breakVideos, token)}`, { countFor: 'breakVideos' })}
       </div>
-    </div>
+    </div>`)}
 
     <p class="muted">${esc(musicNote)}</p>
-  </section>
+  `, { open: Boolean(planPending), cls: 'planfold' })}
 
   <div class="savebar">
     <p class="dirtynote" id="dirtyNote" role="status" aria-live="polite"></p>
