@@ -256,7 +256,7 @@ function broadcastPicker({
   const current = items.find((b) => b.id === selectedId) ?? items[0];
   const summary = newMode
     ? pickRow(null, '<span class="thumb"></span>', NEW_TEXT, { tag: 'summary' })
-    : pickRow(null, broadcastThumb(current.thumbnailUrl), label(current), { tag: 'summary' });
+    : pickRow(null, broadcastThumb(current.thumbnailUrl), `${current.lifeCycleStatus === 'live' ? '● ' : ''}${shorten(current.title, 40)}`, { tag: 'summary' });
   const picker = dropdown(summary, `${newRow}${group('Aktif / yaklaşan', active)}${group('Biten', finished)}`);
 
   if (newMode) return `${head}\n    ${picker}\n    ${newFormHtml}\n  </section>`;
@@ -416,20 +416,20 @@ const STYLE = `
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
   body {
-    margin: 0; padding: 12px 16px 40px; background: var(--bg); color: var(--text);
+    margin: 0; padding: 16px 18px 56px; background: var(--bg); color: var(--text);
     font: 15px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     max-width: 480px; margin-inline: auto;
   }
-  header { margin: 0 0 14px; }
+  header { margin: 0 0 18px; }
   h1 { font-size: 19px; line-height: 1.2; margin: 0 0 2px; color: var(--head); }
   .sub { margin: 0; color: var(--muted); font-size: 12px; }
-  section { margin-bottom: 20px; }
+  section { margin-bottom: 28px; }
   h2 { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; margin: 0 0 8px; color: var(--head); }
-  h3 { font-size: 13px; font-weight: 600; margin: 14px 0 6px; color: var(--soft); }
+  h3 { font-size: 13px; font-weight: 600; margin: 20px 0 8px; color: var(--soft); }
   .card h3 { margin-top: 0; }
-  .lbl { display: block; font-size: 12px; font-weight: 600; margin: 10px 0 4px; color: var(--muted); }
-  .hint { font-size: 12px; color: var(--muted); margin: 4px 0 8px; }
-  .muted { color: var(--muted); font-size: 12px; }
+  .lbl { display: block; font-size: 13px; font-weight: 600; margin: 16px 0 6px; color: var(--muted); }
+  .hint { font-size: 13px; color: var(--muted); margin: 6px 0 10px; }
+  .muted { color: var(--muted); font-size: 13px; }
   .row {
     display: flex; align-items: center; gap: 10px; padding: 8px;
     border-bottom: 1px solid var(--line); min-height: var(--tap);
@@ -442,7 +442,7 @@ const STYLE = `
   .row span { overflow-wrap: anywhere; }
   .checklist { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
   input[type=text], textarea, select {
-    width: 100%; padding: 9px 12px; font-size: 16px; border-radius: 8px; min-height: var(--tap);
+    width: 100%; padding: 11px 12px; font-size: 16px; border-radius: 8px; min-height: var(--tap);
     border: 1px solid var(--border-strong); background: var(--surface); color: var(--text);
     font-family: inherit;
   }
@@ -450,15 +450,15 @@ const STYLE = `
   select { margin-bottom: 8px; }
   :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   button {
-    width: 100%; padding: 6px 12px; font: inherit; font-size: 13.5px; font-weight: 500; border-radius: 8px;
-    border: 1px solid transparent; margin-top: 8px; min-height: var(--tap); cursor: pointer; color: var(--text);
+    width: 100%; padding: 8px 14px; font: inherit; font-size: 14px; font-weight: 500; border-radius: 8px;
+    border: 1px solid transparent; margin-top: 12px; min-height: var(--tap); cursor: pointer; color: var(--text);
   }
   .primary { background: var(--accent-strong); color: #fff; }
   .secondary { background: transparent; border-color: var(--line); color: var(--text); }
   .danger { background: transparent; border-color: var(--danger-edge); color: var(--err); }
   button:disabled { opacity: .5; cursor: not-allowed; }
-  .card, .state { padding: 10px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); }
-  .card { margin-bottom: 8px; }
+  .card, .state { padding: 14px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); }
+  .card { margin-bottom: 14px; }
   .card .state { padding: 0; border: 0; background: none; margin: 0 0 4px; }
   .state { margin: 0 0 8px; }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; background: var(--idle); }
@@ -466,16 +466,16 @@ const STYLE = `
   .dot.warn { background: var(--warn); }
   .btnrow { display: flex; gap: 10px; }
   .btnrow form { flex: 1; margin: 0; }
-  .fold { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); margin: 14px 0 4px; }
+  .fold { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); margin: 16px 0 6px; }
   .fold > summary {
-    list-style: none; cursor: pointer; padding: 8px 12px; min-height: var(--tap);
+    list-style: none; cursor: pointer; padding: 10px 14px; min-height: var(--tap);
     display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px;
   }
   .fold > summary::-webkit-details-marker { display: none; }
   .fold > summary::after { content: '▾'; margin-left: auto; color: var(--muted); }
   .fold[open] > summary::after { content: '▴'; }
   .sumnote { font-weight: 400; color: var(--muted); font-size: 13px; }
-  .foldbody { padding: 0 12px 12px; }
+  .foldbody { padding: 2px 14px 16px; }
   .fold.more { border: 0; background: none; margin: 6px 0 0; }
   .fold.more > summary { padding: 8px 4px; min-height: var(--tap); font-size: 14px; color: var(--muted); font-weight: 400; }
   .fold.dangerzone { border-color: var(--danger-edge); margin-top: 18px; }
@@ -492,8 +492,8 @@ const STYLE = `
   .pickrow .thumb { width: 64px; height: 36px; object-fit: cover; border-radius: 4px; background: var(--surface-2); flex-shrink: 0; display: inline-block; }
   .pickgroup { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0; padding: 8px 12px; background: var(--bg); }
   input[type=file] { width: 100%; padding: 10px 0; color: var(--text); }
-  .notice { background: var(--notice-bg); border: 1px solid var(--notice-edge); padding: 9px 12px; font-size: 13px; border-radius: var(--radius); margin-bottom: 12px; }
-  .error { background: var(--error-bg); border: 1px solid var(--danger-edge); padding: 9px 12px; font-size: 13px; border-radius: var(--radius); margin-bottom: 12px; }
+  .notice { background: var(--notice-bg); border: 1px solid var(--notice-edge); padding: 12px 14px; font-size: 14px; border-radius: var(--radius); margin-bottom: 16px; }
+  .error { background: var(--error-bg); border: 1px solid var(--danger-edge); padding: 12px 14px; font-size: 14px; border-radius: var(--radius); margin-bottom: 16px; }
   .savebar { margin-top: 8px; }
   .newlink {
     display: flex; align-items: center; justify-content: center; min-height: var(--tap);
@@ -593,8 +593,8 @@ const STYLE = `
   .seg label[for$=-unlisted] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1'/%3E%3C/svg%3E"); }
   .seg label[for$=-private] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='11' width='14' height='10' rx='2'/%3E%3Cpath d='M8 11V8a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E"); }
   /* Durum rozetleri: simge + kısa kelime; görünürlük yalnızca simge (seçicideki simgelerle aynı) */
-  .state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0; border: 0; background: none; margin: 0 0 10px; }
-  .card .state { margin: 0 0 6px; }
+  .state { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 0; border: 0; background: none; margin: 14px 0 16px; }
+  .card .state { margin: 0 0 10px; }
   .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 2px 9px 2px 7px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); white-space: nowrap; }
   .chip i { display: inline-block; flex: none; width: 14px; height: 14px; background: currentColor; -webkit-mask: var(--i) center / contain no-repeat; mask: var(--i) center / contain no-repeat; }
   .chip.ok { color: var(--ok); border-color: currentColor; }
@@ -615,9 +615,14 @@ const STYLE = `
   .chip i.t-done { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E"); }
   /* Başlık satırı: sağ üstte küçük tema noktaları (yalnızca JS varken) */
   .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-  .themes { display: none; gap: 6px; padding-top: 4px; }
-  html.js .themes { display: flex; }
-  .tdot { width: 22px; height: 22px; min-height: 0; margin: 0; padding: 0; border-radius: 50%; border: 2px solid var(--line); }
+  .themes { display: none; position: relative; }
+  html.js .themes { display: block; }
+  .themes > summary { list-style: none; cursor: pointer; width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; color: var(--muted); }
+  .themes > summary::-webkit-details-marker { display: none; }
+  .themes > summary::before { content: ''; width: 18px; height: 18px; background: currentColor; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='13.5' cy='6.5' r='1' fill='black'/%3E%3Ccircle cx='17.5' cy='10.5' r='1' fill='black'/%3E%3Ccircle cx='8.5' cy='7.5' r='1' fill='black'/%3E%3Ccircle cx='6.5' cy='12.5' r='1' fill='black'/%3E%3Cpath d='M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.3-.5-.8-.5-1.3 0-1.1.9-2 2-2H18a4 4 0 0 0 4-4c0-5-4.5-9.4-10-9.4z'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='13.5' cy='6.5' r='1' fill='black'/%3E%3Ccircle cx='17.5' cy='10.5' r='1' fill='black'/%3E%3Ccircle cx='8.5' cy='7.5' r='1' fill='black'/%3E%3Ccircle cx='6.5' cy='12.5' r='1' fill='black'/%3E%3Cpath d='M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.3-.5-.8-.5-1.3 0-1.1.9-2 2-2H18a4 4 0 0 0 4-4c0-5-4.5-9.4-10-9.4z'/%3E%3C/svg%3E") center / contain no-repeat; }
+  .themes[open] > summary { color: var(--text); background: var(--surface-2); }
+  .tpop { position: absolute; right: 0; top: 40px; z-index: 20; display: flex; gap: 12px; padding: 12px; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: 0 6px 20px rgb(0 0 0 / .35); }
+  .tdot { width: 26px; height: 26px; min-height: 0; margin: 0; padding: 0; border-radius: 50%; border: 2px solid var(--line); }
   .tdot[aria-pressed=true] { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg); }
   .tdot[data-theme=pembe] { background: linear-gradient(135deg, #ec4899 50%, #1c0f17 50%); }
   .tdot[data-theme=gece] { background: linear-gradient(135deg, #3b82f6 50%, #0f1722 50%); }
@@ -625,8 +630,8 @@ const STYLE = `
   .tdot[data-theme=kagit] { background: linear-gradient(135deg, #db2777 50%, #f7f5f6 50%); }
   /* Adımlar: JS varken tek seferde tek adım görünür; JS yoksa hepsi alt alta (sekme çubuğu gizli) */
   .steps { display: none; }
-  html.js .steps { display: flex; gap: 4px; margin: 0 0 14px; border-bottom: 1px solid var(--line); }
-  .steps button { flex: 1; margin: 0; min-height: 36px; padding: 6px 4px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); font-size: 13px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 6px; }
+  html.js .steps { display: flex; gap: 4px; margin: 0 0 22px; border-bottom: 1px solid var(--line); }
+  .steps button { flex: 1; margin: 0; min-height: 42px; padding: 6px 4px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); font-size: 13px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 6px; }
   .steps button[aria-selected=true] { color: var(--text); border-bottom-color: var(--accent); }
   html.js .step:not(.on) { display: none; }
   html.js .step h2 { display: none; }
@@ -789,9 +794,15 @@ const SCRIPT = `
       d.documentElement.setAttribute('data-theme', t);
       try { localStorage.setItem('yt-theme', t); } catch (e) { /* kalıcı değil: sorun yok */ }
       paintDots();
+      var pop = d.querySelector('details.themes');
+      if (pop) pop.open = false;
     });
   });
   paintDots();
+  d.addEventListener('click', function (e) {
+    var pop = d.querySelector('details.themes');
+    if (pop && pop.open && !(e.target.closest && e.target.closest('details.themes'))) pop.open = false;
+  });
 
   // Katlı bölümlerin "N seçili" özeti canlı kalsın.
   [].forEach.call(d.querySelectorAll('[data-count-for]'), function (el) {
@@ -971,7 +982,7 @@ function renderConfigPage({
     <h1>Yayın Yönetimi</h1>
     <p class="sub">Plan: ${esc(plan.name)}</p>
   </div>
-  <div class="themes" role="group" aria-label="Tema">${THEMES.map(([id, name]) => `<button type="button" class="tdot" data-theme="${id}" aria-label="Tema: ${name}" title="${name}" aria-pressed="false"></button>`).join('')}</div>
+  <details class="themes"><summary aria-label="Tema seç" title="Tema"></summary><div class="tpop" role="group" aria-label="Tema">${THEMES.map(([id, name]) => `<button type="button" class="tdot" data-theme="${id}" aria-label="Tema: ${name}" title="${name}" aria-pressed="false"></button>`).join('')}</div></details>
 </header>
 ${notice ? `<div role="status" class="notice">${esc(notice)}</div>` : ''}
 ${error ? `<div role="alert" class="error">${esc(error)}</div>` : ''}

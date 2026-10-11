@@ -256,19 +256,26 @@ test('adımlar: sunucu zorlarsa (yüklenen kapak) kayıtlı adım yok sayılır;
   assert.match(html, /html\.js \.step:not\(\.on\) \{ display: none; \}/, 'adım gizleme yalnızca JS varken');
 });
 
-test('tema noktaları: tıklayınca tema değişir, hatırlanır, seçili nokta işaretlenir', { skip: noBrowser }, () => {
+test('tema seçici: tek palet ikonu; açılınca 4 nokta; seçince tema değişir, hatırlanır, pencere kapanır', { skip: noBrowser }, () => {
   const r = runInPage(tiered(), `
+    var pop = document.querySelector('details.themes');
+    var closedAtStart = !pop.open;
+    pop.querySelector('summary').click();
     var before = getComputedStyle(document.body).backgroundColor;
+    var opened = pop.open;
     document.querySelector('.tdot[data-theme=kagit]').click();
     var after = getComputedStyle(document.body).backgroundColor;
     return {
       before: before, after: after, theme: document.documentElement.getAttribute('data-theme'),
-      stored: localStorage.getItem('yt-theme'),
+      stored: localStorage.getItem('yt-theme'), closedAtStart: closedAtStart, opened: opened, closedAfter: !pop.open,
       pressed: [].map.call(document.querySelectorAll('.tdot[aria-pressed=true]'), function (b) { return b.getAttribute('data-theme'); }),
-      count: document.querySelectorAll('.tdot').length, visible: getComputedStyle(document.querySelector('.themes')).display,
+      count: document.querySelectorAll('.tdot').length, visible: getComputedStyle(pop).display,
     };`);
   assert.equal(r.count, 4);
-  assert.equal(r.visible, 'flex');
+  assert.equal(r.visible, 'block');
+  assert.equal(r.closedAtStart, true, 'pencere kapalı başlar (üst çubukta yalnızca ikon)');
+  assert.equal(r.opened, true);
+  assert.equal(r.closedAfter, true);
   assert.equal(r.theme, 'kagit');
   assert.equal(r.stored, 'kagit');
   assert.deepEqual(r.pressed, ['kagit']);
