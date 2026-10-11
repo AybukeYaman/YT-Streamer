@@ -130,7 +130,7 @@ function streamControls(streamState, action) {
     <div class="btnrow">
       ${buttons}
     </div>
-    ${state === 'running' ? '' : '<p class="hint">Başlattıktan 30-60 sn sonra canlıya almak için go-live tetikle (Shortcuts).</p>'}
+    ${state === 'running' ? '' : '<p class="hint">Başlattıktan 30-60 sn sonra canlıya al.</p>'}
   </div>`;
 }
 
@@ -156,6 +156,9 @@ function formatStart(iso) {
 // ikinci gönderim işlemi tekrar çalıştırmasın (bkz. src/infrastructure/action-dedupe.js).
 // Verilmezse URL değişmez (form altın testleri, eski kullanım).
 const withNonce = (url, nonce) => (nonce ? `${url}&n=${encodeURIComponent(nonce)}` : url);
+
+// Uzun açıklama kapalı gelir: yalnızca küçük bir "i" görünür, dokununca açılır (telefonda yazı kalabalığı yok).
+const tip = (text) => `<details class="tip"><summary aria-label="Bilgi">i</summary><p>${text}</p></details>`;
 
 const shorten = (text, max) => (text.length > max ? `${text.slice(0, max)}…` : text);
 
@@ -256,7 +259,7 @@ function broadcastPicker({
         <label class="lbl" for="b-desc">Açıklama</label>
         <textarea name="description" id="b-desc" maxlength="${MAX_DESCRIPTION_LENGTH}">${esc(b.description)}</textarea>
         <p class="lbl">Kapak</p>
-        <p class="hint">"Değiştirme" seçiliyse kapağa dokunulmaz${covers.length ? '' : ' (kapak adayı yok)'}</p>
+${covers.length ? '' : '<p class="hint">Kapak adayı yok.</p>'}
         ${coverGrid({
     covers, selected: '', token, scope: 'b-', noneLabel: 'Değiştirme',
   })}`;
@@ -271,7 +274,6 @@ function broadcastPicker({
       ${existingPrivacyControl('b-privacy', b.privacyStatus)}
       ${fold('Açıklama ve kapak', `açıklama ${b.description.length} karakter`, detailsBody)}
       <button class="primary" type="submit" name="action" value="apply">Bu Yayına Uygula</button>
-      <p class="hint">Yalnızca değiştirdiğin alanlar YouTube'a gönderilir. "Sonraki yayın" ayarlarından bağımsızdır.</p>
     </form>
     ${canEnd ? fold('Yayını bitir…', null, `<p class="hint">Yayını YouTube'da sonlandırır; geri alınamaz.</p>
         <form method="post" action="${esc(act)}" onsubmit="return confirm('Bu yayın BİTİRİLSİN mi? Geri alınamaz.')">
@@ -306,14 +308,12 @@ function newStreamForm({
     covers, selected: draft.cover ?? '', token, scope: 'n-', noneLabel: 'Varsayılan',
   })}
       <p class="lbl">Hangi albümler çalsın?</p>
-      <p class="hint">Müzik + arkaplan; boş bırakırsan kütüphanedeki her şey çalar.</p>
       ${albumRows}`;
 
   return `<form method="post" action="${esc(withNonce(`/config/new?token=${t}${keep}`, nonce))}" data-guard>
-      <p class="hint">Aynı anda ikinci bir yayın açar: YouTube'da yeni bir yayın anahtarı oluşturulur ve sunucuda ayrı bir yayın süreci kurulur. Sunucu CPU'su en fazla birkaç yayına yeter; doluysa reddedilir.</p>
+      ${tip('İkinci bir yayın açar: YouTube\'da yeni anahtar ve sunucuda ayrı süreç kurulur. Sunucu birkaç yayına yeter; doluysa reddedilir.')}
       <label class="lbl" for="n-name">Yayın adı</label>
-      <p class="hint">Sunucudaki ad: küçük harf, rakam, - _</p>
-      <input type="text" id="n-name" name="name" value="${esc(draft.name ?? '')}" maxlength="20" placeholder="lofi2" autocapitalize="none" autocorrect="off">
+      <input type="text" id="n-name" name="name" value="${esc(draft.name ?? '')}" maxlength="20" placeholder="küçük harf, rakam, - _ (örn. lofi2)" autocapitalize="none" autocorrect="off">
       <label class="lbl" for="n-title">Başlık</label>
       <input type="text" id="n-title" name="title" value="${esc(draft.title ?? '')}" maxlength="${MAX_TITLE_LENGTH}" placeholder="Başlık">
       <label class="lbl" for="n-desc">Açıklama</label>
@@ -500,6 +500,19 @@ const STYLE = `
   .field-error { color: #ff9ec4; margin: 6px 0 0; font-size: 14px; font-weight: 600; }
   .field-error[hidden] { display: none; }
   input[aria-invalid="true"] { border-color: var(--danger-edge); }
+  /* "i" ipucu: kapalıyken yalnızca küçük bir daire; dokununca açıklama açılır */
+  .tip { display: inline-block; vertical-align: middle; margin: 0 0 0 6px; }
+  .tip summary { list-style: none; cursor: pointer; width: 28px; height: 28px; line-height: 26px; text-align: center; border: 1px solid var(--border-strong); border-radius: 50%; font: italic 700 14px/26px Georgia, serif; color: var(--muted); }
+  .tip summary::-webkit-details-marker { display: none; }
+  .tip[open] { display: block; margin: 6px 0 10px; }
+  .tip[open] summary { background: var(--surface-2); color: var(--text); }
+  .tip p { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+  /* Galeri: dosya seçici gizli, yerine tek büyük düğme (JS varken seçince kendiliğinden yüklenir) */
+  html.js #coverFile { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+  html.js .nojs-only { display: none; }
+  .filebtn { display: none; }
+  html.js .filebtn { display: flex; align-items: center; justify-content: center; min-height: var(--tap); margin: 10px 0 4px; border: 1px dashed var(--border-strong); border-radius: var(--radius); color: var(--text); font-weight: 600; cursor: pointer; }
+  html.js #coverFile:focus-visible + .filebtn { outline: 3px solid var(--focus); outline-offset: 2px; }
   .js-only { display: none; }
   html.js .js-only { display: flex; }
   html.js .pt-custom { display: none; }
@@ -508,6 +521,7 @@ const STYLE = `
   /* Kaydet çubuğu: JS varken ve değişiklik varsa ekranın altına yapışır (yalnızca o zaman) */
   .savebar { display: flex; flex-wrap: wrap; gap: 10px; }
   .savebar button { flex: 1 1 140px; margin-top: 0; }
+  @media (max-width: 460px) { .savebar button { flex-basis: 100%; } }
   .dirtynote { display: none; flex-basis: 100%; margin: 0; font-size: 13px; }
   form.dirty .dirtynote { display: block; }
   html.js form.dirty .savebar {
@@ -784,25 +798,22 @@ ${broadcastPicker({
 <form id="planForm" method="post" action="${esc(action)}" data-guard${pendingCover ? ' data-pending' : ''}>
   <section>
     <h2>Sonraki yayın</h2>
-    <p class="hint">Bir SONRAKİ canlıya almada oluşacak yayın içindir; yukarıda seçili yayına dokunmaz. Boş bıraktığın alan için config.json'daki değer kullanılır.</p>
+    ${tip('Bir SONRAKİ canlıya almada oluşacak yayın içindir; yukarıdaki seçili yayına dokunmaz. Boş bıraktığın alan için config.json\'daki değer kullanılır.')}
 
     <label class="lbl" for="p-title">Başlık</label>
     <input type="text" id="p-title" name="title" value="${esc((plan.broadcast?.title) ?? '')}" maxlength="${MAX_TITLE_LENGTH}" placeholder="Başlık">
 
     ${fold('Açıklama', (plan.broadcast?.description) ? `${plan.broadcast.description.length} karakter` : 'config.json\'daki', `
       <label class="lbl" for="p-desc">Açıklama</label>
-      <p class="hint">En fazla ${MAX_DESCRIPTION_LENGTH} karakter.</p>
       <textarea name="description" id="p-desc" maxlength="${MAX_DESCRIPTION_LENGTH}" placeholder="Açıklama">${esc((plan.broadcast?.description) ?? '')}</textarea>`)}
 
-    <h3>Kapak (küçük resim)</h3>
-    <p class="hint">Tek seçim — bir sonraki canlıya almada yayının kapağı olur.</p>
+    <h3>Kapak ${tip('Tek seçim; bir sonraki canlıya almada yayının kapağı olur. Galeriden eklenen görsel 1280x720\'ye kırpılır (JPEG/PNG/WebP). Yüklemek sayfayı yeniler: önce yaptığın değişiklikleri Kaydet.')}</h3>
     ${coverGrid({
     covers, selected: pendingCover ?? plan.cover ?? '', token, scope: 'p-', noneLabel: 'Varsayılan', keepUnknown: true,
   })}
-    <p class="hint">Galeriden ekle (JPEG/PNG/WebP): görsel 1280x720'ye kırpılıp küçültülür. Yüklemek sayfayı yeniler — önce yaptığın değişiklikleri Kaydet.</p>
-    <label class="lbl" for="coverFile">Galeriden görsel seç</label>
     <input type="file" id="coverFile" name="coverFile" accept="image/jpeg,image/png,image/webp" form="coverUpload" onchange="if(window.uploadPick){uploadPick(this)}else{document.getElementById('coverUpload').submit()}">
-    <button class="secondary" type="submit" form="coverUpload">Yükle</button>
+    <label class="filebtn" for="coverFile">+ Galeriden görsel ekle</label>
+    <button class="secondary nojs-only" type="submit" form="coverUpload">Yükle</button>
 
     <h3>Pomodoro</h3>
     <div class="pomo">
@@ -811,17 +822,14 @@ ${broadcastPicker({
         <p class="lbl" id="pomoPresets-l">Süre (çalışma + mola, dakika)</p>
         <div class="seg js-only" id="pomoPresets" role="group" aria-labelledby="pomoPresets-l">${POMO_PRESETS.map((t) => `<button type="button" data-type="${t}" aria-pressed="false">${t}</button>`).join('')}<button type="button" data-type="" aria-pressed="false">Özel</button></div>
         <div class="pt-custom" id="ptCustom">
-          <label class="lbl" for="pomodoroType">Süre</label>
-          <p class="hint">"&lt;çalışma&gt;+&lt;mola&gt;" dakika (örn. 50+10, 30+10, 45+15)</p>
+          <label class="lbl" for="pomodoroType">Özel süre (çalışma+mola, dk)</label>
           <input type="text" id="pomodoroType" name="pomodoroType" value="${esc(p.type)}" inputmode="text" placeholder="50+10" aria-describedby="pomodoroTypeErr">
           <p class="field-error" id="pomodoroTypeErr" role="alert" hidden></p>
         </div>
 
         ${fold('Çalışma görselleri', `${p.studyVideos.length} seçili`, `
-          <p class="hint">Çoklu seçim — her çalışma session'ı havuzdan rastgele bir klip kullanır, ardışık iki session aynı klibi tekrarlamaz.</p>
           ${clipGrid('studyVideos', clips, p.studyVideos, token)}`, { countFor: 'studyVideos' })}
         ${fold('Mola görselleri', `${p.breakVideos.length} seçili`, `
-          <p class="hint">Çoklu seçim — her mola session'ı havuzdan rastgele bir klip kullanır, ardışık iki session aynı klibi tekrarlamaz.</p>
           ${clipGrid('breakVideos', clips, p.breakVideos, token)}`, { countFor: 'breakVideos' })}
       </div>
     </div>
@@ -834,7 +842,7 @@ ${broadcastPicker({
     <button class="primary" type="submit" name="action" value="save">Kaydet</button>
     <button class="secondary" type="submit" name="action" value="save_restart" onclick="return confirm('${esc(restartConfirm)}')">Kaydet ve Yeniden Başlat</button>
   </div>
-  <p class="hint">Kaydet yalnızca planı kaydeder, çalışan yayına dokunmaz. "Kaydet ve Yeniden Başlat" ise kaydeder ve yayını kısa süreliğine keserek yeni planla yeniden başlatır.</p>
+  ${tip('Kaydet yalnızca planı kaydeder, çalışan yayına dokunmaz. "Kaydet ve Yeniden Başlat" kaydeder ve yayını kısa süreliğine keserek yeni planla başlatır.')}
 </form>
 ${canCreate && !newMode ? `<section>
   <a class="newlink" href="${esc(`/config?token=${encodeURIComponent(token)}&new=1`)}">+ Eşzamanlı yeni yayın aç…</a>

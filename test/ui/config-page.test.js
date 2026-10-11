@@ -120,7 +120,7 @@ test('durmuşken: yalnızca Başlat çizilir (birincil), Durdur yok; sonraki ad�
   assert.match(html, /Durum: <strong>Durmuş<\/strong>/);
   assert.match(html, /<button class="primary" type="submit" name="action" value="start">Başlat/);
   assert.doesNotMatch(html, /value="stop"/);
-  assert.match(html, /go-live tetikle/);
+  assert.match(html, /canlıya al/);
 });
 
 test('durum bilinmiyorken ikisi de çizilir (hangisinin doğru olduğu belli değil)', () => {
@@ -218,7 +218,8 @@ test('galeri yükleme: multipart form ana formun DIŞINDA, dosya alanı form= il
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 'tk' });
   assert.match(html, /<form id="coverUpload" method="post" enctype="multipart\/form-data" action="\/config\/upload\?token=tk"><\/form>/);
   assert.match(html, /<input type="file" id="coverFile" name="coverFile" accept="image\/jpeg,image\/png,image\/webp" form="coverUpload"/);
-  assert.match(html, /<button class="secondary" type="submit" form="coverUpload">Yükle<\/button>/);
+  assert.match(html, /<button class="secondary nojs-only" type="submit" form="coverUpload">Yükle<\/button>/);
+  assert.match(html, /<label class="filebtn" for="coverFile">\+ Galeriden görsel ekle<\/label>/);
 });
 
 test('yüklenen kapak (pendingCover) listede işaretli gelir', () => {
