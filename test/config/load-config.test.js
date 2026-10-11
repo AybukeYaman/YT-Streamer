@@ -321,3 +321,30 @@ test('pomodoro.breakBackground metin ya da null olmalı', () => {
   config.pomodoro = { breakBackground: 42 };
   assert.ok(problemsOf({ config }).some((p) => /breakBackground/.test(p)));
 });
+
+test('video.mode: yoksa "encode"; "copy" yalnızca albüm düzeninde; bilinmeyen değer reddedilir', () => {
+  assert.deepEqual(load().result.video, { mode: 'encode' });
+
+  const albumBase = () => {
+    const c = clone();
+    delete c.paths.music;
+    delete c.paths.background;
+    c.paths.albums = './music-source';
+    return c;
+  };
+  const copy = albumBase();
+  copy.video = { mode: 'copy' };
+  assert.deepEqual(load({ config: copy }).result.video, { mode: 'copy' });
+
+  const single = clone();
+  single.video = { mode: 'copy' };
+  assert.match(problemsOf({ config: single }).join('\n'), /yalnızca albüm düzeninde/);
+
+  const bad = albumBase();
+  bad.video = { mode: 'turbo' };
+  assert.match(problemsOf({ config: bad }).join('\n'), /"video.mode" "turbo"/);
+
+  const notObject = albumBase();
+  notObject.video = 'copy';
+  assert.match(problemsOf({ config: notObject }).join('\n'), /"video" bölümü nesne olmalı/);
+});

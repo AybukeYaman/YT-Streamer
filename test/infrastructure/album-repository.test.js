@@ -157,3 +157,15 @@ test('list({ only }): yalnızca istenen albümleri yükler (diğerlerinin parça
   assert.ok(!probed.some((f) => ['c.m4a', 'd.m4a'].includes(f)), `başka albümün parçası ölçüldü: ${probed}`);
   assert.deepEqual((await repo.list()).map((a) => a.name), ['mimi', 'video 1', 'zen'], 'only yoksa hepsi');
 }));
+
+test('albümde loop.mp4 varsa Album.loopPath dolar, yoksa null', withSource({
+  'dongulu': { tracks: ['a.m4a'] },
+  'dongusuz': { tracks: ['b.m4a'] },
+}, async (dir) => {
+  fs.writeFileSync(path.join(dir, 'dongulu', 'loop.mp4'), '');
+  const { log } = fakeLog();
+  const albums = await new AlbumRepository({ dir, log, probeDuration }).list();
+  const by = Object.fromEntries(albums.map((a) => [a.name, a]));
+  assert.equal(by.dongulu.loopPath, path.join(dir, 'dongulu', 'loop.mp4'));
+  assert.equal(by.dongusuz.loopPath, null);
+}));

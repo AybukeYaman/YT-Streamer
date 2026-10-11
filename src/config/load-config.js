@@ -25,6 +25,9 @@ const POMODORO_DEFAULTS = Object.freeze({
   statusPosition: 'top-right',
 });
 const PRIVACY_STATUSES = ['public', 'unlisted', 'private'];
+// video.mode: "encode" (varsayılan; arkaplan canlı çözülüp yazı/Pomodoro ile yeniden kodlanır) ya da
+// "copy" (Saf: albümün hazır loop.mp4'ü kodlanmadan akıtılır; yazı/Pomodoro/rotasyon YOK).
+const VIDEO_MODES = ['encode', 'copy'];
 
 // broadcast bölümü OPSİYONEL: yalnızca go-live otomasyonu (Faz 9 Aşama 2) kullanıyor,
 // yayın süreci hiç okumuyor. Zorunlu yapmak, VPS'teki mevcut config.json'lar (bu bölüm
@@ -185,6 +188,15 @@ function loadConfig({
     }
   }
 
+  const rawVideo = raw.video === undefined ? {} : raw.video;
+  if (rawVideo === null || typeof rawVideo !== 'object' || Array.isArray(rawVideo)) {
+    problems.push('"video" bölümü nesne olmalı (ya da hiç verilmemeli)');
+  } else if (rawVideo.mode !== undefined && !VIDEO_MODES.includes(rawVideo.mode)) {
+    problems.push(`"video.mode" "${rawVideo.mode}" — ${VIDEO_MODES.map((m) => `"${m}"`).join(' ya da ')} olmalı`);
+  } else if (rawVideo.mode === 'copy' && !albumMode) {
+    problems.push('"video.mode" "copy" yalnızca albüm düzeninde ("paths.albums") kullanılabilir');
+  }
+
   const output = raw.output || {};
   let streamKey;
   if (!OUTPUT_MODES.includes(output.mode)) {
@@ -247,6 +259,7 @@ function loadConfig({
       // Görsel yolu kök dizine göre çözülür: servis cwd'den bağımsız çalışıyor.
       return { ...merged, breakBackground: merged.breakBackground ? abs(merged.breakBackground) : null };
     })(),
+    video: { mode: rawVideo.mode ?? 'encode' },
     background: { rotationMinutes: rawBackground?.rotationMinutes ?? DEFAULT_ROTATION_MINUTES },
     output: output.mode === 'local'
       ? { mode: 'local', localPath: abs(output.localPath) }

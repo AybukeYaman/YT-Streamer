@@ -291,11 +291,39 @@ function buildPhaseOverlayChain(profile, windows, startInputIndex) {
   return { chain: [...inputChains, ...overlaySteps].join(';'), distinctPaths };
 }
 
+// Saf mod (video.mode=copy): hazır döngü (scripts/prepare-loops.js) KODLANMADAN akıtılır.
+// Filtre olmadığı için yazı, Pomodoro, bip ve study/break klipleri bu yolda yoktur; verilirse
+// sessizce yok sayılmaz, hata verilir (yayın sandığından farklı görünmesin). Video da ses gibi
+// gerçek zamanlıdır (-re): aksi halde dosya hızla okunur ve arabellek şişer. Ses dalı Yazılı
+// moddakiyle aynı. -r/-g/-b:v gibi kodlayıcı ayarları copy'de anlamsızdır, eklenmez: akışın
+// GOP/bitrate'i hazırlama aracının şartnamesinden gelir.
+function buildCopyArgs({ profile, loopPath, audioPath, playlistPath, runNumber, output }) {
+  return [
+    '-hide_banner',
+    '-y',
+    '-re', '-stream_loop', '-1', '-i', loopPath,
+    ...audioInputArgs({ audioPath, playlistPath }),
+    '-map', '0:v', '-map', '1:a',
+    '-c:v', 'copy',
+    '-c:a', profile.audioCodec, '-b:a', profile.audioBitrate,
+    '-ar', String(profile.audioSampleRate), '-ac', String(profile.audioChannels),
+    ...(playlistPath ? ['-shortest'] : []),
+    '-f', 'flv', outputTarget(output, runNumber),
+  ];
+}
+
 function buildFfmpegArgs({
   profile, backgroundPath, backgroundPlaylistPath, audioPath, playlistPath, runNumber,
   output, overlay = null, overlayTexts, pomodoro = null, beepTimes = [],
-  phaseBackgrounds = [],
+  phaseBackgrounds = [], loopPath,
 }) {
+  if (loopPath) {
+    if (backgroundPath || backgroundPlaylistPath || overlayTexts || pomodoro
+        || beepTimes.length || phaseBackgrounds.length) {
+      throw new Error('Saf mod (loopPath) ile arkaplan/yazı/Pomodoro birlikte kullanılamaz');
+    }
+    return buildCopyArgs({ profile, loopPath, audioPath, playlistPath, runNumber, output });
+  }
   const vf = videoFilter(profile, overlay, overlayTexts, pomodoro);
   const mixing = beepTimes.length > 0;
   // study/break klipleri: yalnızca bu çalıştırmada atanmış pencere varsa giriş eklenir.
@@ -404,13 +432,13 @@ class FfmpegEncoder extends Encoder {
   start({
     audioPath, playlistPath, runNumber, overlayTexts,
     backgroundPath, backgroundPlaylistPath,
-    pomodoro = null, beepTimes = [], phaseBackgrounds = [],
+    pomodoro = null, beepTimes = [], phaseBackgrounds = [], loopPath,
   }) {
     if (this.running) throw new Error('FfmpegEncoder zaten çalışıyor');
     const args = buildFfmpegArgs({
       profile: this.profile,
-      backgroundPath: backgroundPlaylistPath ? undefined : (backgroundPath ?? this.backgroundPath),
-      backgroundPlaylistPath,
+      backgroundPath: (backgroundPlaylistPath || loopPath) ? undefined : (backgroundPath ?? this.backgroundPath),
+      backgroundPlaylistPath, loopPath,
       audioPath, playlistPath, runNumber,
       output: this.output, overlay: this.overlay, overlayTexts,
       pomodoro, beepTimes, phaseBackgrounds,

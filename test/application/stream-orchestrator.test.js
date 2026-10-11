@@ -728,3 +728,54 @@ test('her playlist yeniden başlatmasında plan tazelenir (faz gerçek zamanda i
   await new Promise((r) => setImmediate(r));
   assert.equal(calls.length, 2, 'her çalıştırma için yeniden planlanmalı');
 });
+
+// ── Saf mod (videoMode: 'copy') ─────────────────────────────────────────────────
+const LOOP = 'C:/music-source/x/loop.mp4';
+const loopAlbum = (loopPath) => ({ list: async () => [new Album({ name: 'x', backgroundPath: BG, tracks: TRACKS, loopPath })] });
+
+function copySetup({ loopPath = LOOP, extra = {} } = {}) {
+  const encoder = new FakeEncoder();
+  const { log, lines } = fakeLog();
+  const orch = new StreamOrchestrator({
+    encoder, log,
+    albumRepository: loopAlbum(loopPath),
+    queue: { mode: 'sequential', batchSize: 2 },
+    playlistPath: 'C:/runtime/playlist.txt',
+    writeFile: () => {},
+    videoMode: 'copy',
+    ...extra,
+  });
+  return { encoder, orch, lines };
+}
+
+test('copy modu: encoder yalnızca playlist, runNumber ve loopPath ile başlar (arkaplan/overlay/Pomodoro yok)', async () => {
+  const nowPlayingWriter = { writeAll: () => { throw new Error('copy modunda çağrılmamalı'); } };
+  const pomodoroPlanner = { plan: () => { throw new Error('copy modunda çağrılmamalı'); } };
+  const backgroundPlaylistWriter = { write: () => { throw new Error('copy modunda çağrılmamalı'); } };
+  const { encoder, orch, lines } = copySetup({ extra: { nowPlayingWriter, pomodoroPlanner, backgroundPlaylistWriter } });
+  await orch.start();
+  assert.deepEqual(encoder.starts, [{ playlistPath: 'C:/runtime/playlist.txt', runNumber: 1, loopPath: LOOP }]);
+  assert.ok(lines.some((l) => l.level === 'info' && /görüntü modu: Saf/.test(l.m)));
+});
+
+test('copy modu: playlist bitince yeniden başlatma da loopPath ile yapılır', async () => {
+  const { encoder, orch } = copySetup();
+  await orch.start();
+  encoder.emit('exit', 0, null);
+  assert.deepEqual(encoder.starts.map((s) => s.loopPath), [LOOP, LOOP]);
+  assert.deepEqual(encoder.starts.map((s) => s.runNumber), [1, 2]);
+});
+
+test('copy modu: albümde loop.mp4 yoksa net hata, Yazılı\'ya düşülmez, ffmpeg başlamaz', async () => {
+  const { encoder, orch } = copySetup({ loopPath: null });
+  await assert.rejects(orch.start(), /Saf mod: "x" albümünde loop\.mp4 yok/);
+  assert.equal(encoder.starts.length, 0);
+});
+
+test('geçersiz videoMode kurulumda reddedilir; varsayılan encode eski yolu kullanır', async () => {
+  assert.throws(() => copySetup({ extra: { videoMode: 'turbo' } }), /geçersiz videoMode/);
+  const { encoder, orch } = setup();
+  await orch.start();
+  assert.equal(encoder.starts[0].loopPath, undefined);
+  assert.equal(encoder.starts[0].backgroundPath, BG);
+});

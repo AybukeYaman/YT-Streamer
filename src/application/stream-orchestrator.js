@@ -39,7 +39,7 @@ class StreamOrchestrator extends EventEmitter {
     encoder, log, albumRepository, queue, playlistPath, writeFile,
     nowPlayingWriter = null, speedWindow = null, speedAlarm = null, stateStore = null,
     backgroundPlaylistWriter = null, pomodoroPlanner = null, decoderWatch = null,
-    now = () => Date.now(), random = Math.random,
+    videoMode = 'encode', now = () => Date.now(), random = Math.random,
   }) {
     super();
     // decoderWatch: DecoderErrorWatch — "Error submitting packet to decoder" satırlarını
@@ -66,6 +66,11 @@ class StreamOrchestrator extends EventEmitter {
     // pomodoroPlanner: PomodoroPlanner — verilmezse Pomodoro tamamen devre dışı,
     // encoder bugünküyle aynı argümanları alır.
     this.pomodoroPlanner = pomodoroPlanner;
+    // videoMode 'copy' (Saf): albümün hazır döngüsü kodlanmadan akıtılır; overlay, Pomodoro ve
+    // arkaplan rotasyonu çalışmaz. Döngüsü olmayan albümde Yazılı'ya SESSİZCE düşülmez (yük ve
+    // görüntü gizlice değişirdi) — net hata verilir.
+    if (videoMode !== 'encode' && videoMode !== 'copy') throw new Error(`geçersiz videoMode: ${videoMode}`);
+    this.videoMode = videoMode;
     // stateStore: { save(state), load() } — verilirse süreç ölümünden sonra kaldığı yerden devam
     this.stateStore = stateStore;
     this.now = now;
@@ -258,6 +263,10 @@ class StreamOrchestrator extends EventEmitter {
       this.#finish({ expected: true, code: null, signal: null });
       return;
     }
+    // Eksik döngü hatası durum değiştirmeden (runNumber, currentTracks) ve ffmpeg'e gitmeden verilir.
+    if (this.videoMode === 'copy' && !playlist.album.loopPath) {
+      throw new Error(`Saf mod: "${playlist.album.name}" albümünde loop.mp4 yok (npm run loops:prepare)`);
+    }
     this.runNumber++;
     this.currentTracks = playlist.tracks;
     this.currentAlbum = playlist.album;
@@ -269,6 +278,16 @@ class StreamOrchestrator extends EventEmitter {
       `${minutes(playlist.totalDurationSeconds)} — ` +
       playlist.tracks.map((t) => t.title).join(' | '),
     );
+    if (this.videoMode === 'copy') {
+      this.log.info('görüntü modu: Saf (hazır döngü, kodlama yok; yazı/Pomodoro/rotasyon kapalı)');
+      this.#saveState(0);
+      this.encoder.start({
+        playlistPath: playlist.path,
+        runNumber: this.runNumber,
+        loopPath: playlist.album.loopPath,
+      });
+      return;
+    }
     this.#saveState(0); // yeni playlist: konum sıfırlanır (ilk kare gelmeden ölürse baştan)
     const overlayTexts = this.nowPlayingWriter ? this.#writeOverlayTexts(playlist.tracks) : undefined;
     // Arkaplan rotasyonu: albümde birden çok klip varsa concat listesi yazılır ve encoder

@@ -76,7 +76,10 @@ async function main() {
 
   const profile = new StreamProfile(config.profile);
   // Overlay kapalıysa ne drawtext ne başlık dosyaları: ikisi de null.
-  const { enabled: overlayEnabled, ...overlayStyle } = config.overlay;
+  // Saf mod (video.mode=copy): görüntüye yazı basılamaz, overlay/Pomodoro hiç kurulmaz.
+  const copyMode = config.video.mode === 'copy';
+  const { enabled: overlayConfigured, ...overlayStyle } = config.overlay;
+  const overlayEnabled = overlayConfigured && !copyMode;
   const encoder = new FfmpegEncoder({
     profile,
     backgroundPath: config.paths.background,
@@ -178,6 +181,7 @@ async function main() {
       : null,
     // Arkaplan rotasyonu: albümde backgrounds/ varsa klipler sırayla döner. Tek
     // arkaplanlı albümlerde writer null döndürür, hiçbir şey değişmez.
+    videoMode: config.video.mode,
     backgroundPlaylistWriter: new BackgroundPlaylistWriter({
       playlistPath: path.join(config.paths.runtime, 'backgrounds.txt'),
       writeFile: writeFileAtomic,

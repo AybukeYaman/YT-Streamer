@@ -77,7 +77,7 @@ class PlanAlbumRepository {
         this.log.warn(`plandaki albüm atlandı: "${entry.name}" — seçili parçaların hiçbiri yok`);
         continue;
       }
-      out.push(new Album({ name: album.name, backgrounds: album.backgrounds.map((b) => ({ ...b })), tracks }));
+      out.push(new Album({ name: album.name, backgrounds: album.backgrounds.map((b) => ({ ...b })), tracks, loopPath: album.loopPath }));
     }
     return out;
   }

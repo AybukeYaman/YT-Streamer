@@ -12,6 +12,7 @@ const BACKGROUND_FILE = 'background.mp4';
 const BACKGROUNDS_DIR = 'backgrounds';
 const MUSIC_DIR = 'music';
 const BACKGROUND_EXT = '.mp4';
+const LOOP_FILE = 'loop.mp4'; // scripts/prepare-loops.js çıktısı (Saf mod)
 
 // Arkaplan kaynağı: backgrounds/ klasörü varsa çoğul (yayında rotasyon), yoksa tek
 // background.mp4 (eski düzen). İkisi birden varsa backgrounds/ kazanır — geçiş döneminde
@@ -87,7 +88,8 @@ class AlbumRepository {
         this.log.warn(`albüm atlandı: ${name} — okunabilir parça yok`);
         continue;
       }
-      albums.push(new Album({ name, ...background, tracks }));
+      const loop = path.join(albumDir, LOOP_FILE);
+      albums.push(new Album({ name, ...background, tracks, ...(fs.existsSync(loop) && { loopPath: loop }) }));
     }
     this.log.info(`${albums.length}/${names.length} albüm yüklendi (${this.dir})`);
     return albums;

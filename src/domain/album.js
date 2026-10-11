@@ -41,13 +41,18 @@ function normalizeBackgrounds({ name, backgroundPath, backgrounds }) {
 }
 
 class Album {
-  constructor({ name, backgroundPath, backgrounds, tracks }) {
+  constructor({ name, backgroundPath, backgrounds, tracks, loopPath = null }) {
     if (typeof name !== 'string' || name.trim() === '') throw new AlbumError(`geçersiz albüm adı (${name})`);
     if (!Array.isArray(tracks) || tracks.length === 0) throw new AlbumError(`"${name}": hiç parça yok`);
     this.name = name;
     this.backgrounds = Object.freeze(normalizeBackgrounds({ name, backgroundPath, backgrounds }));
     // Tek arkaplan bekleyen çağrı yolları için (rotasyon kapalıyken encoder bunu kullanır).
     this.backgroundPath = this.backgrounds[0].path;
+    // Hazır döngü (loop.mp4, Saf mod): yoksa null. Arkaplandan bağımsız, yalnızca video.mode=copy kullanır.
+    if (loopPath !== null && (typeof loopPath !== 'string' || loopPath.trim() === '')) {
+      throw new AlbumError(`"${name}": geçersiz döngü yolu`);
+    }
+    this.loopPath = loopPath;
     this.tracks = Object.freeze([...tracks]);
     Object.freeze(this);
   }

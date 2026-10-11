@@ -545,3 +545,54 @@ test('farklı iki klip: iki ayrı giriş, ikisi de ayrı overlay adımı alır',
   assert.ok(fc.includes('[2:v]scale=1280:720,setsar=1[ph0_0]'));
   assert.ok(fc.includes('[3:v]scale=1280:720,setsar=1[ph1_0]'));
 });
+
+// ── Saf mod (video.mode=copy): hazır döngü kodlanmadan akıtılır ─────────────────
+const LOOP = 'C:/music-source/x/loop.mp4';
+const PLAYLIST = 'C:/runtime/playlist.txt';
+
+test('copy modu altın argümanlar: -re iki girişte, -c:v copy, kodlayıcı/filtre ayarı yok', () => {
+  const args = buildFfmpegArgs({ profile, loopPath: LOOP, playlistPath: PLAYLIST, runNumber: 1, output: LOCAL });
+  assert.deepEqual(args, [
+    '-hide_banner', '-y',
+    '-re', '-stream_loop', '-1', '-i', LOOP,
+    '-re', '-f', 'concat', '-safe', '0', '-i', PLAYLIST,
+    '-map', '0:v', '-map', '1:a',
+    '-c:v', 'copy',
+    '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2',
+    '-shortest',
+    '-f', 'flv', LOCAL.localPath.replace('out.flv', 'out-1.flv'), // yerel çıktıda koşu numarası eklenir
+  ]);
+  for (const forbidden of ['-vf', '-filter_complex', '-preset', '-b:v', '-g', '-r', '-threads']) {
+    assert.ok(!args.includes(forbidden), `${forbidden} copy komutunda olmamalı`);
+  }
+});
+
+test('copy modu arkaplan/yazı/Pomodoro ile birlikte verilirse hata (sessizce yok sayılmaz)', () => {
+  const base = { profile, loopPath: LOOP, playlistPath: PLAYLIST, output: LOCAL };
+  for (const extra of [
+    { backgroundPath: BG },
+    { backgroundPlaylistPath: 'C:/runtime/backgrounds.txt' },
+    { overlayTexts: [{ textFile: 'a.txt', start: 0, end: 10 }] },
+    { pomodoro: { statusTexts: [] } },
+    { beepTimes: [10] },
+    { phaseBackgrounds: [{ path: 'p.mp4', start: 0, end: 5 }] },
+  ]) {
+    assert.throws(() => buildFfmpegArgs({ ...base, ...extra }), /Saf mod/);
+  }
+});
+
+test('loopPath yokken Yazılı komut satırı değişmez (loopPath: undefined)', () => {
+  const a = buildFfmpegArgs({ profile, backgroundPath: BG, audioPath: AUDIO, output: LOCAL });
+  const b = buildFfmpegArgs({ profile, backgroundPath: BG, audioPath: AUDIO, output: LOCAL, loopPath: undefined });
+  assert.deepEqual(a, b);
+});
+
+test('FfmpegEncoder.start({ loopPath }) copy komutuyla ffmpeg başlatır', () => {
+  const { spawnFn, calls } = fakeSpawn();
+  const enc = new FfmpegEncoder({ profile, backgroundPath: BG, output: LOCAL, spawnFn });
+  enc.start({ playlistPath: PLAYLIST, runNumber: 1, loopPath: LOOP });
+  const args = calls[0].args;
+  assert.ok(args.includes('copy'));
+  assert.ok(args.includes(LOOP));
+  assert.ok(!args.includes(BG));
+});
