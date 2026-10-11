@@ -442,11 +442,12 @@ const STYLE = `
   .row span { overflow-wrap: anywhere; }
   .checklist { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
   input[type=text], textarea, select {
-    width: 100%; padding: 11px 12px; font-size: 16px; border-radius: 8px; min-height: var(--tap);
-    border: 1px solid var(--border-strong); background: var(--surface); color: var(--text);
+    width: 100%; padding: 8px 2px; font-size: 16px; border-radius: 0; min-height: 38px;
+    border: 0; border-bottom: 1px solid var(--border-strong); background: transparent; color: var(--text);
     font-family: inherit;
   }
-  textarea { min-height: 88px; resize: vertical; }
+  input[type=text]:focus, textarea:focus, select:focus { border-bottom-color: var(--accent); box-shadow: 0 1px 0 0 var(--accent); }
+  textarea { min-height: 64px; resize: vertical; }
   select { margin-bottom: 8px; }
   :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   button {
@@ -502,15 +503,15 @@ const STYLE = `
   }
 
   /* Bölmeli seçim (segmented): gerçek radyo girişleri, yalnızca görünüm */
-  .seg { display: flex; position: relative; border: 1px solid var(--border-strong); border-radius: 10px; overflow: hidden; background: var(--surface); margin-bottom: 8px; }
+  .seg { display: flex; position: relative; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; background: transparent; margin-bottom: 6px; }
   .seg input { position: absolute; opacity: 0; pointer-events: none; }
   .seg label, .seg button {
     flex: 1; display: flex; align-items: center; justify-content: center; text-align: center;
-    min-height: var(--tap); padding: 8px 4px; margin: 0; width: auto; font-size: 14px; font-weight: 600;
+    min-height: 34px; padding: 4px 4px; margin: 0; width: auto; font-size: 13px; font-weight: 500;
     cursor: pointer; border: 0; border-left: 1px solid var(--line); border-radius: 0; background: transparent; color: var(--text);
   }
   .seg > :first-child, .seg > input + label:first-of-type { border-left: 0; }
-  .seg input:checked + label, .seg button[aria-pressed=true] { background: var(--accent-strong); color: #fff; }
+  .seg input:checked + label, .seg button[aria-pressed=true] { background: var(--notice-bg); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
   .seg input:checked + label::before, .seg button[aria-pressed=true]::before { content: '✓ '; white-space: pre; }
   .seg input:focus-visible + label { outline: 3px solid var(--focus); outline-offset: -3px; }
 
