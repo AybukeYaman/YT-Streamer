@@ -15,6 +15,7 @@
 //           gibi duruyor. Zoom kosinüs eğrisiyle başladığı yere döner, yani klip kendi
 //           içinde dikişsiz: tekrarlarken sıçrama olmaz.
 const { spawn } = require('child_process');
+const os = require('os');
 const path = require('path');
 
 const TARGET = { width: 1280, height: 720, fps: 24 };
@@ -24,16 +25,34 @@ const IMAGE_ZOOM = 0.08; // Ken Burns zoom miktarı (%8) — fazlası baş dönd
 const VIDEO_EXT = new Set(['.mp4', '.mov', '.mkv', '.webm']);
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 
+// Klip hazırlama CANLI YAYINLA AYNI makinede çalışır (3 çekirdekli VPS'te canlı ffmpeg ~2,4
+// çekirdek yer). Eskiden dönüşüm -threads sınırsız ve normal öncelikle koşuyordu: /config'ten
+// "Kaydet" dendiğinde tüm çekirdekler dönüşüme gidiyor, canlı encode 1.0x'in altına düşüp
+// yayın kekeliyordu. Şimdi tek iş parçacığı + en düşük öncelik (LOW_PRIORITY): dönüşüm biraz
+// yavaşlar ama canlı yayın CPU'dan mahrum kalmaz.
+const LOW_PRIORITY = 19;
+
 const ENCODE_ARGS = [
-  '-an', // ses sözleşme gereği atılır: arkaplan sessiz, ses playlist'ten geliyor
+  '-an', '-threads', '1', // ses sözleşme gereği atılır: arkaplan sessiz, ses playlist'ten geliyor
   '-c:v', 'libx264', '-preset', 'medium', '-crf', '20',
   '-pix_fmt', 'yuv420p', '-profile:v', 'high',
   '-r', String(TARGET.fps), '-movflags', '+faststart',
 ];
 
+// Çocuk sürecin önceliğini düşürür. Başarısız olursa (yetki, kısa ömürlü süreç) sessiz geçilir:
+// öncelik bir iyileştirme, dönüşümün başarısı ona bağlı değil.
+function lowerPriority(child, setPriority = os.setPriority) {
+  try {
+    if (child.pid) setPriority(child.pid, LOW_PRIORITY);
+  } catch {
+    // yoksay
+  }
+}
+
 function run(cmd, args) {
   return new Promise((resolve) => {
     const p = spawn(cmd, args);
+    lowerPriority(p);
     let stdout = '';
     let stderr = '';
     p.stdout.on('data', (d) => { stdout += d; });
@@ -127,7 +146,7 @@ async function convertAny(src, out, info = null) {
 }
 
 module.exports = {
-  TARGET, MIN_SECONDS, IMAGE_SECONDS, ENCODE_ARGS, VIDEO_EXT, IMAGE_EXT,
+  TARGET, MIN_SECONDS, IMAGE_SECONDS, ENCODE_ARGS, LOW_PRIORITY, lowerPriority, VIDEO_EXT, IMAGE_EXT,
   run, probe, normalizeFilter, kenBurnsFilter, loopPlan,
   convertVideo, convertImage, convertAny, isImage, isVideo, isSupported,
 };

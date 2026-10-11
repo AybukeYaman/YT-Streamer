@@ -97,3 +97,58 @@ test('ensureThumbnail: başarılı üretimde meta dosyası yazılır, aynı kayn
   assert.equal(spawnCount, 1, 'önbellek isabetinde ffmpeg tekrar çağrılmamalı');
   assert.equal(fs.statSync(second).mtimeMs, mtimeAfterFirst);
 }));
+
+test('önizlemeler sırayla üretilir: aynı anda en fazla bir ffmpeg', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { EventEmitter } = require('node:events');
+  const { ensureThumbnail } = require('../../src/infrastructure/video-thumbnail');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yt-thq-'));
+  const sources = [1, 2, 3, 4].map((n) => {
+    const f = path.join(dir, `k${n}.mp4`);
+    fs.writeFileSync(f, String(n));
+    return f;
+  });
+  let running = 0;
+  let maxRunning = 0;
+  const spawnFn = (_cmd, args) => {
+    running += 1;
+    maxRunning = Math.max(maxRunning, running);
+    const child = new EventEmitter();
+    child.stderr = new EventEmitter();
+    setTimeout(() => {
+      fs.writeFileSync(args[args.length - 1], 'jpg');
+      running -= 1;
+      child.emit('close', 0);
+    }, 15);
+    return child;
+  };
+  const log = { warn() {} };
+  const results = await Promise.all(sources.map((sourcePath) => ensureThumbnail({
+    sourcePath, runtimeDir: dir, spawnFn, log,
+  })));
+  assert.equal(maxRunning, 1);
+  assert.ok(results.every(Boolean));
+});
+
+test('aynı dosya için eşzamanlı istekler tek ffmpeg çalıştırır', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { EventEmitter } = require('node:events');
+  const { ensureThumbnail } = require('../../src/infrastructure/video-thumbnail');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yt-thq2-'));
+  const src = path.join(dir, 'k.mp4');
+  fs.writeFileSync(src, 'x');
+  let spawns = 0;
+  const spawnFn = (_cmd, args) => {
+    spawns += 1;
+    const child = new EventEmitter();
+    child.stderr = new EventEmitter();
+    setTimeout(() => { fs.writeFileSync(args[args.length - 1], 'jpg'); child.emit('close', 0); }, 10);
+    return child;
+  };
+  await Promise.all([1, 2, 3].map(() => ensureThumbnail({ sourcePath: src, runtimeDir: dir, spawnFn, log: { warn() {} } })));
+  assert.equal(spawns, 1);
+});

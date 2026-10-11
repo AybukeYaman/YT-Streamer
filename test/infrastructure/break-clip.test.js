@@ -65,3 +65,15 @@ test('önbellek geçerli ve klip sağlamsa yeniden üretilmez', async () => {
   const result = await ensureStreamClip({ sourcePath: src, runtimeDir: dir, log, name: 'study-1', convert, verify: async () => true });
   assert.equal(result, out);
 });
+
+test('klip dönüşümü düşük öncelik ve tek iş parçacığı ister', () => {
+  const { ENCODE_ARGS, LOW_PRIORITY, lowerPriority } = require('../../src/infrastructure/clip-normalizer');
+  const i = ENCODE_ARGS.indexOf('-threads');
+  assert.ok(i >= 0 && ENCODE_ARGS[i + 1] === '1');
+  const calls = [];
+  lowerPriority({ pid: 123 }, (pid, prio) => calls.push([pid, prio]));
+  assert.deepEqual(calls, [[123, LOW_PRIORITY]]);
+  // pid yoksa ya da setPriority atarsa sessizce geçer.
+  lowerPriority({}, () => { throw new Error('olmamalı'); });
+  lowerPriority({ pid: 1 }, () => { throw new Error('yetki yok'); });
+});
