@@ -114,7 +114,12 @@ async function main() {
       },
     },
   });
-  await configService.prepareActive();
+  // prepareActive() BİLEREK ÇAĞRILMIYOR (11 Ekim 2026): bu süreç yayın yapmıyor, hazır klip
+  // havuzunu (studyClipsProvider/breakClipsProvider) kimse bu süreçte okumuyor. Çağırınca
+  // yt-streamer ile AYNI anda AYNI runtime/study-N.mp4 / break-N.mp4 dosyalarını kodluyordu:
+  // iki süreç aynı dosyaya yazınca canlı ffmpeg bozuk klip okuyup duraksıyor, ayrıca küçük
+  // VPS'te çift kodlama CPU'yu yiyordu. Klipleri yayın süreci kendi açılışında hazırlar;
+  // /config'ten kaydedince (apply) hazırlama yine bu süreçte, ama atomik (geçici dosya+rename).
   const configApi = new ConfigApi({
     configService,
     restartStream: async () => {
