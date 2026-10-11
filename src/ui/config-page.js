@@ -252,7 +252,7 @@ function broadcastPicker({
   return `${head}
     ${picker}
     <p class="state">${dot(tone)}Durum: <strong>${esc(LIFECYCLE_LABELS[b.lifeCycleStatus] ?? b.lifeCycleStatus ?? 'Bilinmiyor')}</strong> · Görünürlük: <strong>${esc(PRIVACY_LABELS[b.privacyStatus] ?? b.privacyStatus ?? 'Bilinmiyor')}</strong>${formatStart(b.startAt) ? ` · ${b.started ? 'Başladı' : 'Planlanan'}: <strong>${esc(formatStart(b.startAt))}</strong>` : ''}</p>
-    <form method="post" action="${esc(act)}">
+    <form method="post" action="${esc(act)}" data-guard>
       <input type="hidden" name="broadcastId" value="${esc(b.id)}">
       <label class="lbl" for="b-title">Başlık</label>
       <input type="text" id="b-title" name="title" value="${esc(b.title)}" maxlength="${MAX_TITLE_LENGTH}">
@@ -297,7 +297,7 @@ function newStreamForm({
       <p class="hint">Müzik + arkaplan; boş bırakırsan kütüphanedeki her şey çalar.</p>
       ${albumRows}`;
 
-  return `<form method="post" action="${esc(`/config/new?token=${t}${keep}`)}">
+  return `<form method="post" action="${esc(`/config/new?token=${t}${keep}`)}" data-guard>
       <p class="hint">Aynı anda ikinci bir yayın açar: YouTube'da yeni bir yayın anahtarı oluşturulur ve sunucuda ayrı bir yayın süreci kurulur. Sunucu CPU'su en fazla birkaç yayına yeter; doluysa reddedilir.</p>
       <label class="lbl" for="n-name">Yayın adı</label>
       <p class="hint">Sunucudaki ad: küçük harf, rakam, - _</p>
@@ -309,7 +309,7 @@ function newStreamForm({
       ${privacyControl('n-privacy', privacy)}
       ${fold('Kapak ve albümler', chosenCount ? `${chosenCount} albüm seçili` : 'tüm kütüphane çalar', advancedBody, { open: Boolean(chosenCount || draft.cover) })}
       <div class="switchrow">${switchInput('goLiveNow', 'goLiveNow', draft.goLiveNow !== false, 'Kurulunca otomatik canlıya al')}</div>
-      <button class="primary" type="submit" onclick="this.disabled=true;this.form.submit()">Yayını Kur ve Başlat</button>
+      <button class="primary" type="submit" data-busy="Yayın kuruluyor (birkaç sn sürebilir)…">Yayını Kur ve Başlat</button>
     </form>`;
 }
 
@@ -490,7 +490,23 @@ const STYLE = `
   html.js .pt-custom { display: none; }
   html.js .pt-custom.show { display: block; }
 
+  /* Kaydet çubuğu: JS varken ve değişiklik varsa ekranın altına yapışır (yalnızca o zaman) */
+  .savebar { display: flex; flex-wrap: wrap; gap: 10px; }
+  .savebar button { flex: 1 1 140px; margin-top: 0; }
+  .dirtynote { display: none; flex-basis: 100%; margin: 0; font-size: 13px; }
+  form.dirty .dirtynote { display: block; }
+  html.js form.dirty .savebar {
+    position: sticky; bottom: 0; z-index: 5; margin: 8px -16px 0; padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    background: var(--bg); border-top: 1px solid var(--border-strong);
+  }
+  button.wait { opacity: .55; pointer-events: none; }
+  button.busy { opacity: .9; cursor: progress; }
+
+  @media (min-width: 640px) { body { max-width: 720px; } }
+
   @media (prefers-reduced-motion: no-preference) {
+    @keyframes spin { to { transform: rotate(360deg); } }
+    button.busy::after { content: ''; display: inline-block; width: 14px; height: 14px; margin-left: 8px; vertical-align: -2px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
     .track, .track::after, .seg label, .seg button, .tw, button { transition: background-color .15s, border-color .15s, transform .15s, box-shadow .15s; }
     button:active { transform: scale(.98); }
   }
@@ -548,6 +564,112 @@ const SCRIPT = `
     };
     d.addEventListener('change', function (e) { if (e.target && e.target.name === name) update(); });
   });
+
+  // ── Kaydedilmemiş değişiklik koruması (D2, D3) ──────────────────────────
+  // Düzenleme formları (data-guard): ana plan, seçili yayın, yeni yayın. Başlangıç görüntüsü
+  // alınır; değişiklik varken sayfayı yenileyecek bir işlem (başka yayın, yükleme, başka form)
+  // önce AÇIK bir onay ister. Onay: "Tamam" = değişiklikleri at, "İptal" = sayfada kal.
+  var guarded = [].slice.call(d.querySelectorAll('form[data-guard]'));
+  var snapshot = function (f) {
+    var parts = [];
+    [].forEach.call(f.elements, function (el) {
+      if (!el.name || el.disabled) return;
+      if ((el.type === 'checkbox' || el.type === 'radio') && !el.checked) return;
+      parts.push(el.name + '=' + el.value);
+    });
+    return parts.join('&');
+  };
+  var initial = guarded.map(snapshot);
+  // Galeriden yeni yüklenen kapak seçili gelir ama plana HENÜZ yazılmadı (data-pending):
+  // sayfa baştan "kaydedilmemiş değişiklik var" saymalı.
+  var planIndex = guarded.indexOf(d.getElementById('planForm'));
+  if (planIndex >= 0 && guarded[planIndex].hasAttribute('data-pending')) initial[planIndex] = 'bekleyen-kapak';
+  var dirtyForms = function () { return guarded.filter(function (f, i) { return snapshot(f) !== initial[i]; }); };
+  var leaving = false;
+  var planForm = d.getElementById('planForm');
+  var note = d.getElementById('dirtyNote');
+  var refresh = function () {
+    if (!planForm) return;
+    var dirty = snapshot(planForm) !== initial[guarded.indexOf(planForm)];
+    planForm.className = dirty ? 'dirty' : '';
+    if (note) note.textContent = dirty ? 'Kaydedilmemiş değişiklik var' : '';
+  };
+  d.addEventListener('input', refresh);
+  d.addEventListener('change', refresh);
+  var askDiscard = function (what) {
+    return window.confirm('Kaydedilmemiş değişikliklerin var. ' + what + ' bu değişiklikler kaybolur.\\n\\nTamam: değişiklikleri at ve devam et\\nİptal: sayfada kal (önce Kaydet düğmesine bas)');
+  };
+  // Başka yayına geçme / başka sayfaya gitme (bağlantılar).
+  d.addEventListener('click', function (e) {
+    var a = e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a || a.target === '_blank' || (a.getAttribute('href') || '').charAt(0) === '#') return;
+    if (dirtyForms().length === 0) return;
+    if (!askDiscard('Başka bir yayına ya da sayfaya geçersen')) { e.preventDefault(); return; }
+    leaving = true;
+  });
+  // Tarayıcıdan çıkma / geri / yenileme için son güvenlik ağı.
+  window.addEventListener('beforeunload', function (e) {
+    if (leaving || dirtyForms().length === 0) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+
+  // ── İşlem durumu ve çift gönderim engeli (D4) ───────────────────────────
+  // Düğmeler PASİFLEŞTİRİLMEZ (pasif düğmenin name/value'su gönderilmez, işlem bozulur);
+  // yerine ikinci gönderim engellenir, düğme "…yapılıyor" yazar ve diğerleri sönükleşir.
+  var BUSY_BY_ACTION = {
+    start: 'Başlatılıyor…', stop: 'Durduruluyor…', golive: 'Canlıya alınıyor…', apply: 'Uygulanıyor…',
+    end: 'Bitiriliyor…', save: 'Kaydediliyor…', save_restart: 'Kaydedilip yeniden başlatılıyor…'
+  };
+  var busy = false;
+  var busyLabel = function (btn, form) {
+    if (btn.getAttribute('data-busy')) return btn.getAttribute('data-busy');
+    if (BUSY_BY_ACTION[btn.value]) return BUSY_BY_ACTION[btn.value];
+    if (form && form.id === 'coverUpload') return 'Yükleniyor…';
+    return 'İşleniyor…';
+  };
+  var startBusy = function (btn, form) {
+    busy = true;
+    leaving = true;
+    [].forEach.call(d.querySelectorAll('button'), function (b) {
+      if (b === btn) return;
+      b.className += ' wait';
+    });
+    if (btn) {
+      btn.setAttribute('data-label', btn.textContent);
+      btn.setAttribute('aria-busy', 'true');
+      btn.textContent = busyLabel(btn, form);
+      btn.className += ' busy';
+    }
+  };
+  var resetBusy = function () {
+    busy = false;
+    leaving = false;
+    [].forEach.call(d.querySelectorAll('button'), function (b) {
+      b.className = b.className.replace(/ (wait|busy)/g, '');
+      if (b.hasAttribute('data-label')) { b.textContent = b.getAttribute('data-label'); b.removeAttribute('data-label'); }
+      b.removeAttribute('aria-busy');
+    });
+  };
+  d.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (e.defaultPrevented) return; // satır içi onay (confirm) iptal edildi
+    if (busy) { e.preventDefault(); return; }
+    var others = dirtyForms().filter(function (f) { return f !== form; });
+    if (others.length && !askDiscard('Bu işlem sayfayı yeniler ve')) { e.preventDefault(); return; }
+    startBusy(e.submitter || null, form);
+  });
+  // Galeri dosyası seçilince (D2): kaydedilmemiş değişiklik varsa önce sor; sonra gönder.
+  window.uploadPick = function (input) {
+    if (!input.files || !input.files.length || busy) return;
+    if (dirtyForms().length && !askDiscard('Görsel yüklenince sayfa yenilenir ve')) { input.value = ''; return; }
+    var form = d.getElementById('coverUpload');
+    startBusy(d.querySelector('button[form="coverUpload"]'), form);
+    form.submit();
+  };
+  refresh();
+  // Geri tuşuyla önbellekten dönülürse işlem durumu takılı kalmasın.
+  window.addEventListener('pageshow', function (e) { if (e.persisted) resetBusy(); });
 })();
 `;
 
@@ -567,6 +689,11 @@ function renderConfigPage({
   const action = `/config?token=${encodeURIComponent(token)}${keep}`;
   const uploadAction = `/config/upload?token=${encodeURIComponent(token)}${keep}`;
   const nowSection = streamControls(streamState, action) + instancesSection(instances, token);
+  // D1: yeniden başlatma canlı yayını keser — her durumda net bir onay (metin duruma göre).
+  const restartConfirm = {
+    running: 'Yayın şu an ÇALIŞIYOR. Yeniden başlatma yayını kısa süreliğine KESER ve yeni planla baştan başlatır. Devam edilsin mi?',
+    stopped: 'Yayın şu an durmuş. Bu işlem planı kaydeder ve yayını BAŞLATIR. Devam edilsin mi?',
+  }[streamState] ?? 'Bu işlem planı kaydeder ve yayını yeniden başlatır; çalışan yayın varsa kısa süreliğine KESİLİR. Devam edilsin mi?';
   const musicNote = plan.usesWholeLibrary
     ? 'Müzik: kütüphanedeki tüm parçalar çalıyor.'
     : `Müzik: ${plan.selectedTrackCount} parça seçili (bu sayfadan değiştirilmez).`;
@@ -584,8 +711,8 @@ function renderConfigPage({
   <h1>Yayın Yönetimi</h1>
   <p class="sub">Plan: ${esc(plan.name)}</p>
 </header>
-${notice ? `<div class="notice">${esc(notice)}</div>` : ''}
-${error ? `<div class="error">${esc(error)}</div>` : ''}
+${notice ? `<div role="status" class="notice">${esc(notice)}</div>` : ''}
+${error ? `<div role="alert" class="error">${esc(error)}</div>` : ''}
 ${nowSection ? `<section>
   <h2>Şu an</h2>
   ${nowSection}
@@ -596,7 +723,7 @@ ${broadcastPicker({
 <!-- Galeri yüklemesi: ana formun DIŞINDA (iç içe form olmaz); cover bölümündeki dosya
      alanı ve düğme form="coverUpload" ile buna bağlanır. -->
 <form id="coverUpload" method="post" enctype="multipart/form-data" action="${esc(uploadAction)}"></form>
-<form id="planForm" method="post" action="${esc(action)}">
+<form id="planForm" method="post" action="${esc(action)}" data-guard${pendingCover ? ' data-pending' : ''}>
   <section>
     <h2>Sonraki yayın</h2>
     <p class="hint">Bir SONRAKİ canlıya almada oluşacak yayın içindir; yukarıda seçili yayına dokunmaz. Boş bıraktığın alan için config.json'daki değer kullanılır.</p>
@@ -616,7 +743,7 @@ ${broadcastPicker({
   })}
     <p class="hint">Galeriden ekle (JPEG/PNG/WebP): görsel 1280x720'ye kırpılıp küçültülür. Yüklemek sayfayı yeniler — önce yaptığın değişiklikleri Kaydet.</p>
     <label class="lbl" for="coverFile">Galeriden görsel seç</label>
-    <input type="file" id="coverFile" name="coverFile" accept="image/jpeg,image/png,image/webp" form="coverUpload" onchange="document.getElementById('coverUpload').submit()">
+    <input type="file" id="coverFile" name="coverFile" accept="image/jpeg,image/png,image/webp" form="coverUpload" onchange="if(window.uploadPick){uploadPick(this)}else{document.getElementById('coverUpload').submit()}">
     <button class="secondary" type="submit" form="coverUpload">Yükle</button>
 
     <h3>Pomodoro</h3>
@@ -644,9 +771,11 @@ ${broadcastPicker({
   </section>
 
   <div class="savebar">
+    <p class="dirtynote" id="dirtyNote" role="status" aria-live="polite"></p>
     <button class="primary" type="submit" name="action" value="save">Kaydet</button>
-    <button class="secondary" type="submit" name="action" value="save_restart">Kaydet ve Yeniden Başlat</button>
+    <button class="secondary" type="submit" name="action" value="save_restart" onclick="return confirm('${esc(restartConfirm)}')">Kaydet ve Yeniden Başlat</button>
   </div>
+  <p class="hint">Kaydet yalnızca planı kaydeder, çalışan yayına dokunmaz. "Kaydet ve Yeniden Başlat" ise kaydeder ve yayını kısa süreliğine keserek yeni planla yeniden başlatır.</p>
 </form>
 ${canCreate && !newMode ? `<section>
   <a class="newlink" href="${esc(`/config?token=${encodeURIComponent(token)}&new=1`)}">+ Eşzamanlı yeni yayın aç…</a>

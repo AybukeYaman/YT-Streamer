@@ -2049,3 +2049,41 @@ gelen gecikmeli dosya yazımı ENOENT veriyordu). Düzeltme: `try { return await
 - Gerçek ffmpeg ile doğrulandı (yerel Windows ffmpeg 9.0.1): mavi bir test klibinden ve
   sarı bir test görselinden gerçekten küçük (160px) JPEG önizlemeler üretildi, renkleri
   gözle doğrulandı.
+
+
+---
+
+## [Mobil UX yeniden tasarimi] `/config` sayfasi: gorev sirasina gore tek sayfa — 11 Ekim 2026
+
+**Soru:** `/config` tek uzun formdu; ana eylemler (Kaydet) en altta, ayni alanlar iki kez,
+pasif dugmeler, kaydedilmemis girdinin sessizce kaybolmasi, canli yayini kesen eylemde onay
+yoklugu. Analiz: `ANALIZ-mobil-arayuz.md`, plan: `mobile-ux-redesign-plan.md`.
+
+**Karar:** Yalnizca `src/ui/config-page.js` (sunum) degisti. Rotalar, form alan adlari/degerleri
+ve sunucu davranisi AYNI; kanit: eski surumden alinan "altin ornek" testi
+(`test/ui/config-page.form-golden.json`) yeni HTML'in ayni alan/deger ciftlerini gonderdigini sinar.
+- Sira: Su an -> YouTube'daki yayin -> Sonraki yayin. Aciklama, kapak, klip havuzlari `<details>`
+  altinda ozet satirli (kapali alanlar da gonderilir).
+- Kontroller: gorunurluk = bolmeli secim, Pomodoro = anahtar (kapaliyken govde CSS ile gizli,
+  `disabled` DEGIL — alanlar eskisi gibi gonderilir), kapak/klip = kucuk resim kartlari,
+  sure kisayollari 50+10/30+10/45+15/Ozel (JS yoksa metin alani).
+- D1 "Kaydet ve Yeniden Baslat" her durumda onay ister. D2/D3 kaydedilmemis degisiklik varken
+  yukleme / baska yayina gecis / baska form oncesi acik uyari (Tamam = at, Iptal = kal) +
+  beforeunload. D4 islem durumu: dugmeler PASIFLESTIRILMEZ (pasif dugmenin name/value'su
+  gonderilmez, eylem kaybolurdu); ikinci gonderim engellenir. D5 "npm run plan"/SSH metni kalkti.
+- Sabit Kaydet cubugu yalnizca JS varken ve degisiklik varken yapisir. Yuklenen ama
+  kaydedilmemis kapak (`data-pending`) baslangicta "kaydedilmemis" sayilir.
+- Ek yayin kartlarinda pasif dugmeler kalkti; gecerli her islem hala erisilebilir (Durdur
+  "Diger islemler" altinda).
+
+**Kapsam disi (bilincli):** album secimi (olduğu gibi), Faz 4 (POST->redirect->GET, HTML hata
+sayfalari — backend). **Bilinen:** gecersiz Pomodoro girdisinde sayfa kayitli plana doner
+(plan formu taslak tutmuyor; eski davranis); yenilemede POST yeniden gonderimi (Faz 4).
+
+**Dogrulama:** 991 test. Gercek tarayicida (Chrome, ~850px) gercek GoLiveServer + ConfigApi +
+StreamConfigService + BroadcastAdmin + StreamManager ile (YouTube/systemd/ffmpeg bellekte sahte)
+denendi: kaydet, yeniden baslat (iptal/onay), yukleme (iptal/onay), yayin degistirme, yayina uygula
+(yalniz degisen alanlar), bitirme, ana/ek yayin baslat-durdur-canli, yeni yayin (cift tiklama =
+1 kurulum), hata bandi. Dogrulama sirasinda 3 hata bulunup duzeltildi (anahtar kontrasti,
+bekleyen kapak uyarisi, betikteki `/config/new` izi). **Gercek Android/iPad ve 360-412px
+gorunum DENENMEDI.**

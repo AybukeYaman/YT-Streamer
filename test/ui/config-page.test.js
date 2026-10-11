@@ -210,7 +210,7 @@ test('seçili yayın diğer formların action\'ına taşınır (kaydet sonrası 
   const html = renderConfigPage({
     plan: new StreamPlan({}), clips: [], token: 'tk', broadcasts: { items: [PB1] }, selectedId: 'b1', streamState: 'running',
   });
-  assert.match(html, /<form id="planForm" method="post" action="\/config\?token=tk&amp;broadcast=b1">/);
+  assert.match(html, /<form id="planForm" method="post" action="\/config\?token=tk&amp;broadcast=b1" data-guard>/);
   assert.match(html, /action="\/config\/upload\?token=tk&amp;broadcast=b1"/);
 });
 
@@ -580,6 +580,92 @@ test('hareket azaltma: prefers-reduced-motion destekli (geçişler yalnızca no-
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
   assert.match(html, /@media \(prefers-reduced-motion: no-preference\)/);
   assert.match(html, /@media \(prefers-reduced-motion: reduce\)[^{]*\{\s*\*, \*::before, \*::after \{ animation: none !important; transition: none !important/);
+});
+
+// ─── Faz 3: geri bildirim ve güvenlik ağı (D1-D4) ──────────────────────────
+
+test('D1: "Kaydet ve Yeniden Başlat" her durumda açık onay ister; metin duruma göre', () => {
+  const confirmOf = (streamState) => {
+    const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState });
+    const m = /value="save_restart" onclick="return confirm\('([^']+)'\)"/.exec(html);
+    assert.ok(m, `onay yok (durum: ${streamState})`);
+    return m[1];
+  };
+  assert.match(confirmOf('running'), /ÇALIŞIYOR.*KESER.*Devam edilsin mi\?/);
+  assert.match(confirmOf('stopped'), /durmuş.*BAŞLATIR/);
+  assert.match(confirmOf('unknown'), /KESİLİR/);
+  assert.match(confirmOf(null), /yeniden başlatır/);
+  // Onay yalnızca yeniden başlatma düğmesinde; "Kaydet" onaysız ve formdaki İLK gönder düğmesi.
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState: 'running' });
+  assert.match(html, /<button class="primary" type="submit" name="action" value="save">Kaydet<\/button>/);
+  assert.match(html, /Kaydet yalnızca planı kaydeder, çalışan yayına dokunmaz/);
+});
+
+test('D2/D3: kaydedilmemiş değişiklik koruması — düzenleme formları data-guard ile işaretli, yükleme uyarılı', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 't', canCreate: true, broadcasts: { items: [PB1] }, selectedId: 'b1',
+  });
+  const guardedForms = [...html.matchAll(/<form [^>]*data-guard>/g)].map((m) => m[0]);
+  assert.equal(guardedForms.length, 2, 'plan formu + seçili yayın formu');
+  assert.ok(guardedForms.some((f) => f.includes('id="planForm"')));
+  assert.ok(guardedForms.some((f) => f.includes('/config/broadcast')));
+  const newMode = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 't', canCreate: true, newMode: true, broadcasts: { items: [] }, catalogAlbums: [],
+  });
+  assert.ok(/<form [^>]*\/config\/new[^>]*data-guard>/.test(newMode), 'yeni yayın formu da korunur');
+  // Yükleme: betik uyarır; betik yoksa eski davranış (doğrudan gönder). "Yükle" düğmesi her durumda var.
+  assert.match(html, /onchange="if\(window\.uploadPick\)\{uploadPick\(this\)\}else\{document\.getElementById\('coverUpload'\)\.submit\(\)\}"/);
+  const script = html.match(/<script>(?!document)([\s\S]*?)<\/script>/)[1];
+  assert.match(script, /askDiscard\('Görsel yüklenince sayfa yenilenir ve'\)/);
+  assert.match(script, /askDiscard\('Başka bir yayına ya da sayfaya geçersen'\)/);
+  assert.match(script, /Tamam: değişiklikleri at ve devam et\\nİptal: sayfada kal/);
+  assert.match(script, /addEventListener\('beforeunload'/);
+});
+
+test('D4: işlem durumu — düğmeler PASİFLEŞTİRİLMEZ (name/value kaybolmasın), ikinci gönderim engellenir', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 't', canCreate: true, newMode: true, broadcasts: { items: [] }, catalogAlbums: [],
+  });
+  const script = html.match(/<script>(?!document)([\s\S]*?)<\/script>/)[1];
+  assert.doesNotMatch(script, /\.disabled\s*=/, 'gönderen düğme pasifleştirilirse formdan çıkar (action kaybolur)');
+  assert.doesNotMatch(html, /this\.disabled=true/, 'eski "disabled + form.submit()" düzeni kalktı');
+  assert.match(script, /if \(busy\) \{ e\.preventDefault\(\); return; \}/);
+  assert.match(script, /if \(e\.defaultPrevented\) return;/, 'satır içi onay (confirm) iptali de dikkate alınır');
+  assert.match(script, /save_restart: 'Kaydedilip yeniden başlatılıyor…'/);
+  assert.match(script, /addEventListener\('pageshow'/);
+  assert.match(html, /button\.wait \{ opacity: \.55; pointer-events: none; \}/);
+  // Yeni yayın gönder düğmesi artık normal bir submit (gönderim submit olayından geçer).
+  assert.match(html, /<button class="primary" type="submit" data-busy="Yayın kuruluyor[^"]*">Yayını Kur ve Başlat<\/button>/);
+  assert.doesNotMatch(script, /config\/new/, 'betik, özelliği kapalı sayfada /config/new izi bırakmamalı');
+});
+
+test('geri bildirim: sonuç bandı erişilebilir rol taşır; değişiklik notu aria-live; sticky çubuk yalnızca JS + dirty', () => {
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', notice: 'tamam', error: 'olmadı' });
+  assert.match(html, /<div role="status" class="notice">tamam<\/div>/);
+  assert.match(html, /<div role="alert" class="error">olmadı<\/div>/);
+  assert.match(html, /<p class="dirtynote" id="dirtyNote" role="status" aria-live="polite"><\/p>/);
+  assert.match(html, /html\.js form\.dirty \.savebar \{\s*position: sticky; bottom: 0;/);
+  assert.match(html, /env\(safe-area-inset-bottom\)/);
+  assert.doesNotMatch(html.replace(/html\.js form\.dirty \.savebar \{[^}]*\}/, ''), /position: sticky/, 'başka sticky yok: içerik örtülmez');
+});
+
+test('duyarlı düzen: telefon tek sütun; geniş ekranda sütun genişler, ızgaralar uyarlanır', () => {
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
+  assert.match(html, /body \{[^}]*max-width: 480px/);
+  assert.match(html, /@media \(min-width: 640px\) \{ body \{ max-width: 720px; \} \}/);
+  assert.match(html, /@media \(max-width: 360px\) \{ \.tilegrid \{ grid-template-columns: repeat\(2, 1fr\); \} \}/);
+  assert.doesNotMatch(html, /overflow-x:\s*scroll/);
+});
+
+test('yüklenen ama kaydedilmemiş kapak: plan formu data-pending taşır (sayfa baştan "kaydedilmemiş" sayılır)', () => {
+  const pending = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], covers: ['X:/c/g.jpg'], token: 't', pendingCover: 'X:/c/g.jpg',
+  });
+  assert.match(pending, /<form id="planForm" method="post" action="\/config\?token=t" data-guard data-pending>/);
+  const normal = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
+  assert.match(normal, /<form id="planForm" method="post" action="\/config\?token=t" data-guard>/);
+  const script = pending.match(/<script>(?!document)([\s\S]*?)<\/script>/)[1];
+  assert.match(script, /hasAttribute\('data-pending'\)/);
 });
 
 // ─── Renk kontrastı (WCAG) ─────────────────────────────────────────────────
