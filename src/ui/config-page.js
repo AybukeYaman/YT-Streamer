@@ -180,6 +180,13 @@ const privacyControl = (id, current) => segmented({
   id, name: 'privacy', label: 'Görünürlük', options: Object.entries(PRIVACY_LABELS), current,
 });
 
+// Mevcut yayının görünürlüğü okunamadıysa seçenek ÇİZİLMEZ: hiçbir 'privacy' alanı gönderilmez,
+// sunucu da alan yoksa görünürlüğe dokunmaz. (Yeni yayın formu bundan etkilenmez.)
+const UNKNOWN_PRIVACY_NOTE = 'Görünürlük okunamadı; bu işlemde değiştirilmez.';
+const existingPrivacyControl = (id, current) => (Object.hasOwn(PRIVACY_LABELS, current)
+  ? privacyControl(id, current)
+  : `<p class="hint" id="${id}-unknown" role="note">${UNKNOWN_PRIVACY_NOTE}</p>`);
+
 // Yayın seçici + seçili yayının işlem paneli. YouTube'daki VAR OLAN yayınlar üzerinde çalışır
 // (plandaki "sonraki yayın" ayarlarından ayrı). broadcasts: { items } | { error: true } | null.
 //   - null ve canCreate yok: özellik kapalı → bölüm hiç çıkmaz.
@@ -256,7 +263,7 @@ function broadcastPicker({
       <input type="hidden" name="broadcastId" value="${esc(b.id)}">
       <label class="lbl" for="b-title">Başlık</label>
       <input type="text" id="b-title" name="title" value="${esc(b.title)}" maxlength="${MAX_TITLE_LENGTH}">
-      ${privacyControl('b-privacy', b.privacyStatus)}
+      ${existingPrivacyControl('b-privacy', b.privacyStatus)}
       ${fold('Açıklama ve kapak', `açıklama ${b.description.length} karakter`, detailsBody)}
       <button class="primary" type="submit" name="action" value="apply">Bu Yayına Uygula</button>
       <p class="hint">Yalnızca değiştirdiğin alanlar YouTube'a gönderilir. "Sonraki yayın" ayarlarından bağımsızdır.</p>
@@ -485,6 +492,9 @@ const STYLE = `
   .tin:focus-visible ~ .tw { outline: 3px solid var(--focus); outline-offset: 2px; }
 
   /* JS varsa Pomodoro süre kısayolları görünür; yoksa yalnızca metin alanı */
+  .field-error { color: #ff9ec4; margin: 6px 0 0; font-size: 14px; font-weight: 600; }
+  .field-error[hidden] { display: none; }
+  input[aria-invalid="true"] { border-color: var(--danger-edge); }
   .js-only { display: none; }
   html.js .js-only { display: flex; }
   html.js .pt-custom { display: none; }
@@ -550,9 +560,43 @@ const SCRIPT = `
       typeInput.dispatchEvent(new Event('input', { bubbles: true }));
       sync(false);
     });
-    typeInput.addEventListener('input', function () { sync(true); });
+    typeInput.addEventListener('input', function () { sync(true); clearPomoError(); });
     sync(false);
   }
+
+  // Pomodoro süre doğrulaması (yalnızca arayüz; sunucu doğrulaması ayrıca sürer). Pomodoro
+  // AÇIKSA "çalışma+mola" (1-3 haneli sayılar) olmalı; kapalıyken denetlenmez. Geçersizse
+  // gönderim durur, hata alanın altında gösterilir; girilen değer ve diğer seçimler korunur.
+  var POMO_RE = /^\\d{1,3}\\+\\d{1,3}$/;
+  var pomoToggle = d.getElementById('pomodoroEnabled');
+  var pomoErr = d.getElementById('pomodoroTypeErr');
+  function clearPomoError() {
+    if (!pomoErr || !typeInput) return;
+    pomoErr.hidden = true;
+    pomoErr.textContent = '';
+    typeInput.removeAttribute('aria-invalid');
+  }
+  function pomoValid() {
+    if (!pomoToggle || !typeInput || !pomoToggle.checked) return true;
+    if (POMO_RE.test(typeInput.value.trim())) { clearPomoError(); return true; }
+    pomoErr.textContent = 'Geçersiz süre. "çalışma+mola" biçiminde, dakika olarak yaz (örn. 50+10, 30+10, 45+15).';
+    pomoErr.hidden = false;
+    typeInput.setAttribute('aria-invalid', 'true');
+    if (custom) custom.className = 'pt-custom show';
+    typeInput.focus();
+    return false;
+  }
+  if (pomoToggle) pomoToggle.addEventListener('change', clearPomoError);
+  // Yakalama aşaması: "Kaydet ve Yeniden Başlat" onay penceresi geçersiz girişte hiç açılmasın.
+  d.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button[type=submit]') : null;
+    if (!b || !b.form || b.form.id !== 'planForm') return;
+    if (!pomoValid()) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  // Enter ile gönderim için; aşağıdaki submit dinleyicisinden ÖNCE kayıtlı (o defaultPrevented'a bakar).
+  d.addEventListener('submit', function (e) {
+    if (e.target && e.target.id === 'planForm' && !pomoValid()) e.preventDefault();
+  });
 
   // Katlı bölümlerin "N seçili" özeti canlı kalsın.
   [].forEach.call(d.querySelectorAll('[data-count-for]'), function (el) {
@@ -755,7 +799,8 @@ ${broadcastPicker({
         <div class="pt-custom" id="ptCustom">
           <label class="lbl" for="pomodoroType">Süre</label>
           <p class="hint">"&lt;çalışma&gt;+&lt;mola&gt;" dakika (örn. 50+10, 30+10, 45+15)</p>
-          <input type="text" id="pomodoroType" name="pomodoroType" value="${esc(p.type)}" inputmode="text" placeholder="50+10">
+          <input type="text" id="pomodoroType" name="pomodoroType" value="${esc(p.type)}" inputmode="text" placeholder="50+10" aria-describedby="pomodoroTypeErr">
+          <p class="field-error" id="pomodoroTypeErr" role="alert" hidden></p>
         </div>
 
         ${fold('Çalışma görselleri', `${p.studyVideos.length} seçili`, `
