@@ -42,37 +42,71 @@ function checkbox(name, value, checked, label, thumbSrc, type = 'checkbox', scop
     </label>`;
 }
 
-// Kapak: tek seçim (radyo). İlk satır "varsayılan" (value="" → plan.cover null → config.json'daki
-// kapak). Plandaki kapak listede yoksa (elle yazılmış yol) ek satır olarak gösterilir,
-// böylece kaydedince sessizce kaybolmaz.
-function coverList(covers, selected, token) {
-  const known = covers.includes(selected) || !selected ? covers : [selected, ...covers];
-  const rows = known.map((c) => {
-    const thumbSrc = `/config/thumb?token=${encodeURIComponent(token)}&file=${encodeURIComponent(c)}`;
-    return checkbox('cover', c, c === selected, shortPath(c), thumbSrc, 'radio', 'p-');
-  });
-  const none = checkbox('cover', '', !selected, 'Varsayılan (config.json)', null, 'radio', 'p-');
-  return `<div class="checklist">${none}${rows.join('')}</div>`;
+const thumbUrl = (token, file) => `/config/thumb?token=${encodeURIComponent(token)}&file=${encodeURIComponent(file)}`;
+
+// Seçilebilir küçük resim kartı (radyo ya da onay kutusu). Giriş gerçek bir <input>:
+// klavye/ekran okuyucu çalışır; görsel olarak gizlenir, seçili durum kenarlık + ✓ ile
+// gösterilir (yalnızca renge bağlı değil). thumbSrc yoksa yazılı yer tutucu çıkar.
+function tile(name, value, checked, label, thumbSrc, type, scope, placeholder = '—') {
+  const id = `${scope}${name}-${esc(value).replace(/[^a-zA-Z0-9]/g, '_')}`;
+  const thumb = thumbSrc
+    ? `<img class="thumb" src="${esc(thumbSrc)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+    : `<span class="ph" aria-hidden="true">${esc(placeholder)}</span>`;
+  return `<label class="tile" for="${id}"><input type="${type}" id="${id}" name="${esc(name)}" value="${esc(value)}"${checked ? ' checked' : ''} class="tin"><span class="tw">${thumb}</span><span class="tn">${esc(label)}</span></label>`;
 }
 
-function clipList(name, clips, selected, token) {
+// Kapak: tek seçim (radyo kartları). İlk kart "varsayılan/değiştirme" (value=""). Plandaki kapak
+// listede yoksa (elle yazılmış yol) ek kart olarak gösterilir (keepUnknown), böylece kaydedince
+// sessizce kaybolmaz.
+function coverGrid({
+  covers, selected, token, scope, noneLabel, keepUnknown = false,
+}) {
+  const known = keepUnknown && selected && !covers.includes(selected) ? [selected, ...covers] : covers;
+  const current = known.includes(selected) ? selected : '';
+  const none = tile('cover', '', current === '', noneLabel, null, 'radio', scope);
+  const rows = known.map((c) => tile('cover', c, c === current, shortPath(c), thumbUrl(token, c), 'radio', scope));
+  return `<div class="tilegrid">${none}${rows.join('')}</div>`;
+}
+
+function clipGrid(name, clips, selected, token) {
   if (!clips.length) return '<p class="muted">Klip bulunamadı — albüm arkaplanı ya da assets/ altına video ekleyin.</p>';
   const set = new Set(selected);
-  return `<div class="checklist">${clips.map((c) => {
-    const thumbSrc = `/config/thumb?token=${encodeURIComponent(token)}&file=${encodeURIComponent(c)}`;
-    return checkbox(name, c, set.has(c), shortPath(c), thumbSrc);
-  }).join('')}</div>`;
+  return `<div class="tilegrid two">${clips.map((c) => tile(name, c, set.has(c), shortPath(c), thumbUrl(token, c), 'checkbox', '')).join('')}</div>`;
 }
 
 // Katlanabilir bölüm (<details>): JS gerektirmez. Kapalıyken de içindeki alanlar forma
 // dahildir ve GÖNDERİLİR (tarayıcı kapalı <details> içindeki kontrolleri atlamaz);
-// summary'deki özet, kapalı bölümün durumunu gösterir.
-function fold(title, summaryNote, bodyHtml, { open = false, cls = '' } = {}) {
-  const note = summaryNote ? ` <span class="sumnote">· ${esc(summaryNote)}</span>` : '';
+// summary'deki özet, kapalı bölümün durumunu gösterir. countFor: özetteki "N seçili"
+// yazısı, o adlı işaretli kutuların sayısını (JS varsa) canlı tutar.
+function fold(title, summaryNote, bodyHtml, { open = false, cls = '', countFor = '' } = {}) {
+  const attr = countFor ? ` data-count-for="${esc(countFor)}"` : '';
+  const note = summaryNote ? ` <span class="sumnote"${attr}>· ${esc(summaryNote)}</span>` : '';
   return `<details class="fold${cls ? ` ${cls}` : ''}"${open ? ' open' : ''}><summary>${esc(title)}${note}</summary><div class="foldbody">${bodyHtml}</div></details>`;
 }
 
-const STATE_LABELS = { running: 'Çalışıyor', stopped: 'Durmuş', unknown: 'Bilinmiyor' };
+// Bölmeli seçim (segmented control): az sayıda seçenek tek bakışta, tek dokunuşla. Gerçek
+// radyo girişleri: form alanı adı/değeri önceki <select> ile AYNI (name="privacy" value="public"…).
+function segmented({
+  id, name, label, options, current,
+}) {
+  const items = options.map(([value, text]) => {
+    const oid = `${id}-${value}`;
+    return `<input type="radio" id="${oid}" name="${esc(name)}" value="${esc(value)}"${value === current ? ' checked' : ''}><label for="${oid}">${esc(text)}</label>`;
+  }).join('');
+  return `<p class="lbl" id="${id}-l">${esc(label)}</p>
+      <div class="seg" role="radiogroup" aria-labelledby="${id}-l">${items}</div>`;
+}
+
+// Aç/kapa anahtarı: gerçek onay kutusu (name/değer aynı), yalnızca görünümü anahtar.
+function switchInput(id, name, checked, text) {
+  return `<input type="checkbox" id="${id}" name="${name}"${checked ? ' checked' : ''} class="sw"><label for="${id}" class="swl"><span class="track" aria-hidden="true"></span><span>${esc(text)}</span></label>`;
+}
+
+// Pomodoro süre kısayolları. Sunucu her "<çalışma>+<mola>" biçimini kabul eder; "Özel" metin
+// alanını açar, bu yüzden kısayol listesi hiçbir değeri kısıtlamaz.
+const POMO_PRESETS = ['50+10', '30+10', '45+15'];
+
+const STATE_LABELS ={ running: 'Çalışıyor', stopped: 'Durmuş', unknown: 'Bilinmiyor' };
 const STATE_TONE = { running: 'ok', stopped: 'idle', unknown: 'warn' };
 const dot = (tone) => `<span class="dot ${tone}" aria-hidden="true"></span>`;
 
@@ -142,8 +176,9 @@ function pickRow(href, thumbHtml, text, { selected = false, tag = 'a' } = {}) {
 
 const dropdown = (summaryRow, rowsHtml) => `<details class="dd">${summaryRow}<div class="picklist">${rowsHtml}</div></details>`;
 
-const privacySelect = (id, current) => `<select id="${id}" name="privacy">${Object.entries(PRIVACY_LABELS)
-  .map(([value, text]) => `<option value="${value}"${value === current ? ' selected' : ''}>${text}</option>`).join('')}</select>`;
+const privacyControl = (id, current) => segmented({
+  id, name: 'privacy', label: 'Görünürlük', options: Object.entries(PRIVACY_LABELS), current,
+});
 
 // Yayın seçici + seçili yayının işlem paneli. YouTube'daki VAR OLAN yayınlar üzerinde çalışır
 // (plandaki "sonraki yayın" ayarlarından ayrı). broadcasts: { items } | { error: true } | null.
@@ -203,16 +238,16 @@ function broadcastPicker({
 
   const b = items.find((x) => x.id === selectedId) ?? items[0];
   const act = `/config/broadcast?token=${t}&broadcast=${encodeURIComponent(b.id)}`;
-  const coverOptions = covers
-    .map((c) => `<option value="${esc(c)}">${esc(shortPath(c))}</option>`).join('');
   const canEnd = ENDABLE_STATES.has(b.lifeCycleStatus);
   const tone = b.lifeCycleStatus === 'live' ? 'ok' : (b.finished ? 'idle' : 'warn');
   const detailsBody = `
         <label class="lbl" for="b-desc">Açıklama</label>
         <textarea name="description" id="b-desc" maxlength="${MAX_DESCRIPTION_LENGTH}">${esc(b.description)}</textarea>
-        <label class="lbl" for="b-cover">Kapak</label>
+        <p class="lbl">Kapak</p>
         <p class="hint">"Değiştirme" seçiliyse kapağa dokunulmaz${covers.length ? '' : ' (kapak adayı yok)'}</p>
-        <select id="b-cover" name="cover"><option value="">Değiştirme</option>${coverOptions}</select>`;
+        ${coverGrid({
+    covers, selected: '', token, scope: 'b-', noneLabel: 'Değiştirme',
+  })}`;
 
   return `${head}
     ${picker}
@@ -221,8 +256,7 @@ function broadcastPicker({
       <input type="hidden" name="broadcastId" value="${esc(b.id)}">
       <label class="lbl" for="b-title">Başlık</label>
       <input type="text" id="b-title" name="title" value="${esc(b.title)}" maxlength="${MAX_TITLE_LENGTH}">
-      <label class="lbl" for="b-privacy">Görünürlük</label>
-      ${privacySelect('b-privacy', b.privacyStatus)}
+      ${privacyControl('b-privacy', b.privacyStatus)}
       ${fold('Açıklama ve kapak', `açıklama ${b.description.length} karakter`, detailsBody)}
       <button class="primary" type="submit" name="action" value="apply">Bu Yayına Uygula</button>
       <p class="hint">Yalnızca değiştirdiğin alanlar YouTube'a gönderilir. "Sonraki yayın" ayarlarından bağımsızdır.</p>
@@ -245,8 +279,6 @@ function newStreamForm({
   const t = encodeURIComponent(token);
   const chosen = new Set(draft.albums ?? []);
   const privacy = draft.privacy || 'unlisted';
-  const coverOptions = covers
-    .map((c) => `<option value="${esc(c)}"${c === draft.cover ? ' selected' : ''}>${esc(shortPath(c))}</option>`).join('');
   const albumRows = albums.length
     ? `<div class="checklist">${albums.map((a) => {
       const thumb = a.backgrounds[0]
@@ -257,8 +289,10 @@ function newStreamForm({
     : '<p class="muted">Albüm bulunamadı — boş bırakırsan kütüphanedeki her şey çalar.</p>';
   const chosenCount = chosen.size;
   const advancedBody = `
-      <label class="lbl" for="n-cover">Kapak</label>
-      <select id="n-cover" name="cover"><option value="">Varsayılan</option>${coverOptions}</select>
+      <p class="lbl">Kapak</p>
+      ${coverGrid({
+    covers, selected: draft.cover ?? '', token, scope: 'n-', noneLabel: 'Varsayılan',
+  })}
       <p class="lbl">Hangi albümler çalsın?</p>
       <p class="hint">Müzik + arkaplan; boş bırakırsan kütüphanedeki her şey çalar.</p>
       ${albumRows}`;
@@ -272,13 +306,9 @@ function newStreamForm({
       <input type="text" id="n-title" name="title" value="${esc(draft.title ?? '')}" maxlength="${MAX_TITLE_LENGTH}" placeholder="Başlık">
       <label class="lbl" for="n-desc">Açıklama</label>
       <textarea name="description" id="n-desc" maxlength="${MAX_DESCRIPTION_LENGTH}" placeholder="Açıklama">${esc(draft.description ?? '')}</textarea>
-      <label class="lbl" for="n-privacy">Görünürlük</label>
-      ${privacySelect('n-privacy', privacy)}
+      ${privacyControl('n-privacy', privacy)}
       ${fold('Kapak ve albümler', chosenCount ? `${chosenCount} albüm seçili` : 'tüm kütüphane çalar', advancedBody, { open: Boolean(chosenCount || draft.cover) })}
-      <label class="row" for="goLiveNow">
-        <input type="checkbox" id="goLiveNow" name="goLiveNow" ${draft.goLiveNow === false ? '' : 'checked'}>
-        <span>Kurulunca otomatik canlıya al</span>
-      </label>
+      <div class="switchrow">${switchInput('goLiveNow', 'goLiveNow', draft.goLiveNow !== false, 'Kurulunca otomatik canlıya al')}</div>
       <button class="primary" type="submit" onclick="this.disabled=true;this.form.submit()">Yayını Kur ve Başlat</button>
     </form>`;
 }
@@ -412,6 +442,113 @@ const STYLE = `
     border: 1px solid var(--border-strong); border-radius: 10px; color: var(--text);
     text-decoration: none; font-weight: 600;
   }
+
+  /* Bölmeli seçim (segmented): gerçek radyo girişleri, yalnızca görünüm */
+  .seg { display: flex; position: relative; border: 1px solid var(--border-strong); border-radius: 10px; overflow: hidden; background: var(--surface); margin-bottom: 8px; }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg label, .seg button {
+    flex: 1; display: flex; align-items: center; justify-content: center; text-align: center;
+    min-height: var(--tap); padding: 8px 4px; margin: 0; width: auto; font-size: 14px; font-weight: 600;
+    cursor: pointer; border: 0; border-left: 1px solid var(--line); border-radius: 0; background: transparent; color: var(--text);
+  }
+  .seg > :first-child, .seg > input + label:first-of-type { border-left: 0; }
+  .seg input:checked + label, .seg button[aria-pressed=true] { background: var(--accent-strong); color: #fff; }
+  .seg input:checked + label::before, .seg button[aria-pressed=true]::before { content: '✓ '; white-space: pre; }
+  .seg input:focus-visible + label { outline: 3px solid var(--focus); outline-offset: -3px; }
+
+  /* Aç/kapa anahtarı: gerçek onay kutusu */
+  .sw { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .swl { display: flex; align-items: center; gap: 12px; min-height: var(--tap); cursor: pointer; font-weight: 600; }
+  .track { position: relative; width: 48px; height: 28px; flex-shrink: 0; border-radius: 14px; border: 2px solid var(--border-strong); background: var(--surface-2); }
+  .track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: var(--text); }
+  .sw:checked + .swl .track { background: var(--accent); border-color: var(--accent); }
+  .sw:checked + .swl .track::after { transform: translateX(20px); background: #fff; }
+  .sw:focus-visible + .swl .track { outline: 3px solid var(--focus); outline-offset: 2px; }
+  .switchrow { margin: 12px 0 4px; }
+  .pomo { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 12px 12px; }
+  .sw:not(:checked) ~ .pomo-body { display: none; }
+
+  /* Küçük resim kartları (kapak, klip): seçili = kenarlık + ✓ */
+  .tilegrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .tilegrid.two { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 360px) { .tilegrid { grid-template-columns: repeat(2, 1fr); } }
+  @media (min-width: 640px) { .tilegrid { grid-template-columns: repeat(4, 1fr); } .tilegrid.two { grid-template-columns: repeat(3, 1fr); } }
+  .tile { position: relative; display: flex; flex-direction: column; gap: 6px; cursor: pointer; min-width: 0; }
+  .tin { position: absolute; opacity: 0; pointer-events: none; }
+  .tw { display: flex; align-items: center; justify-content: center; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px; border: 2px solid var(--line); background: var(--surface-2); }
+  .tw .thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .tw .ph { color: var(--muted); font-size: 18px; }
+  .tn { font-size: 12px; line-height: 1.25; color: var(--muted); overflow-wrap: anywhere; }
+  .tin:checked ~ .tw { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+  .tin:checked ~ .tn { color: var(--text); }
+  .tin:checked ~ .tn::before { content: '✓ '; color: var(--ok); font-weight: 700; }
+  .tin:focus-visible ~ .tw { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+  /* JS varsa Pomodoro süre kısayolları görünür; yoksa yalnızca metin alanı */
+  .js-only { display: none; }
+  html.js .js-only { display: flex; }
+  html.js .pt-custom { display: none; }
+  html.js .pt-custom.show { display: block; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .track, .track::after, .seg label, .seg button, .tw, button { transition: background-color .15s, border-color .15s, transform .15s, box-shadow .15s; }
+    button:active { transform: scale(.98); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  }
+`;
+
+// Küçük istemci betiği (ilerleyen geliştirme): sayfa JS OLMADAN da tam çalışır — bu betik
+// yalnızca kolaylık ekler. Form alan adları/değerleri ve gönderim davranışı değişmez.
+// DİKKAT: bu metinde HTML etiketi benzeri dize bulunmamalı (testler HTML'i ayrıştırır).
+const SCRIPT = `
+(function () {
+  var d = document;
+
+  // Pomodoro süre kısayolları: kısayol metin alanını doldurur; "Özel" alanı açar.
+  var typeInput = d.getElementById('pomodoroType');
+  var presets = d.getElementById('pomoPresets');
+  var custom = d.getElementById('ptCustom');
+  if (typeInput && presets && custom) {
+    var buttons = [].slice.call(presets.querySelectorAll('button'));
+    var sync = function (forceCustom) {
+      var value = typeInput.value.trim();
+      var hit = false;
+      buttons.forEach(function (b) {
+        var t = b.getAttribute('data-type');
+        var on = !forceCustom && t !== '' && t === value;
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        if (on) hit = true;
+      });
+      var isCustom = forceCustom || !hit;
+      buttons.forEach(function (b) { if (b.getAttribute('data-type') === '') b.setAttribute('aria-pressed', isCustom ? 'true' : 'false'); });
+      custom.className = isCustom ? 'pt-custom show' : 'pt-custom';
+    };
+    presets.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if (!b) return;
+      var t = b.getAttribute('data-type');
+      if (t === '') { sync(true); typeInput.focus(); return; }
+      typeInput.value = t;
+      typeInput.dispatchEvent(new Event('input', { bubbles: true }));
+      sync(false);
+    });
+    typeInput.addEventListener('input', function () { sync(true); });
+    sync(false);
+  }
+
+  // Katlı bölümlerin "N seçili" özeti canlı kalsın.
+  [].forEach.call(d.querySelectorAll('[data-count-for]'), function (el) {
+    var name = el.getAttribute('data-count-for');
+    var update = function () {
+      var n = 0;
+      [].forEach.call(d.getElementsByName(name), function (i) { if (i.checked) n += 1; });
+      el.textContent = '· ' + n + ' seçili';
+    };
+    d.addEventListener('change', function (e) { if (e.target && e.target.name === name) update(); });
+  });
+})();
 `;
 
 // plan: StreamPlan — currentPlan() hiç null dönmez, form her zaman bir taslakla açılır.
@@ -440,6 +577,7 @@ function renderConfigPage({
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Yayın Yönetimi</title>
 <style>${STYLE}</style>
+<script>document.documentElement.className += ' js';</script>
 </head>
 <body>
 <header>
@@ -473,27 +611,34 @@ ${broadcastPicker({
 
     <h3>Kapak (küçük resim)</h3>
     <p class="hint">Tek seçim — bir sonraki canlıya almada yayının kapağı olur.</p>
-    ${coverList(covers, pendingCover ?? plan.cover, token)}
+    ${coverGrid({
+    covers, selected: pendingCover ?? plan.cover ?? '', token, scope: 'p-', noneLabel: 'Varsayılan', keepUnknown: true,
+  })}
     <p class="hint">Galeriden ekle (JPEG/PNG/WebP): görsel 1280x720'ye kırpılıp küçültülür. Yüklemek sayfayı yeniler — önce yaptığın değişiklikleri Kaydet.</p>
     <label class="lbl" for="coverFile">Galeriden görsel seç</label>
     <input type="file" id="coverFile" name="coverFile" accept="image/jpeg,image/png,image/webp" form="coverUpload" onchange="document.getElementById('coverUpload').submit()">
     <button class="secondary" type="submit" form="coverUpload">Yükle</button>
 
     <h3>Pomodoro</h3>
-    <label class="row" for="pomodoroEnabled">
-      <input type="checkbox" id="pomodoroEnabled" name="pomodoroEnabled" ${p.enabled ? 'checked' : ''}>
-      <span>Açık</span>
-    </label>
-    <label class="lbl" for="pomodoroType">Süre</label>
-    <p class="hint">"&lt;çalışma&gt;+&lt;mola&gt;" dakika (örn. 50+10, 30+10, 45+15)</p>
-    <input type="text" id="pomodoroType" name="pomodoroType" value="${esc(p.type)}" inputmode="text" placeholder="50+10">
+    <div class="pomo">
+      ${switchInput('pomodoroEnabled', 'pomodoroEnabled', p.enabled, 'Pomodoro açık')}
+      <div class="pomo-body">
+        <p class="lbl" id="pomoPresets-l">Süre (çalışma + mola, dakika)</p>
+        <div class="seg js-only" id="pomoPresets" role="group" aria-labelledby="pomoPresets-l">${POMO_PRESETS.map((t) => `<button type="button" data-type="${t}" aria-pressed="false">${t}</button>`).join('')}<button type="button" data-type="" aria-pressed="false">Özel</button></div>
+        <div class="pt-custom" id="ptCustom">
+          <label class="lbl" for="pomodoroType">Süre</label>
+          <p class="hint">"&lt;çalışma&gt;+&lt;mola&gt;" dakika (örn. 50+10, 30+10, 45+15)</p>
+          <input type="text" id="pomodoroType" name="pomodoroType" value="${esc(p.type)}" inputmode="text" placeholder="50+10">
+        </div>
 
-    ${fold('Çalışma görselleri', `${p.studyVideos.length} seçili`, `
-      <p class="hint">Çoklu seçim — her çalışma session'ı havuzdan rastgele bir klip kullanır, ardışık iki session aynı klibi tekrarlamaz.</p>
-      ${clipList('studyVideos', clips, p.studyVideos, token)}`)}
-    ${fold('Mola görselleri', `${p.breakVideos.length} seçili`, `
-      <p class="hint">Çoklu seçim — her mola session'ı havuzdan rastgele bir klip kullanır, ardışık iki session aynı klibi tekrarlamaz.</p>
-      ${clipList('breakVideos', clips, p.breakVideos, token)}`)}
+        ${fold('Çalışma görselleri', `${p.studyVideos.length} seçili`, `
+          <p class="hint">Çoklu seçim — her çalışma session'ı havuzdan rastgele bir klip kullanır, ardışık iki session aynı klibi tekrarlamaz.</p>
+          ${clipGrid('studyVideos', clips, p.studyVideos, token)}`, { countFor: 'studyVideos' })}
+        ${fold('Mola görselleri', `${p.breakVideos.length} seçili`, `
+          <p class="hint">Çoklu seçim — her mola session'ı havuzdan rastgele bir klip kullanır, ardışık iki session aynı klibi tekrarlamaz.</p>
+          ${clipGrid('breakVideos', clips, p.breakVideos, token)}`, { countFor: 'breakVideos' })}
+      </div>
+    </div>
 
     <p class="muted">${esc(musicNote)}</p>
   </section>
@@ -506,6 +651,7 @@ ${broadcastPicker({
 ${canCreate && !newMode ? `<section>
   <a class="newlink" href="${esc(`/config?token=${encodeURIComponent(token)}&new=1`)}">+ Eşzamanlı yeni yayın aç…</a>
 </section>` : ''}
+<script>${SCRIPT}</script>
 </body>
 </html>`;
 }

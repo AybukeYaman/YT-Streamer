@@ -174,7 +174,8 @@ test('seçili yayının MEVCUT başlığı/açıklaması/görünürlüğü formd
   assert.match(html, /name="broadcastId" value="b1"/);
   assert.match(html, /name="title" value="Canlı &lt;Yayın&gt;"/);
   assert.match(html, />açıklama<\/textarea>/);
-  assert.match(html, /<option value="public" selected>Herkese açık<\/option>/);
+  assert.match(html, /<input type="radio" id="b-privacy-public" name="privacy" value="public" checked><label for="b-privacy-public">Herkese açık<\/label>/);
+  assert.doesNotMatch(html, /name="privacy" value="private" checked/);
   assert.match(html, /action="\/config\/broadcast\?token=t&amp;broadcast=b1"/);
 });
 
@@ -191,7 +192,11 @@ test('kapak seçeneği: "Değiştirme" varsayılan, kapak adayları listelenir',
   const html = renderConfigPage({
     plan: new StreamPlan({}), clips: [], covers: ['X:/c/a.jpg'], token: 't', broadcasts: { items: [PB1] }, selectedId: 'b1',
   });
-  assert.match(html, /<select id="b-cover" name="cover"><option value="">Değiştirme<\/option><option value="X:\/c\/a\.jpg">/);
+  const form = html.slice(html.indexOf('value="apply"') - 3000, html.indexOf('value="apply"'));
+  // İlk kart "Değiştirme" ve varsayılan olarak işaretli; kapak adayı seçili DEĞİL.
+  assert.match(form, /name="cover" value="" checked class="tin"><span class="tw"><span class="ph" aria-hidden="true">—<\/span><\/span><span class="tn">Değiştirme<\/span>/);
+  assert.match(form, /id="b-cover-X__c_a_jpg" name="cover" value="X:\/c\/a\.jpg" class="tin">/);
+  assert.match(form, /src="\/config\/thumb\?token=t&amp;file=X%3A%2Fc%2Fa\.jpg"/);
 });
 
 test('seçici: hata ve boş liste durumunda kısa not', () => {
@@ -293,12 +298,13 @@ test('newMode: form açılır (ad, başlık, açıklama, görünürlük, kapak, 
   for (const field of ['name="name"', 'name="title"', 'name="description"', 'name="privacy"', 'name="cover"', 'name="goLiveNow"']) {
     assert.ok(html.includes(field), field);
   }
-  assert.match(html, /<option value="unlisted" selected>Liste dışı<\/option>/, 'güvenli varsayılan: liste dışı');
+  assert.match(html, /name="privacy" value="unlisted" checked/, 'güvenli varsayılan: liste dışı');
+  assert.doesNotMatch(html, /name="privacy" value="public" checked/);
   assert.match(html, /name="albums" value="mimi"[^>]*>/);
   assert.match(html, /mimi · 12 parça/);
   assert.match(html, /src="\/config\/thumb\?token=tk&amp;file=X%3A%2Fm%2Fmimi%2Fbg\.mp4"/);
-  assert.match(html, /<option value="X:\/c\/a\.jpg">/);
-  assert.match(html, /name="goLiveNow" checked/);
+  assert.match(html, /id="n-cover-X__c_a_jpg" name="cover" value="X:\/c\/a\.jpg" class="tin">/);
+  assert.match(html, /name="goLiveNow" checked class="sw"/);
   // Mevcut yayının Bu Yayına Uygula formu görünmemeli.
   assert.doesNotMatch(html, /value="apply"/);
   // Albümler katlı bölümde ama FORM İÇİNDE (tarayıcı kapalı <details> alanlarını da gönderir).
@@ -316,8 +322,8 @@ test('newMode: hata sonrası girdiler korunur (draft), kaçışlıdır; seçili 
   });
   assert.match(html, /name="name" value="lofi2"/);
   assert.match(html, /name="title" value="Gece &quot;yayını&quot; &lt;b&gt;"/);
-  assert.match(html, /<option value="private" selected>Gizli<\/option>/);
-  assert.match(html, /<option value="X:\/c\/a\.jpg" selected>/);
+  assert.match(html, /name="privacy" value="private" checked/);
+  assert.match(html, /name="cover" value="X:\/c\/a\.jpg" checked/);
   assert.match(html, /name="albums" value="zen" checked/);
   assert.doesNotMatch(html, /name="albums" value="mimi" checked/);
   assert.doesNotMatch(html, /name="goLiveNow" checked/);
@@ -483,10 +489,97 @@ test('katlı bölümler varsayılan kapalı ama alanları formda (kapalı <detai
   const html = renderConfigPage({
     plan: new StreamPlan({ pomodoro: { enabled: true, studyVideos: ['X:/a.mp4'] } }), clips: ['X:/a.mp4'], token: 't',
   });
-  assert.match(html, /<details class="fold"><summary>Çalışma görselleri <span class="sumnote">· 1 seçili/);
-  assert.match(html, /<details class="fold"><summary>Mola görselleri <span class="sumnote">· 0 seçili/);
+  assert.match(html, /<details class="fold"><summary>Çalışma görselleri <span class="sumnote" data-count-for="studyVideos">· 1 seçili/);
+  assert.match(html, /<details class="fold"><summary>Mola görselleri <span class="sumnote" data-count-for="breakVideos">· 0 seçili/);
   const plan = canonicalForms(html).map((f) => JSON.parse(f)).find((f) => f.action === '/config?token=t');
   assert.ok(plan.entries.some(([k, v]) => k === 'studyVideos' && v === 'X:/a.mp4'));
+});
+
+// ─── Faz 2: seçim kontrolleri ──────────────────────────────────────────────
+
+test('görünürlük: 3 seçenekli bölmeli seçim (radyo), etiketli grup; sayfada hiç <select> kalmadı', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], covers: ['X:/c/a.jpg'], token: 't', canCreate: true,
+    broadcasts: { items: [{ ...PB1, privacyStatus: 'unlisted' }] }, selectedId: 'b1', catalogAlbums: ALBUM_CAT,
+  });
+  assert.match(html, /<div class="seg" role="radiogroup" aria-labelledby="b-privacy-l">/);
+  assert.match(html, /<p class="lbl" id="b-privacy-l">Görünürlük<\/p>/);
+  const values = [...html.matchAll(/id="b-privacy-\w+" name="privacy" value="(\w+)"( checked)?/g)].map((m) => [m[1], Boolean(m[2])]);
+  assert.deepEqual(values, [['public', false], ['unlisted', true], ['private', false]]);
+  assert.doesNotMatch(html, /<select/);
+  const newPage = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 't', canCreate: true, newMode: true, broadcasts: { items: [] }, catalogAlbums: [],
+  });
+  assert.doesNotMatch(newPage, /<select/);
+});
+
+test('Pomodoro: anahtar (gerçek onay kutusu) + bağımlı gövde; kapalıyken gövde gizlenir ama alanlar formda kalır', () => {
+  const on = renderConfigPage({ plan: new StreamPlan({ pomodoro: { enabled: true, type: '30+10' } }), clips: ['X:/a.mp4'], token: 't' });
+  const off = renderConfigPage({ plan: new StreamPlan({}), clips: ['X:/a.mp4'], token: 't' });
+  assert.match(on, /<input type="checkbox" id="pomodoroEnabled" name="pomodoroEnabled" checked class="sw"><label for="pomodoroEnabled" class="swl">/);
+  assert.doesNotMatch(off, /name="pomodoroEnabled" checked/);
+  // Gizleme YALNIZCA CSS ile (display:none): `disabled` kullanılsaydı alanlar gönderilmezdi.
+  assert.match(off, /\.sw:not\(:checked\) ~ \.pomo-body \{ display: none; \}/);
+  assert.doesNotMatch(off, /pomo-body"[^>]*disabled/);
+  // Süre ve klipler gövdenin İÇİNDE ve anahtardan SONRA (kardeş seçici çalışsın).
+  const sw = off.indexOf('class="swl"');
+  const body = off.indexOf('class="pomo-body"');
+  assert.ok(sw > 0 && body > sw);
+  for (const marker of ['name="pomodoroType"', 'name="studyVideos"', 'name="breakVideos"']) {
+    assert.ok(off.indexOf(marker) > body, `${marker} gövdenin içinde olmalı`);
+  }
+  const entries = canonicalForms(off).map((f) => JSON.parse(f)).find((f) => f.action === '/config?token=t').entries;
+  assert.ok(entries.some(([k, v]) => k === 'pomodoroType' && v === '50+10'), 'kapalıyken de süre gönderilir (eski davranış)');
+});
+
+test('Pomodoro süre kısayolları: yalnızca type="button" (asla gönderme), tek bir pomodoroType alanı, JS yoksa metin alanı görünür', () => {
+  const html = renderConfigPage({ plan: new StreamPlan({ pomodoro: { enabled: true, type: '45+15' } }), clips: [], token: 't' });
+  const presets = html.slice(html.indexOf('id="pomoPresets"'), html.indexOf('id="ptCustom"'));
+  const buttons = [...presets.matchAll(/<button type="button" data-type="([^"]*)" aria-pressed="false">([^<]+)<\/button>/g)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(buttons, [['50+10', '50+10'], ['30+10', '30+10'], ['45+15', '45+15'], ['', 'Özel']]);
+  assert.doesNotMatch(presets, /type="submit"/);
+  assert.equal(html.split('name="pomodoroType"').length - 1, 1, 'pomodoroType tek alan olmalı (çift gönderim olmasın)');
+  assert.match(html, /\.js-only \{ display: none; \}/);
+  assert.match(html, /html\.js \.pt-custom \{ display: none; \}/, 'metin alanı yalnızca JS varken gizlenir');
+  assert.match(html, /<script>document\.documentElement\.className \+= ' js';<\/script>/);
+});
+
+test('kapak kartları: tek seçim, işaretli kart + ✓ biçimi, id\'ler formlar arası benzersiz', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({ cover: 'X:/c/b.jpg' }), clips: [], covers: ['X:/c/a.jpg', 'X:/c/b.jpg'], token: 't',
+    broadcasts: { items: [PB1] }, selectedId: 'b1',
+  });
+  const groups = [...html.matchAll(/<div class="tilegrid">(.*?)<\/div>/g)].map((m) => m[1]);
+  assert.equal(groups.length, 2, 'mevcut yayın + sonraki yayın kapak ızgaraları');
+  for (const g of groups) assert.equal([...g.matchAll(/type="radio"/g)].length, 3, 'varsayılan + 2 kapak');
+  assert.match(groups[1], /value="X:\/c\/b\.jpg" checked class="tin"/);
+  assert.match(html, /\.tin:checked ~ \.tn::before \{ content: '✓ '/);
+  const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test('klip havuzları: 2 sütunlu kart ızgarası, canlı "N seçili" özeti için işaretli', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({ pomodoro: { enabled: true, studyVideos: ['X:/a.mp4', 'X:/b.mp4'] } }), clips: ['X:/a.mp4', 'X:/b.mp4', 'X:/c.mp4'], token: 't',
+  });
+  const study = html.slice(html.indexOf('Çalışma görselleri'), html.indexOf('Mola görselleri'));
+  assert.match(study, /<div class="tilegrid two">/);
+  assert.equal([...study.matchAll(/type="checkbox"[^>]*name="studyVideos"/g)].length, 3);
+  assert.equal([...study.matchAll(/name="studyVideos" value="[^"]+" checked/g)].length, 2);
+  assert.match(study, /data-count-for="studyVideos">· 2 seçili/);
+});
+
+test('betik: yalnızca kolaylık (JS yoksa da çalışır); HTML etiketi benzeri dize ve kapanış etiketi içermez', () => {
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  assert.equal(scripts.length, 2);
+  for (const s of scripts) assert.doesNotMatch(s, /<\w|<\//, 'betik HTML etiketi içermemeli');
+});
+
+test('hareket azaltma: prefers-reduced-motion destekli (geçişler yalnızca no-preference\'ta)', () => {
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
+  assert.match(html, /@media \(prefers-reduced-motion: no-preference\)/);
+  assert.match(html, /@media \(prefers-reduced-motion: reduce\)[^{]*\{\s*\*, \*::before, \*::after \{ animation: none !important; transition: none !important/);
 });
 
 // ─── Renk kontrastı (WCAG) ─────────────────────────────────────────────────
@@ -512,6 +605,9 @@ test('kontrast: metin ≥ 4.5:1, bileşen kenarı/durum noktası ≥ 3:1 (token 
   // Düğme metinleri (beyaz): birincil (accent-strong) ve tehlike.
   for (const bg of ['accent-strong', 'danger']) assert.ok(contrast('#ffffff', tok[bg]) >= 4.5, `beyaz on ${bg}`);
   // Bileşen sınırları ve durum noktaları (WCAG 1.4.11): kart yüzeyinde ve zeminde ≥ 3:1.
+  // Anahtar açıkken (accent-strong dolgu) ve seçili kart kenarı (accent) kart zemininde seçilebilir kalmalı.
+  assert.ok(contrast(tok.accent, tok.surface) >= 3, 'accent on surface (anahtar dolgusu, seçili kart kenarı)');
+  assert.ok(contrast('#ffffff', tok.accent) >= 3, 'anahtar topuzu (beyaz) accent dolgusunda');
   for (const fg of ['border-strong', 'ok', 'warn', 'idle', 'danger-edge']) {
     for (const bg of ['bg', 'surface']) assert.ok(contrast(tok[fg], tok[bg]) >= 3, `${fg} on ${bg}: ${contrast(tok[fg], tok[bg]).toFixed(2)}`);
   }
