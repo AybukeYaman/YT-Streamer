@@ -24,6 +24,7 @@ const { StreamControlService } = require('./src/application/stream-control-servi
 const { PlanOnlyControlService } = require('./src/application/plan-only-control-service');
 const { NullAlerter } = require('./src/application/alerter');
 const { SpeedAlarm } = require('./src/application/speed-alarm');
+const { DecoderErrorWatch } = require('./src/application/decoder-error-watch');
 const { FfmpegEncoder } = require('./src/infrastructure/ffmpeg-encoder');
 const { WebhookAlerter } = require('./src/infrastructure/webhook-alerter');
 const { loadAlertChannel } = require('./src/infrastructure/youtube-credentials');
@@ -186,6 +187,8 @@ async function main() {
     // Hız eşiğinin dışına çıkıp orada KALMAK bildirim üretir. Diğer kontroller bu durumu
     // göremiyor: ffmpeg ilerleme basmaya devam ettiği için kalp atışı ve ingest sağlıklı.
     speedAlarm: new SpeedAlarm({ alerter, log: logger.child('hız') }),
+    // Bozuk klip/giriş: her bozuk paket ayrı WARN olup logu boğmasın, sürerse bildirim gitsin.
+    decoderWatch: new DecoderErrorWatch({ alerter, log: logger.child('decoder') }),
     // Süreç öldürülse bile (kill, elektrik) yeniden başlarken kaldığı parçadan devam.
     stateStore: new StateStore({
       file: path.join(config.paths.runtime, 'state.json'),

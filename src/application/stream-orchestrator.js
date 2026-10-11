@@ -38,10 +38,14 @@ class StreamOrchestrator extends EventEmitter {
   constructor({
     encoder, log, albumRepository, queue, playlistPath, writeFile,
     nowPlayingWriter = null, speedWindow = null, speedAlarm = null, stateStore = null,
-    backgroundPlaylistWriter = null, pomodoroPlanner = null,
+    backgroundPlaylistWriter = null, pomodoroPlanner = null, decoderWatch = null,
     now = () => Date.now(), random = Math.random,
   }) {
     super();
+    // decoderWatch: DecoderErrorWatch — "Error submitting packet to decoder" satırlarını
+    // tek tek WARN yazmak yerine sayar/özetler, sürerse bildirim gönderir. Verilmezse
+    // eski davranış (her satır WARN).
+    this.decoderWatch = decoderWatch;
     // speedWindow: SpeedWindow — anlık hızın 30 sn pencere ortalaması; eşik dışına çıkınca
     // uyarı loglanır (sadece görünürlük, otomatik aksiyon yok)
     this.speedWindow = speedWindow;
@@ -327,6 +331,7 @@ class StreamOrchestrator extends EventEmitter {
         this.log.info(`frame=${entry.frame} fps=${entry.fps} bitrate=${entry.bitrateKbps}kbps speed=${entry.speed}x hız(30sn)=${windowed}`);
         break;
       case 'stderr':
+        if (this.decoderWatch?.record(entry.line, this.now())) break;
         // Kritik çıkış/bağlantı hataları panelde görünsün diye WARN; gerisi sadece dosyaya (debug).
         if (CRITICAL_FFMPEG_STDERR.test(entry.line)) this.log.warn(`ffmpeg: ${entry.line}`);
         else this.log.debug(entry.line);

@@ -14,7 +14,17 @@
 // olarak giriyor ve ana arkaplanın üstüne overlay'leniyor.
 const fs = require('fs');
 const path = require('path');
-const { convertAny, isSupported } = require('./clip-normalizer');
+const { convertAny, isSupported, run } = require('./clip-normalizer');
+
+// Hazır klibin baştan sona hatasız çözülebildiğini doğrular. Önbellek geçerliliği yalnızca
+// KAYNAĞIN boyut+mtime'ına bakıyordu; hazır dosyanın kendisi yarım/bozuksa (kesilmiş
+// dönüşüm, iki sürecin aynı dosyaya yazması) fark edilmeden yayına giriyordu ve canlı
+// ffmpeg "Invalid data found" ile kekeliyordu. Klipler kısa (birkaç sn'lik çözme), kontrol
+// yalnızca açılışta bir kez yapılıyor.
+async function verifyClip(file) {
+  const { code, stderr } = await run('ffmpeg', ['-v', 'error', '-i', file, '-f', 'null', '-']);
+  return code === 0 && stderr.trim() === '';
+}
 
 const OUTPUT_NAME = 'break-background.mp4';
 const META_NAME = 'break-background.json';
@@ -38,6 +48,7 @@ const CLIP_LABELS = Object.freeze({
 // convert: test için enjekte edilebilir dönüştürücü (varsayılan gerçek ffmpeg).
 async function ensureStreamClip({
   sourcePath, runtimeDir, log, name = 'break-background', label = null, convert = convertAny,
+  verify = verifyClip,
 }) {
   const clipLabel = label ?? CLIP_LABELS[name] ?? name;
   if (!sourcePath) return null;
@@ -59,7 +70,8 @@ async function ensureStreamClip({
     try {
       const saved = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
       if (saved.source === stamp.source && saved.size === stamp.size && saved.mtimeMs === stamp.mtimeMs) {
-        return out;
+        if (await verify(out)) return out;
+        log.warn(`${clipLabel} önbelleği bozuk, yeniden üretiliyor: ${path.basename(out)}`);
       }
     } catch {
       // Meta okunamadı: yeniden üret, zararı bir kodlama.

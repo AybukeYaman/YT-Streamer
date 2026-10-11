@@ -38,3 +38,30 @@ test('dönüşüm başarısızsa mevcut klip BOZULMAZ, geçici dosya silinir', a
   assert.equal(fs.readFileSync(out, 'utf8'), 'ESKI');
   assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.tmp-')), []);
 });
+
+test('önbellek geçerli ama klip bozuksa yeniden üretilir', async () => {
+  const { dir, src } = setup();
+  const out = path.join(dir, 'study-1.mp4');
+  const stat = fs.statSync(src);
+  fs.writeFileSync(out, 'BOZUK');
+  fs.writeFileSync(path.join(dir, 'study-1.json'), JSON.stringify({ source: src, size: stat.size, mtimeMs: Math.round(stat.mtimeMs) }));
+  let converted = 0;
+  const convert = async (_s, target) => { converted += 1; fs.writeFileSync(target, 'TEMIZ'); return { ok: true, seconds: 1, note: 'n' }; };
+  const result = await ensureStreamClip({
+    sourcePath: src, runtimeDir: dir, log, name: 'study-1', convert, verify: async (f) => fs.readFileSync(f, 'utf8') === 'TEMIZ',
+  });
+  assert.equal(result, out);
+  assert.equal(converted, 1);
+  assert.equal(fs.readFileSync(out, 'utf8'), 'TEMIZ');
+});
+
+test('önbellek geçerli ve klip sağlamsa yeniden üretilmez', async () => {
+  const { dir, src } = setup();
+  const out = path.join(dir, 'study-1.mp4');
+  const stat = fs.statSync(src);
+  fs.writeFileSync(out, 'TEMIZ');
+  fs.writeFileSync(path.join(dir, 'study-1.json'), JSON.stringify({ source: src, size: stat.size, mtimeMs: Math.round(stat.mtimeMs) }));
+  const convert = async () => { throw new Error('çağrılmamalı'); };
+  const result = await ensureStreamClip({ sourcePath: src, runtimeDir: dir, log, name: 'study-1', convert, verify: async () => true });
+  assert.equal(result, out);
+});
