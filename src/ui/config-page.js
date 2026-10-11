@@ -513,6 +513,37 @@ const STYLE = `
   .filebtn { display: none; }
   html.js .filebtn { display: flex; align-items: center; justify-content: center; min-height: var(--tap); margin: 10px 0 4px; border: 1px dashed var(--border-strong); border-radius: var(--radius); color: var(--text); font-weight: 600; cursor: pointer; }
   html.js #coverFile:focus-visible + .filebtn { outline: 3px solid var(--focus); outline-offset: 2px; }
+  /* Simgeler: yalnızca CSS (işaretleme/metin değişmez); renk = yazı rengi */
+  button[value=start]::before,
+  button[value=stop]::before,
+  button[value=golive]::before,
+  button[value=apply]::before,
+  button[value=end]::before,
+  button[value=save]::before,
+  button[value=save_restart]::before,
+  button[form=coverUpload]::before,
+  .filebtn::before,
+  .seg label[for$=-public]::before,
+  .seg label[for$=-unlisted]::before,
+  .seg label[for$=-private]::before {
+    content: ''; display: inline-block; flex: none; width: 1.2em; height: 1.2em; margin-right: 8px; vertical-align: -0.2em;
+    background: currentColor; -webkit-mask: var(--i) center / contain no-repeat; mask: var(--i) center / contain no-repeat;
+  }
+  button[value=start], button[value=stop], button[value=golive], button[value=apply], button[value=end],
+  button[value=save], button[value=save_restart], button[form=coverUpload], .seg label[for$=-public],
+  .seg label[for$=-unlisted], .seg label[for$=-private] { display: flex; align-items: center; justify-content: center; }
+  button[value=start] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 4l13 8-13 8z' fill='black'/%3E%3C/svg%3E"); }
+  button[value=stop] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='5' width='14' height='14' rx='2' fill='black'/%3E%3C/svg%3E"); }
+  button[value=golive] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='2' fill='black'/%3E%3Cpath d='M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 4.9a10 10 0 0 0 0 14.2M19.1 4.9a10 10 0 0 1 0 14.2'/%3E%3C/svg%3E"); }
+  button[value=apply] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E"); }
+  button[value=end] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 21V4M5 4h11l-2 4 2 4H5'/%3E%3C/svg%3E"); }
+  button[value=save] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 3h11l3 3v15H5z'/%3E%3Cpath d='M8 3v6h7V3M8 21v-7h8v7'/%3E%3C/svg%3E"); }
+  button[value=save_restart] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 11a8 8 0 1 0-2.3 5.7'/%3E%3Cpath d='M20 4v7h-7'/%3E%3C/svg%3E"); }
+  button[form=coverUpload] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 16V4M7 9l5-5 5 5M5 20h14'/%3E%3C/svg%3E"); }
+  .filebtn { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='2'/%3E%3Ccircle cx='9' cy='11' r='1.5'/%3E%3Cpath d='M21 16l-5-5-8 8'/%3E%3C/svg%3E"); }
+  .seg label[for$=-public] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18'/%3E%3C/svg%3E"); }
+  .seg label[for$=-unlisted] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1'/%3E%3C/svg%3E"); }
+  .seg label[for$=-private] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='11' width='14' height='10' rx='2'/%3E%3Cpath d='M8 11V8a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E"); }
   .js-only { display: none; }
   html.js .js-only { display: flex; }
   html.js .pt-custom { display: none; }
@@ -812,7 +843,7 @@ ${broadcastPicker({
     covers, selected: pendingCover ?? plan.cover ?? '', token, scope: 'p-', noneLabel: 'Varsayılan', keepUnknown: true,
   })}
     <input type="file" id="coverFile" name="coverFile" accept="image/jpeg,image/png,image/webp" form="coverUpload" onchange="if(window.uploadPick){uploadPick(this)}else{document.getElementById('coverUpload').submit()}">
-    <label class="filebtn" for="coverFile">+ Galeriden görsel ekle</label>
+    <label class="filebtn" for="coverFile">Galeriden görsel ekle</label>
     <button class="secondary nojs-only" type="submit" form="coverUpload">Yükle</button>
 
     <h3>Pomodoro</h3>

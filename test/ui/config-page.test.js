@@ -219,7 +219,7 @@ test('galeri yükleme: multipart form ana formun DIŞINDA, dosya alanı form= il
   assert.match(html, /<form id="coverUpload" method="post" enctype="multipart\/form-data" action="\/config\/upload\?token=tk"><\/form>/);
   assert.match(html, /<input type="file" id="coverFile" name="coverFile" accept="image\/jpeg,image\/png,image\/webp" form="coverUpload"/);
   assert.match(html, /<button class="secondary nojs-only" type="submit" form="coverUpload">Yükle<\/button>/);
-  assert.match(html, /<label class="filebtn" for="coverFile">\+ Galeriden görsel ekle<\/label>/);
+  assert.match(html, /<label class="filebtn" for="coverFile">Galeriden görsel ekle<\/label>/);
 });
 
 test('yüklenen kapak (pendingCover) listede işaretli gelir', () => {
