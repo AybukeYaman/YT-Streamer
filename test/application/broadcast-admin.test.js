@@ -152,3 +152,21 @@ test('list: canlı yayın en üstte; biten yayınlar en yeni 5 ile sınırlı', 
   assert.deepEqual(list.slice(0, 2).map((b) => b.id), ['l1', 'r1']);
   assert.deepEqual(list.slice(2).map((b) => b.id), ['c1', 'c2', 'c3', 'c4', 'c5']);
 });
+
+test('list: küçük resim adresi default > medium > null sırasıyla alınır', async () => {
+  const withThumbs = (id, thumbnails) => ({
+    id, snippet: { title: id, thumbnails }, status: { lifeCycleStatus: 'live', privacyStatus: 'public' },
+  });
+  const { admin } = setup({
+    items: [
+      withThumbs('a', { default: { url: 'https://i.ytimg.com/a-default.jpg' }, medium: { url: 'https://i.ytimg.com/a-medium.jpg' } }),
+      withThumbs('b', { medium: { url: 'https://i.ytimg.com/b-medium.jpg' } }),
+      withThumbs('c', {}),
+      { id: 'd', snippet: { title: 'd' }, status: { lifeCycleStatus: 'ready' } },
+    ],
+  });
+  const byId = Object.fromEntries((await admin.list()).map((b) => [b.id, b.thumbnailUrl]));
+  assert.deepEqual(byId, {
+    a: 'https://i.ytimg.com/a-default.jpg', b: 'https://i.ytimg.com/b-medium.jpg', c: null, d: null,
+  });
+});

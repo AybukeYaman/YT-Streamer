@@ -142,12 +142,13 @@ test('seçici: aktif ve biten yayınlar ayrı gruplarda, durum+görünürlük et
   const html = renderConfigPage({
     plan: new StreamPlan({}), clips: [], token: 'tk', broadcasts: { items: [PB1, PB2] }, selectedId: 'b1',
   });
-  assert.match(html, /<optgroup label="Aktif \/ yaklaşan">/);
-  assert.match(html, /<optgroup label="Biten">/);
+  assert.match(html, /<p class="pickgroup">Aktif \/ yaklaşan<\/p>/);
+  assert.match(html, /<p class="pickgroup">Biten<\/p>/);
   assert.match(html, /Canlı &lt;Yayın&gt; · Canlı · Herkese açık/);
   assert.match(html, /Eski · Bitti · Gizli/);
-  assert.match(html, /<option value="\/config\?token=tk&amp;broadcast=b1" selected>/);
-  assert.match(html, /onchange="location\.href=this\.value"/);
+  assert.match(html, /<a class="pickrow sel" href="\/config\?token=tk&amp;broadcast=b1">/);
+  assert.match(html, /<details class="dd"><summary class="pickrow">/);
+  assert.doesNotMatch(html, /<select class="picker"/, "yerel select değil: içinde resim gösterilemez");
 });
 
 test('seçili yayının MEVCUT başlığı/açıklaması/görünürlüğü formda dolu (kaçışlı)', () => {
@@ -233,7 +234,7 @@ test('seçici: tarih yok ya da geçersizse etiket bozulmaz (tarih sessizce atlan
     id: 'x', title: 'Tarihsiz', description: '', privacyStatus: 'public', lifeCycleStatus: 'ready', finished: false, startAt: 'bozuk-tarih',
   };
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { items: [bad] }, selectedId: 'x' });
-  assert.match(html, /Tarihsiz · Hazır · Herkese açık<\/option>/);
+  assert.match(html, /Tarihsiz · Hazır · Herkese açık<\/span>/);
   assert.doesNotMatch(html, /Invalid Date|NaN/);
 });
 
@@ -255,9 +256,9 @@ test('canCreate ile dropdown\'un ilk seçeneği "+ Yeni yayın aç…" ve ?new=1
   const html = renderConfigPage({
     plan: new StreamPlan({}), clips: [], token: 'tk', canCreate: true, broadcasts: { items: [PB1] }, selectedId: 'b1',
   });
-  assert.match(html, /<select class="picker" onchange="location\.href=this\.value"><option value="\/config\?token=tk&amp;new=1">\+ Yeni yayın aç…<\/option>/);
+  assert.match(html, /<div class="picklist"><a class="pickrow" href="\/config\?token=tk&amp;new=1"><span class="thumb"><\/span><span>\+ Yeni yayın aç…<\/span><\/a>/);
   // Yeni yayın modunda değilken mevcut yayın seçili kalır.
-  assert.match(html, /broadcast=b1" selected>/);
+  assert.match(html, /class="pickrow sel" href="[^"]*broadcast=b1"/);
   assert.doesNotMatch(html, /name="goLiveNow"/);
 });
 
@@ -266,9 +267,9 @@ test('newMode: form açılır (ad, başlık, açıklama, görünürlük, kapak, 
     plan: new StreamPlan({}), clips: [], covers: ['X:/c/a.jpg'], token: 'tk', canCreate: true, newMode: true,
     broadcasts: { items: [PB1] }, selectedId: 'b1', catalogAlbums: ALBUM_CAT,
   });
-  assert.match(html, /\+ Yeni yayın aç…<\/option>/);
-  assert.match(html, /<option value="\/config\?token=tk&amp;new=1" selected>/);
-  assert.doesNotMatch(html, /broadcast=b1" selected>/, 'yeni yayın modunda mevcut yayın seçili görünmemeli');
+  assert.match(html, /\+ Yeni yayın aç…<\/span>/);
+  assert.match(html, /<a class="pickrow sel" href="\/config\?token=tk&amp;new=1">/);
+  assert.doesNotMatch(html, /class="pickrow sel" href="[^"]*broadcast=b1"/, 'yeni yayın modunda mevcut yayın seçili görünmemeli');
   assert.match(html, /action="\/config\/new\?token=tk"/);
   for (const field of ['name="name"', 'name="title"', 'name="description"', 'name="privacy"', 'name="cover"', 'name="goLiveNow"']) {
     assert.ok(html.includes(field), field);
@@ -342,4 +343,43 @@ test('Ek Yayınlar: durum + başlat/canlıya al/durdur; durdur onay ister; durum
 test('ek yayın yoksa Ek Yayınlar bölümü çıkmaz', () => {
   assert.doesNotMatch(renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', instances: [] }), /Ek Yayınlar/);
   assert.doesNotMatch(renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' }), /Ek Yayınlar/);
+});
+
+// ─── Dropdown küçük resimleri ──────────────────────────────────────────────
+
+const THUMB_OK = 'https://i.ytimg.com/vi/abc123/default_live.jpg';
+
+test('dropdown satırlarında ve kapalı (seçili) satırda YouTube küçük resmi görünür', () => {
+  const withThumb = { ...PB1, thumbnailUrl: THUMB_OK };
+  const other = { ...PB2, thumbnailUrl: 'https://i9.ytimg.com/vi/zzz/default.jpg' };
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { items: [withThumb, other] }, selectedId: 'b1',
+  });
+  // Seçili satır (summary) + listedeki satırı: aynı resim iki kez.
+  assert.equal(html.split(`src="${THUMB_OK}"`).length - 1, 2);
+  assert.match(html, /<img class="thumb" src="https:\/\/i9\.ytimg\.com\/vi\/zzz\/default\.jpg" alt="" loading="lazy" onerror="this\.style\.display='none'">/);
+  assert.match(html, /<summary class="pickrow"><img class="thumb"/);
+});
+
+test('küçük resim adresi yoksa ya da güvensizse resim BASILMAZ, yer tutucu çıkar (XSS/izleme yok)', () => {
+  const bad = [
+    null, '', 'http://i.ytimg.com/vi/x/default.jpg', 'javascript:alert(1)', 'https://evil.example/x.jpg',
+    'https://i.ytimg.com.evil.example/x.jpg', 'https://evil.example/ytimg.com/x.jpg', '"><script>alert(1)</script>',
+  ];
+  for (const thumbnailUrl of bad) {
+    const html = renderConfigPage({
+      plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { items: [{ ...PB1, thumbnailUrl }] }, selectedId: 'b1',
+    });
+    assert.doesNotMatch(html, /<img class="thumb" src="(?!\/config\/thumb)/, `güvensiz adres basılmamalı: ${thumbnailUrl}`);
+    assert.doesNotMatch(html, /<script>alert/);
+    assert.match(html, /<summary class="pickrow"><span class="thumb"><\/span>/);
+  }
+});
+
+test('"+ Yeni yayın aç…" satırı resimsiz yer tutucuyla gelir ve ilk sırada durur', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 't', canCreate: true, broadcasts: { items: [{ ...PB1, thumbnailUrl: THUMB_OK }] }, selectedId: 'b1',
+  });
+  const list = html.slice(html.indexOf('<div class="picklist">'));
+  assert.ok(list.indexOf('Yeni yayın aç…') < list.indexOf('Canlı &lt;Yayın&gt;'));
 });

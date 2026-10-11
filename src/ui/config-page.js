@@ -101,32 +101,57 @@ function formatStart(iso) {
 
 const shorten = (text, max) => (text.length > max ? `${text.slice(0, max)}…` : text);
 
+// Yayın küçük resmi: YouTube'un kendi CDN'inden (i.ytimg.com). Yalnızca https ve ytimg.com
+// adresleri kabul edilir: API yanıtı beklenmedik bir şey içerse bile sayfaya rastgele adres
+// (http, javascript:, başka alan adı) girmez. Yüklenemezse (ağ/silinmiş) sessizce gizlenir.
+const SAFE_THUMB = /^https:\/\/[a-z0-9.-]+\.ytimg\.com\//i;
+
+function broadcastThumb(url) {
+  return SAFE_THUMB.test(String(url ?? ''))
+    ? `<img class="thumb" src="${esc(url)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+    : '<span class="thumb"></span>';
+}
+
+// Özel açılır menü satırı. Neden <select> değil: tarayıcıların yerel menüsü (özellikle
+// telefonda) seçenek içine resim koymaya izin vermez. <details> + bağlantı satırları JS
+// gerektirmez; her satır düz bir GET bağlantısı (seçim URL'de: ?broadcast=<id>), açılıp
+// kapanma <details>'in işi. tag='summary': menünün kapalı halinde görünen (seçili) satır.
+function pickRow(href, thumbHtml, text, { selected = false, tag = 'a' } = {}) {
+  const attrs = tag === 'a' ? ` href="${esc(href)}"` : '';
+  return `<${tag} class="pickrow${selected ? ' sel' : ''}"${attrs}>${thumbHtml}<span>${esc(text)}</span></${tag}>`;
+}
+
+const dropdown = (summaryRow, rowsHtml) => `<details class="dd">${summaryRow}<div class="picklist">${rowsHtml}</div></details>`;
+
 // Yayın seçici + seçili yayının işlem paneli. YouTube'daki VAR OLAN yayınlar üzerinde çalışır
 // (plandaki "sonraki yayın" ayarlarından ayrı). broadcasts: { items } | { error: true } | null.
 //   - null ve canCreate yok: özellik kapalı → bölüm hiç çıkmaz.
 //   - { error }: YouTube listesi okunamadı → kısa not, sayfanın geri kalanı çalışır.
-// Seçim URL'de taşınır (?broadcast=<id>): <select> değişince o adrese gider, JS'siz de çalışan
-// düz bir GET. İşlem formları ana plan formundan AYRI (iç içe form olmaz, planı kaydetmez).
-// canCreate: "+ Yeni yayın" seçeneği (eşzamanlı ikinci yayın kurma formu, ?new=1).
+// İşlem formları ana plan formundan AYRI (iç içe form olmaz, planı kaydetmez).
+// canCreate: "+ Yeni yayın" satırı (eşzamanlı ikinci yayın kurma formu, ?new=1).
 function broadcastPicker({
   broadcasts, selectedId, token, covers, canCreate = false, newMode = false, newFormHtml = '',
 }) {
   if (!broadcasts && !canCreate) return '';
   const head = '<section>\n    <h2>YouTube Yayınları</h2>';
   const t = encodeURIComponent(token);
-  const newOption = canCreate
-    ? `<option value="${esc(`/config?token=${t}&new=1`)}"${newMode ? ' selected' : ''}>+ Yeni yayın aç…</option>`
+  const NEW_TEXT = '+ Yeni yayın aç…';
+  const newRow = canCreate
+    ? pickRow(`/config?token=${t}&new=1`, '<span class="thumb"></span>', NEW_TEXT, { selected: newMode })
     : '';
 
   const items = broadcasts?.items ?? [];
-  // Liste yok/boş/hata: yine de "+ Yeni yayın" seçilebilsin diye tek seçenekli seçici.
+  // Liste yok/boş/hata: yine de "+ Yeni yayın" seçilebilsin diye tek satırlı menü.
   if (!items.length) {
     const note = broadcasts?.error
       ? 'Yayın listesi şu an okunamadı (YouTube\'a ulaşılamadı).'
       : 'Kanalda henüz yayın yok. Canlıya alınca burada görünür.';
     if (!canCreate) return `${head}\n    <p class="muted">${note}</p>\n  </section>`;
+    const summary = newMode
+      ? pickRow(null, '<span class="thumb"></span>', NEW_TEXT, { tag: 'summary' })
+      : pickRow(null, '<span class="thumb"></span>', 'Yayın yok', { tag: 'summary' });
     return `${head}
-    <select class="picker" onchange="location.href=this.value">${newMode ? '' : '<option value="" selected disabled>Yayın yok</option>'}${newOption}</select>
+    ${dropdown(summary, newRow)}
     ${newMode ? newFormHtml : `<p class="muted">${note}</p>`}
   </section>`;
   }
@@ -137,11 +162,20 @@ function broadcastPicker({
     PRIVACY_LABELS[b.privacyStatus] ?? b.privacyStatus ?? '?',
     formatStart(b.startAt),
   ].filter(Boolean).join(' · ');
-  const option = (b) => `<option value="${esc(`/config?token=${t}&broadcast=${encodeURIComponent(b.id)}`)}"${!newMode && b.id === selectedId ? ' selected' : ''}>${esc(label(b))}</option>`;
+  const row = (b) => pickRow(
+    `/config?token=${t}&broadcast=${encodeURIComponent(b.id)}`,
+    broadcastThumb(b.thumbnailUrl),
+    label(b),
+    { selected: !newMode && b.id === selectedId },
+  );
   const active = items.filter((b) => !b.finished);
   const finished = items.filter((b) => b.finished);
-  const group = (name, list) => (list.length ? `<optgroup label="${name}">${list.map(option).join('')}</optgroup>` : '');
-  const picker = `<select class="picker" onchange="location.href=this.value">${newOption}${group('Aktif / yaklaşan', active)}${group('Biten', finished)}</select>`;
+  const group = (name, list) => (list.length ? `<p class="pickgroup">${name}</p>${list.map(row).join('')}` : '');
+  const current = items.find((b) => b.id === selectedId) ?? items[0];
+  const summary = newMode
+    ? pickRow(null, '<span class="thumb"></span>', NEW_TEXT, { tag: 'summary' })
+    : pickRow(null, broadcastThumb(current.thumbnailUrl), label(current), { tag: 'summary' });
+  const picker = dropdown(summary, `${newRow}${group('Aktif / yaklaşan', active)}${group('Biten', finished)}`);
 
   if (newMode) return `${head}\n    ${picker}\n    ${newFormHtml}\n  </section>`;
 
@@ -306,7 +340,18 @@ function renderConfigPage({
   button:disabled { opacity: .4; }
   .state { padding: 10px 12px; border-radius: 8px; background: #241320; border: 1px solid #3a2130; margin-bottom: 4px; }
   select { width: 100%; padding: 12px; font-size: 16px; border-radius: 8px; border: 1px solid #4a2a3c; background: #241320; color: #fbe6f0; margin-bottom: 8px; }
-  .picker { border-color: #ec4899; }
+  .dd { border: 1px solid #ec4899; border-radius: 8px; background: #241320; margin-bottom: 8px; overflow: hidden; }
+  .dd summary { list-style: none; cursor: pointer; }
+  .dd summary::-webkit-details-marker { display: none; }
+  .dd summary::after { content: '▾'; margin-left: auto; color: #e79fc4; padding-left: 8px; }
+  .dd[open] summary::after { content: '▴'; }
+  .picklist { border-top: 1px solid #3a2130; max-height: 60vh; overflow-y: auto; }
+  .pickrow { display: flex; align-items: center; gap: 12px; padding: 10px 12px; min-height: 52px; color: #fbe6f0; text-decoration: none; }
+  .picklist .pickrow { border-bottom: 1px solid #3a2130; }
+  .pickrow.sel { background: #3a1430; }
+  .pickrow span:not(.thumb) { overflow-wrap: anywhere; flex: 1; font-size: 15px; }
+  .pickrow .thumb { width: 64px; height: 36px; object-fit: cover; border-radius: 4px; background: #2a1620; flex-shrink: 0; display: inline-block; }
+  .pickgroup { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #c98cae; margin: 0; padding: 8px 12px; background: #1c0f17; }
   input[type=file] { width: 100%; padding: 10px 0; color: #fbe6f0; }
   .btnrow { display: flex; gap: 10px; }
   .btnrow form { flex: 1; margin: 0; }

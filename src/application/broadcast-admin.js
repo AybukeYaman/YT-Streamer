@@ -49,6 +49,8 @@ class BroadcastAdmin {
       // started: tarih gerçek başlangıç mı, planlanan mı (sayfa "Başladı"/"Planlanan" yazar).
       startAt: b.snippet?.actualStartTime ?? b.snippet?.scheduledStartTime ?? b.snippet?.publishedAt ?? null,
       started: Boolean(b.snippet?.actualStartTime),
+      // YouTube'un küçük resmi (menüde gösterilir); yoksa null. Adresin güvenliği sayfada denetlenir.
+      thumbnailUrl: b.snippet?.thumbnails?.default?.url ?? b.snippet?.thumbnails?.medium?.url ?? null,
     }));
     // Canlı önce, sonra test/geçiş, sonra hazır/oluşturulmuş, en sonda biten. Array#sort kararlı:
     // aynı sıradakiler API sırasını (en yeni önce) korur.

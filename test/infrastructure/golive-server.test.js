@@ -553,7 +553,7 @@ test('GET /config: yayın seçici listeyi gösterir, kayıtlı (go-live) yayın 
     const html = await (await fetch(`${base}/config?token=${TOKEN}`)).text();
     assert.match(html, /Canlı Yayın/);
     assert.match(html, /Hazır Yayın/);
-    assert.match(html, /<option value="[^"]*broadcast=b2"[^>]* selected>/);
+    assert.match(html, /class="pickrow sel" href="[^"]*broadcast=b2"/);
     // Seçili yayının YouTube'daki mevcut değerleri formda dolu.
     assert.match(html, /name="title" value="Hazır Yayın"/);
     assert.match(html, />açıklama 2<\/textarea>/);
