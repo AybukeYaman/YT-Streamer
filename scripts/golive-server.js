@@ -196,6 +196,8 @@ async function main() {
   const catalog = new AlbumCatalog({ dir: config.paths.albums ?? null });
   const streamManager = new StreamManager({
     provisioner: new StreamProvisioner({
+      // Yeni yayın, sunucu zaten yüklüyken ana yayını yavaşlatmasın (bkz. StreamProvisioner#checkLoad).
+      systemLoad: () => ({ load1: os.loadavg()[0], cores: os.cpus().length }),
       createStream: async ({ title }) => {
         const { accessToken } = await youtubeApi.getAccessToken();
         return youtubeApi.createLiveStream({ accessToken, title });

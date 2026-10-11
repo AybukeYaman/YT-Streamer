@@ -288,3 +288,35 @@ test('aynı ad için eşzamanlı ikinci istek reddedilir: tek YouTube stream; ki
   // Kilit bırakıldı: farklı ad engellenmez.
   assert.equal((await p.create({ ...GOOD, name: 'baska', goLiveNow: false })).ok, true);
 });
+
+test('süre önbelleği tohumlanır: ilk provision\'dan sonra, anahtar/plan ve başlatmadan önce; hata kurulumu durdurmaz', async () => {
+  const { p, calls } = setup();
+  p.instances.seedDurations = (n) => { calls.push(['seedDurations', n]); };
+  const r = await p.create({ ...GOOD, goLiveNow: false });
+  assert.equal(r.ok, true);
+  assert.deepEqual(names(calls).slice(0, 4), ['createStream', 'provision', 'seedDurations', 'writeKey']);
+
+  const second = setup();
+  second.p.instances.seedDurations = () => { throw new Error('disk dolu'); };
+  assert.equal((await second.p.create({ ...GOOD, goLiveNow: false })).ok, true, 'tohumlama hatası yalnızca uyarıdır');
+});
+
+test('yük koruması: yük + yeni yayın çekirdeğin %95\'ini aşarsa reddedilir; YouTube\'a hiç gidilmez', async () => {
+  const { p, calls } = setup({ max: 5 });
+  p.systemLoad = () => ({ load1: 2.4, cores: 3 }); // 2.4 + 1 > 2.85
+  const r = await p.create(GOOD);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /sunucu yükü yüksek \(yük 2\.4 \/ 3 çekirdek\)/);
+  assert.equal(calls.length, 0);
+
+  p.systemLoad = () => ({ load1: 2.4, cores: 4 }); // 3.4 <= 3.8
+  assert.equal((await p.create({ ...GOOD, goLiveNow: false })).ok, true);
+});
+
+test('yük koruması: systemLoad verilmezse ya da sayı geçersizse denetim yapılmaz', async () => {
+  const a = setup();
+  assert.equal((await a.p.create({ ...GOOD, goLiveNow: false })).ok, true);
+  const b = setup();
+  b.p.systemLoad = () => ({ load1: NaN, cores: 0 });
+  assert.equal((await b.p.create({ ...GOOD, goLiveNow: false })).ok, true);
+});

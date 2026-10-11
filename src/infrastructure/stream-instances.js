@@ -101,6 +101,21 @@ class StreamInstances {
     return { output: tail(res.stdout, 3) };
   }
 
+  // Ana yayının süre önbelleğini (runtime/durations.json) yeni yayının runtime klasörüne tohumlar.
+  // Önbellek anahtarı yol+boyut+mtime olduğundan aynı müzik dosyaları için isabet eder; yoksa
+  // yeni yayın ilk açılışta tüm parçaları ffprobe ile baştan ölçer (498 parça ≈ 2 dk). Kopya
+  // yalnızca hedefte yoksa yapılır; başarısızlık kurulumu durdurmaz (yalnızca yavaş açılış).
+  seedDurations(name) {
+    if (!validInstanceName(name)) throw new Error(`geçersiz yayın adı: ${name}`);
+    const from = path.join(this.repoRoot, 'runtime', 'durations.json');
+    const dir = this.runtimeDir(name);
+    const to = path.join(dir, 'durations.json');
+    if (!fs.existsSync(from) || fs.existsSync(to)) return false;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.copyFileSync(from, to);
+    return true;
+  }
+
   writeKey(name, key) {
     if (!validInstanceName(name)) throw new Error(`geçersiz yayın adı: ${name}`);
     if (typeof key !== 'string' || !/^[A-Za-z0-9_.-]{8,}$/.test(key)) throw new Error('stream key biçimi geçersiz');

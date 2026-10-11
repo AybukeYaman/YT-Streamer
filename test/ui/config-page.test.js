@@ -600,7 +600,8 @@ test('D1: "Kaydet ve Yeniden Başlat" her durumda açık onay ister; metin durum
   // Onay yalnızca yeniden başlatma düğmesinde; "Kaydet" onaysız ve formdaki İLK gönder düğmesi.
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState: 'running' });
   assert.match(html, /<button class="primary" type="submit" name="action" value="save">Kaydet<\/button>/);
-  assert.match(html, /Kaydet yalnızca planı kaydeder, çalışan yayına dokunmaz/);
+  assert.match(html, /<strong>Kaydet:<\/strong> yayına dokunmaz/);
+  assert.match(html, /<strong>Yeniden Başlat:<\/strong> yayın kısa süre kesilir/);
 });
 
 test('D2/D3: kaydedilmemiş değişiklik koruması — düzenleme formları data-guard ile işaretli, yükleme uyarılı', () => {

@@ -16,6 +16,10 @@ const {
 const { PRIVACY_VALUES } = require('./broadcast-admin');
 const { validInstanceName } = require('../domain/instance-name');
 
+// Yük koruması: yeni yayının tahmini maliyeti (çekirdek) ve toplam yükün çekirdeğe oranı sınırı.
+const NEW_STREAM_CORES = 1;
+const LOAD_LIMIT = 0.95;
+
 class ProvisionError extends Error {}
 
 class StreamProvisioner {
@@ -26,11 +30,13 @@ class StreamProvisioner {
   // covers: () => string[]                        — izinli kapak yolları
   // goLive: (name) => Promise<unknown>            — örneğin kendi GoLiveService'i (arka plan)
   // maxStreams: aynı anda çalışabilecek en fazla yayın (CPU'ya göre hesaplanır)
+  // systemLoad: () => ({ load1, cores }) — verilirse yeni yayın, sunucu zaten yüklüyken reddedilir
+  //   (ana yayını yavaşlatmasın). Verilmezse yük denetimi yapılmaz.
   constructor({
-    createStream, instances, writePlan, albums, covers, goLive, maxStreams, log,
+    createStream, instances, writePlan, albums, covers, goLive, maxStreams, log, systemLoad = null,
   }) {
     Object.assign(this, {
-      createStream, instances, writePlan, albums, covers, goLive, maxStreams, log,
+      createStream, instances, writePlan, albums, covers, goLive, maxStreams, log, systemLoad,
     });
   }
 
@@ -67,6 +73,29 @@ class StreamProvisioner {
   // "ad kullanılıyor" denetimini geçip YouTube'da iki stream oluştururdu (ikincisi öksüz kalırdı).
   #inflight = new Set();
 
+  // Yeni bir yayın yaklaşık bir çekirdek ekler; sunucu zaten bunu kaldıramıyorsa ana yayın yavaşlar
+  // (ölçüldü: 3 çekirdekte ana + ek yayın → ana yayın 0,5x). 1 dk'lık yük ortalaması + yeni yayının
+  // maliyeti çekirdeklerin %95'ini aşıyorsa reddedilir.
+  #checkLoad() {
+    if (!this.systemLoad) return;
+    const { load1, cores } = this.systemLoad();
+    if (!Number.isFinite(load1) || !Number.isFinite(cores) || cores < 1) return;
+    if (load1 + NEW_STREAM_CORES > cores * LOAD_LIMIT) {
+      throw new ProvisionError(
+        `sunucu yükü yüksek (yük ${load1.toFixed(1)} / ${cores} çekirdek): yeni yayın ana yayını yavaşlatır. `
+        + 'Önce bir yayını durdur ya da sunucuya çekirdek ekle.',
+      );
+    }
+  }
+
+  #seedDurations(name) {
+    try {
+      this.instances.seedDurations?.(name);
+    } catch (err) {
+      this.log?.warn?.(`süre önbelleği kopyalanamadı (${name}): ${err.message}`);
+    }
+  }
+
   // @returns {Promise<{ ok: boolean, name?: string, message?: string, error?: string }>}
   async create(input) {
     const key = String(input?.name ?? '').trim().toLowerCase();
@@ -84,6 +113,7 @@ class StreamProvisioner {
     try {
       v = this.#validate(input);
       if (this.instances.exists(v.name)) throw new ProvisionError(`"${v.name}" adı zaten kullanılıyor, başka bir ad seç`);
+      this.#checkLoad();
       const running = this.instances.runningCount();
       if (running >= this.maxStreams) {
         throw new ProvisionError(
@@ -102,6 +132,7 @@ class StreamProvisioner {
 
       step = 'yayın kurulumu (add-stream.sh)';
       await this.instances.provision(v.name); // config + env + unit; anahtar boş → başlatmaz
+      this.#seedDurations(v.name); // açılış parça ölçümünü atlatır (hata kurulumu durdurmaz)
 
       step = 'anahtar ve ayarlar';
       this.instances.writeKey(v.name, stream.streamKey);

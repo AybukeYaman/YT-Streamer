@@ -557,7 +557,7 @@ const STYLE = `
   html.js input[name=coverFile] { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
   html.js .nojs-only { display: none; }
   /* Plan kapalıyken Kaydet çubuğu da gizli: kademe 1'de yalnızca durum ve ana işlemler görünür */
-  .planfold:not([open]) ~ .savebar, .planfold:not([open]) ~ .tip { display: none; }
+  .planfold:not([open]) ~ .savebar, .planfold:not([open]) ~ .savehint { display: none; }
   .filebtn { display: none; }
   html.js .filebtn { display: flex; align-items: center; justify-content: center; min-height: var(--tap); margin: 10px 0 4px; border: 1px dashed var(--border-strong); border-radius: var(--radius); color: var(--text); font-weight: 600; cursor: pointer; }
   html.js input[name=coverFile]:focus-visible + .filebtn { outline: 3px solid var(--focus); outline-offset: 2px; }
@@ -1046,7 +1046,7 @@ ${newLink}
     <button class="primary" type="submit" name="action" value="save">Kaydet</button>
     <button class="secondary" type="submit" name="action" value="save_restart" onclick="return confirm('${esc(restartConfirm)}')">Kaydet ve Yeniden Başlat</button>
   </div>
-  ${tip('Kaydet yalnızca planı kaydeder, çalışan yayına dokunmaz. "Kaydet ve Yeniden Başlat" kaydeder ve yayını kısa süreliğine keserek yeni planla başlatır.')}
+  <p class="hint savehint"><strong>Kaydet:</strong> yayına dokunmaz; başlık, açıklama, kapak bir sonraki canlıya almada geçerli olur.<br><strong>Yeniden Başlat:</strong> yayın kısa süre kesilir; Pomodoro ve klip ayarları hemen geçerli olur.</p>
 </form>
 </div>
 <script>${SCRIPT}</script>

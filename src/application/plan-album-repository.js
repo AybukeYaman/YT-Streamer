@@ -38,14 +38,17 @@ class PlanAlbumRepository {
   }
 
   async list() {
-    const albums = await this.inner.list();
     const plan = this.planProvider();
+    // Plan belirli albümleri seçtiyse yalnızca onlar yüklenir: kütüphanenin geri kalanı için
+    // ffprobe çalıştırmak (yüzlerce parça) yeni bir yayının açılışını dakikalarca geciktiriyordu.
+    const only = plan && !plan.usesWholeLibrary ? plan.music.albums.map((a) => a.name) : null;
+    const albums = await (only ? this.inner.list({ only }) : this.inner.list());
     if (!plan || plan.usesWholeLibrary) return albums;
 
     const selected = this.#select(albums, plan);
     if (!selected.length) {
       this.log.warn('plandaki müzik seçimi diskte bulunamadı — tüm kütüphaneye düşülüyor');
-      return albums;
+      return only ? this.inner.list() : albums;
     }
     const trackCount = selected.reduce((n, a) => n + a.tracks.length, 0);
     this.log.info(`plan "${plan.name}": ${selected.length} albüm, ${trackCount} parça`);

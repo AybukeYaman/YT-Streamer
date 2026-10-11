@@ -126,3 +126,20 @@ test('defaultRunAsync: gerçek süreci bloklamadan çalıştırır, çıktı ve 
   const missing = await defaultRunAsync('bu-komut-yok-xyz', []);
   assert.equal(missing.code, -1);
 });
+
+test('seedDurations: ana yayının durations.json dosyasını yeni yayının runtime klasörüne kopyalar; mevcutsa ezmez', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, 'runtime'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'runtime', 'durations.json'), '{"a|1|2":180}');
+  const inst = new StreamInstances({ repoRoot: root, log });
+  assert.equal(inst.seedDurations('lofi3'), true);
+  assert.equal(fs.readFileSync(path.join(root, 'runtime', 'lofi3', 'durations.json'), 'utf8'), '{"a|1|2":180}');
+  fs.writeFileSync(path.join(root, 'runtime', 'lofi3', 'durations.json'), '{"daha":"yeni"}');
+  assert.equal(inst.seedDurations('lofi3'), false, 'hedef varsa dokunmaz');
+  assert.equal(fs.readFileSync(path.join(root, 'runtime', 'lofi3', 'durations.json'), 'utf8'), '{"daha":"yeni"}');
+  assert.throws(() => inst.seedDurations('../etc'), /geçersiz yayın adı/);
+});
+
+test('seedDurations: ana yayının önbelleği yoksa sessizce false döner', () => {
+  assert.equal(new StreamInstances({ repoRoot: tmp(), log }).seedDurations('lofi3'), false);
+});

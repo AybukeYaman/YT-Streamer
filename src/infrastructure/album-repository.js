@@ -53,13 +53,17 @@ class AlbumRepository {
     this.trackRepos = new Map(); // albüm adı → TrackRepository (önbellek albüm başına)
   }
 
-  async list() {
+  // only: yalnızca bu adlı albümleri yükle (verilmezse hepsi). Plan birkaç albüm seçmişse
+  // kütüphanenin geri kalanını taramak (her parça için ffprobe) açılışı dakikalarca geciktiriyordu.
+  async list({ only = null } = {}) {
+    const wanted = Array.isArray(only) ? new Set(only) : null;
     // Nokta ile başlayan klasörler albüm değildir: paketi üreten taraf yarım yazımı
     // music-source/.staging/ altında tutuyor (atomik rename sözleşmesi). Bunları
     // "albüm atlandı" uyarısıyla raporlamak her taramada gereksiz gürültü.
     const names = fs.readdirSync(this.dir, { withFileTypes: true })
       .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
       .map((d) => d.name)
+      .filter((n) => !wanted || wanted.has(n))
       .sort((a, b) => a.localeCompare(b));
 
     const albums = [];

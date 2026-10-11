@@ -143,3 +143,17 @@ test('nokta ile başlayan klasörler albüm sayılmaz (.staging uyarı üretmez)
   assert.deepEqual(albums.map((a) => a.name), ['gercek']);
   assert.ok(!lines.some((l) => /staging/.test(l.m)), '.staging hiç raporlanmamalı');
 }));
+
+test('list({ only }): yalnızca istenen albümleri yükler (diğerlerinin parçaları ölçülmez)', withSource({
+  'video 1': { tracks: ['a.m4a', 'b.m4a'] },
+  mimi: { tracks: ['c.m4a'] },
+  zen: { tracks: ['d.m4a'] },
+}, async (dir) => {
+  const { log } = fakeLog();
+  const probed = [];
+  const repo = new AlbumRepository({ dir, log, probeDuration: async (f) => { probed.push(path.basename(f)); return 180; } });
+  const albums = await repo.list({ only: ['video 1'] });
+  assert.deepEqual(albums.map((a) => a.name), ['video 1']);
+  assert.ok(!probed.some((f) => ['c.m4a', 'd.m4a'].includes(f)), `başka albümün parçası ölçüldü: ${probed}`);
+  assert.deepEqual((await repo.list()).map((a) => a.name), ['mimi', 'video 1', 'zen'], 'only yoksa hepsi');
+}));

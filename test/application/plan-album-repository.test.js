@@ -97,3 +97,25 @@ test('planda olmayan albüm atlanır ve uyarılır', async () => {
 test('iç depo gerekli', () => {
   assert.throws(() => new PlanAlbumRepository({ planProvider: () => null, log: fakeLog().log }), /inner depo gerekli/);
 });
+
+test('plan albüm seçtiyse iç depodan yalnızca o albümler istenir (kütüphanenin kalanı taranmaz)', async () => {
+  const calls = [];
+  const inner = { list: async (opts) => { calls.push(opts); return albums(); } };
+  const plan = new StreamPlan({ music: { order: 'sequential', albums: [{ name: 'gece', trackPaths: ['X:/gece/1.m4a'] }] } });
+  const { repo } = make({ plan, inner });
+  const out = await repo.list();
+  assert.deepEqual(calls, [{ only: ['gece'] }]);
+  assert.deepEqual(out.map((a) => a.name), ['gece']);
+});
+
+test('plandaki albüm diskte yoksa tüm kütüphaneye düşülür (ikinci, süzgeçsiz okuma)', async () => {
+  const calls = [];
+  const inner = { list: async (opts) => { calls.push(opts); return opts?.only ? [] : albums(); } };
+  const plan = new StreamPlan({ music: { order: 'sequential', albums: [{ name: 'silinmis', trackPaths: ['X:/s/1.m4a'] }] } });
+  const { repo, warnings } = make({ plan, inner });
+  const out = await repo.list();
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1], undefined);
+  assert.deepEqual(out.map((a) => a.name), ['mimi', 'gece']);
+  assert.ok(warnings.some((w) => /tüm kütüphaneye düşülüyor/.test(w)));
+});
