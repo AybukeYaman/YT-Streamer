@@ -115,3 +115,14 @@ test('from: StreamPlan verilirse aynı örnek döner (gereksiz kopya yok)', () =
 test('ORDER_MODES Queue modlarıyla aynı isimleri kullanır', () => {
   assert.deepEqual(ORDER_MODES, ['sequential', 'shuffle']);
 });
+
+test('broadcast başlık/açıklama: varsayılan null, toJSON gidiş-dönüş, sınırlar', () => {
+  const { StreamPlan, StreamPlanError } = require('../../src/domain/stream-plan');
+  assert.deepEqual({ ...new StreamPlan({}).broadcast }, { title: null, description: null });
+  const p = new StreamPlan({ broadcast: { title: ' T ', description: ' D ' } });
+  assert.equal(p.broadcast.title, 'T');
+  assert.equal(StreamPlan.from(p.toJSON()).broadcast.description, 'D');
+  assert.throws(() => new StreamPlan({ broadcast: { title: '   ' } }), StreamPlanError);
+  assert.throws(() => new StreamPlan({ broadcast: { title: 'a'.repeat(101) } }), /en fazla 100/);
+  assert.throws(() => new StreamPlan({ broadcast: { description: 'a'.repeat(5001) } }), /en fazla 5000/);
+});

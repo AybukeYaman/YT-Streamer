@@ -68,3 +68,29 @@ test('dokunma hedefleri en az 44px (CSS min-height)', () => {
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
   assert.match(html, /min-height:\s*44px/);
 });
+
+test('başlık ve açıklama mevcut plandan doldurulur, kaçışlanır', () => {
+  const plan = new StreamPlan({ broadcast: { title: 'A "B" <i>', description: 'x </textarea> y' } });
+  const html = renderConfigPage({ plan, clips: [], token: 't' });
+  assert.match(html, /name="title" value="A &quot;B&quot; &lt;i&gt;"/);
+  assert.match(html, /<textarea name="description"[^>]*>x &lt;\/textarea&gt; y<\/textarea>/);
+});
+
+test('kapak: tek seçimli radyo, önizlemeli; seçili olan işaretli, varsayılan satırı var', () => {
+  const plan = new StreamPlan({ cover: 'X:/c/b.jpg' });
+  const html = renderConfigPage({ plan, clips: [], covers: ['X:/c/a.jpg', 'X:/c/b.jpg'], token: 'tk' });
+  assert.match(html, /type="radio"[^>]*name="cover" value="X:\/c\/b\.jpg" checked/);
+  assert.doesNotMatch(html, /name="cover" value="X:\/c\/a\.jpg" checked/);
+  assert.match(html, /name="cover" value=""/);
+  assert.match(html, /src="\/config\/thumb\?token=tk&amp;file=X%3A%2Fc%2Fa\.jpg"/);
+});
+
+test('kapak seçilmemişse varsayılan satırı işaretli', () => {
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], covers: ['X:/c/a.jpg'], token: 't' });
+  assert.match(html, /name="cover" value="" checked/);
+});
+
+test('planda olup listede olmayan kapak ek satır olarak görünür (kaybolmaz)', () => {
+  const html = renderConfigPage({ plan: new StreamPlan({ cover: 'X:/elle.jpg' }), clips: [], covers: [], token: 't' });
+  assert.match(html, /name="cover" value="X:\/elle\.jpg" checked/);
+});

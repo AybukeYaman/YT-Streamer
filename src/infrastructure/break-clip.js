@@ -35,7 +35,10 @@ const CLIP_LABELS = Object.freeze({
   'study-background': 'çalışma görseli',
 });
 
-async function ensureStreamClip({ sourcePath, runtimeDir, log, name = 'break-background', label = null }) {
+// convert: test için enjekte edilebilir dönüştürücü (varsayılan gerçek ffmpeg).
+async function ensureStreamClip({
+  sourcePath, runtimeDir, log, name = 'break-background', label = null, convert = convertAny,
+}) {
   const clipLabel = label ?? CLIP_LABELS[name] ?? name;
   if (!sourcePath) return null;
   if (!fs.existsSync(sourcePath)) {
@@ -65,9 +68,24 @@ async function ensureStreamClip({ sourcePath, runtimeDir, log, name = 'break-bac
 
   log.info(`${clipLabel} hazırlanıyor: ${path.basename(sourcePath)}`);
   fs.mkdirSync(runtimeDir, { recursive: true });
-  const result = await convertAny(sourcePath, out);
+  // GEÇİCİ DOSYAYA yazılıp yerine taşınır (11 Ekim 2026). Eskiden ffmpeg doğrudan `out`'a
+  // yazıyordu; ama `out` yayını yapan ffmpeg'in -stream_loop ile OKUDUĞU canlı dosya.
+  // /config'ten klip seçimi değişince go-live süreci (ayrı süreç) aynı dosyayı yerinde
+  // yeniden kodluyor, canlı ffmpeg yarım/bozuk paket okuyup "Error submitting packet to
+  // decoder: Invalid data found" ile duraksıyordu. rename atomik: Linux'ta açık dosyayı
+  // okuyan süreç eski içeriği (eski inode) sonuna kadar okur, yeni süreç yenisini görür.
+  const tmp = path.join(runtimeDir, `${name}.tmp-${process.pid}.mp4`);
+  const result = await convert(sourcePath, tmp);
   if (!result.ok) {
+    fs.rmSync(tmp, { force: true });
     log.warn(`${clipLabel} hazırlanamadı: ${result.stderr.trim().split(/\r?\n/).slice(-1)[0]}`);
+    return null;
+  }
+  try {
+    fs.renameSync(tmp, out);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    log.warn(`${clipLabel} yerine konamadı: ${err.message}`);
     return null;
   }
   try {

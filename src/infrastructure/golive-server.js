@@ -294,8 +294,8 @@ class GoLiveServer {
         // Yalnızca configApi'nin bildiği klip adaylarından biri istenebilir — rastgele bir
         // yol verip sunucudaki herhangi bir dosyanın küçük resmini çıkarmak İSTENMEZ
         // (aynı "listede olmayan yol reddedilir" kuralı ConfigApi#save'de de var).
-        const { clips } = await this.configApi.form();
-        if (!clips.includes(file)) return this.#json(res, 404, { error: 'not_found' });
+        const { clips, covers = [] } = await this.configApi.form();
+        if (!clips.includes(file) && !covers.includes(file)) return this.#json(res, 404, { error: 'not_found' });
         const thumbPath = await this.thumbnailProvider(file);
         if (!thumbPath) return this.#json(res, 404, { error: 'not_found' });
         return this.#image(res, fs.readFileSync(thumbPath));
@@ -307,30 +307,36 @@ class GoLiveServer {
         // gövdeyi okumayı gerektirirdi (bkz. dosya başındaki route listesi notu).
         const token = url.searchParams.get('token') ?? '';
         if (req.method === 'GET') {
-          const { plan, clips } = await this.configApi.form();
-          return this.#html(res, 200, renderConfigPage({ plan, clips, token }));
+          const form = await this.configApi.form();
+          return this.#html(res, 200, renderConfigPage({ ...form, token }));
         }
         if (req.method === 'POST') {
           const text = await readBody(req);
           const params = new URLSearchParams(text);
-          const result = await this.configApi.save({
+          const fields = {
             pomodoroEnabled: params.has('pomodoroEnabled'),
             pomodoroType: params.get('pomodoroType') || '',
             studyVideos: params.getAll('studyVideos'),
             breakVideos: params.getAll('breakVideos'),
             restart: params.get('action') === 'save_restart',
-          });
+          };
+          // Başlık/açıklama/kapak yalnızca formda varsa taşınır: eski/başka istemciler
+          // (alan göndermeyenler) bu alanları sessizce SİLMESİN.
+          if (params.has('title')) fields.title = params.get('title');
+          if (params.has('description')) fields.description = params.get('description');
+          if (params.has('cover')) fields.cover = params.get('cover');
+          const result = await this.configApi.save(fields);
           if (!result.ok) {
-            const { plan, clips } = await this.configApi.form();
-            return this.#html(res, 200, renderConfigPage({ plan, clips, token, error: result.error }));
+            const form = await this.configApi.form();
+            return this.#html(res, 200, renderConfigPage({ ...form, token, error: result.error }));
           }
           const notice = result.restarted
             ? 'Plan kaydedildi ve yayın yeniden başlatıldı.'
             : result.restartError
               ? `Plan kaydedildi — ${result.restartError}`
               : 'Plan kaydedildi.';
-          const { plan, clips } = await this.configApi.form();
-          return this.#html(res, 200, renderConfigPage({ plan, clips, token, notice }));
+          const form = await this.configApi.form();
+          return this.#html(res, 200, renderConfigPage({ ...form, token, notice }));
         }
         return this.#json(res, 405, { error: 'method_not_allowed' });
       }

@@ -61,8 +61,17 @@ function buildGoLive({
   const planStore = new StreamPlanStore({
     runtimeDir: config.paths.runtime, writeFile: writeFileAtomic, log: logger.child('plan'),
   });
+  // Başlık/açıklama da aynı gerekçeyle getter: /config'ten değiştirilince bir sonraki
+  // YENİ broadcast yeni metni alır (açık olan broadcast'e dokunulmaz — insert anında okunur).
   const broadcastConfig = {
     ...config.broadcast,
+    get title() {
+      return planStore.loadActive()?.broadcast?.title || config.broadcast.title;
+    },
+    get description() {
+      const fromPlan = planStore.loadActive()?.broadcast?.description;
+      return fromPlan ?? config.broadcast.description;
+    },
     get thumbnailPath() {
       const cover = planStore.loadActive()?.cover;
       if (!cover) return config.broadcast.thumbnailPath;

@@ -9,6 +9,7 @@
 // Plan config'i EZMEZ, ÜZERİNE BİNER: her alan mevcut sistemdeki bir alanın
 // karşılığıdır ve ikinci bir yerde tutulmaz. Eşlemenin yapıldığı yerler:
 //   cover               → broadcast.thumbnailPath   go-live-wiring.js (getter)
+//   broadcast.title/description → broadcast.title/description  go-live-wiring.js (getter)
 //   music.albums        → albüm listesinin süzgeci   PlanAlbumRepository
 //   music.order         → queue.mode                 index.js (queue.mode getter)
 //   pomodoro.enabled    → planner kurulur/kurulmaz   ReconfigurablePomodoroPlanner
@@ -182,6 +183,36 @@ function normalizePomodoro(raw, problems) {
   };
 }
 
+// YouTube sınırları: başlık en çok 100, açıklama en çok 5000 karakter.
+const MAX_TITLE_LENGTH = 100;
+const MAX_DESCRIPTION_LENGTH = 5000;
+
+// Yayın başlığı/açıklaması (mobil /config sayfasından değiştirilir). null = "config.json'daki
+// değer geçerli" (mevcut davranış); verilmiş metin config'i ezer. Açıklama boş metin
+// olabilir ama başlık olamaz — boş başlıkla broadcast açılamaz.
+function normalizeBroadcast(raw, problems) {
+  const b = raw === undefined || raw === null ? {} : raw;
+  if (typeof b !== 'object' || Array.isArray(b)) {
+    problems.push('"broadcast" bölümü nesne olmalı');
+    return { title: null, description: null };
+  }
+  let title = null;
+  if (b.title !== undefined && b.title !== null) {
+    if (!isNonEmptyString(b.title)) problems.push('"broadcast.title" boş olamaz');
+    else if (b.title.trim().length > MAX_TITLE_LENGTH) {
+      problems.push(`"broadcast.title" en fazla ${MAX_TITLE_LENGTH} karakter olabilir`);
+    } else title = b.title.trim();
+  }
+  let description = null;
+  if (b.description !== undefined && b.description !== null) {
+    if (typeof b.description !== 'string') problems.push('"broadcast.description" metin olmalı');
+    else if (b.description.length > MAX_DESCRIPTION_LENGTH) {
+      problems.push(`"broadcast.description" en fazla ${MAX_DESCRIPTION_LENGTH} karakter olabilir`);
+    } else description = b.description.trim();
+  }
+  return { title, description };
+}
+
 class StreamPlan {
   // Normal yol StreamPlan.from(raw) — tüm sorunları tek hatada listeler (load-config'in
   // davranışı: sessizce varsayılana düşmek yok).
@@ -204,6 +235,7 @@ class StreamPlan {
     }
     const albums = normalizeAlbums(rawMusic.albums, problems);
     const pomodoro = normalizePomodoro(raw.pomodoro, problems);
+    const broadcast = normalizeBroadcast(raw.broadcast, problems);
 
     if (problems.length) throw new StreamPlanError(problems);
 
@@ -211,6 +243,7 @@ class StreamPlan {
     this.cover = isNonEmptyString(raw.cover) ? raw.cover.trim() : null;
     this.music = Object.freeze({ order, albums: Object.freeze(albums) });
     this.pomodoro = Object.freeze(pomodoro);
+    this.broadcast = Object.freeze(broadcast);
     // Serbest bilgi alanı (kaydedilme zamanı, preset adı). Yayın akışı okumaz.
     this.metadata = Object.freeze({ ...(raw.metadata || {}) });
     Object.freeze(this);
@@ -253,6 +286,7 @@ class StreamPlan {
         studyVideos: [...this.pomodoro.studyVideos],
         breakVideos: [...this.pomodoro.breakVideos],
       },
+      broadcast: { ...this.broadcast },
       metadata: { ...this.metadata },
     };
   }
@@ -301,5 +335,6 @@ function summarizePlan(plan, albums = [], { defaultCover = null } = {}) {
 
 module.exports = {
   StreamPlan, StreamPlanError, ORDER_MODES, DEFAULT_ROUNDS, DEFAULT_TYPE,
+  MAX_TITLE_LENGTH, MAX_DESCRIPTION_LENGTH,
   pathKey, pathKeyLoose, pathIndex, summarizePlan,
 };

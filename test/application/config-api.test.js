@@ -118,3 +118,63 @@ test('save: tekrarlı klip yolları tekilleştirilir', async () => {
   const result = await api.save({ studyVideos: ['/clips/a.mp4', '/clips/a.mp4'] });
   assert.deepEqual(result.plan.pomodoro.studyVideos, ['/clips/a.mp4']);
 });
+
+// ─── Başlık / açıklama / kapak ─────────────────────────────────────────────
+
+function serviceWithCovers(covers, plan) {
+  return { ...fakeConfigService({ plan }), listCovers: () => covers };
+}
+
+test('form(): kapak adaylarını da döner', async () => {
+  const api = new ConfigApi({ configService: serviceWithCovers(['/c/a.jpg']), log: { warn() {} } });
+  const { covers } = await api.form();
+  assert.deepEqual(covers, ['/c/a.jpg']);
+});
+
+test('save: başlık, açıklama ve listedeki kapak plana yazılır', async () => {
+  const configService = serviceWithCovers(['/c/a.jpg', '/c/b.jpg']);
+  const api = new ConfigApi({ configService, log: { warn() {} } });
+  const result = await api.save({ title: '  Yeni Başlık ', description: 'satır1\r\nsatır2', cover: '/c/b.jpg' });
+  assert.equal(result.ok, true);
+  assert.equal(result.plan.broadcast.title, 'Yeni Başlık');
+  assert.equal(result.plan.broadcast.description, 'satır1\nsatır2');
+  assert.equal(result.plan.cover, '/c/b.jpg');
+});
+
+test('save: boş başlık/açıklama/kapak "varsayılan"a (null) döner', async () => {
+  const current = new StreamPlan({ cover: '/c/a.jpg', broadcast: { title: 'x', description: 'y' } });
+  const api = new ConfigApi({ configService: serviceWithCovers(['/c/a.jpg'], current), log: { warn() {} } });
+  const result = await api.save({ title: '', description: '  ', cover: '' });
+  assert.equal(result.plan.broadcast.title, null);
+  assert.equal(result.plan.broadcast.description, null);
+  assert.equal(result.plan.cover, null);
+});
+
+test('save: alan verilmezse başlık/açıklama/kapak korunur', async () => {
+  const current = new StreamPlan({ cover: '/c/a.jpg', broadcast: { title: 'x', description: 'y' } });
+  const api = new ConfigApi({ configService: serviceWithCovers([], current), log: { warn() {} } });
+  const result = await api.save({});
+  assert.equal(result.plan.broadcast.title, 'x');
+  assert.equal(result.plan.broadcast.description, 'y');
+  assert.equal(result.plan.cover, '/c/a.jpg');
+});
+
+test('save: listede olmayan kapak reddedilir, plan YAZILMAZ; mevcut kapak listede olmasa da korunabilir', async () => {
+  const configService = serviceWithCovers(['/c/a.jpg'], new StreamPlan({ cover: '/elle/yazilmis.jpg' }));
+  const api = new ConfigApi({ configService, log: { warn() {} } });
+  const bad = await api.save({ cover: '/etc/passwd' });
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /listede olmayan kapak/);
+  assert.equal(configService.applied.length, 0);
+  const keep = await api.save({ cover: '/elle/yazilmis.jpg' });
+  assert.equal(keep.ok, true);
+});
+
+test('save: çok uzun başlık hata olarak döner, plan YAZILMAZ', async () => {
+  const configService = serviceWithCovers([]);
+  const api = new ConfigApi({ configService, log: { warn() {} } });
+  const result = await api.save({ title: 'a'.repeat(101) });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /en fazla 100/);
+  assert.equal(configService.applied.length, 0);
+});

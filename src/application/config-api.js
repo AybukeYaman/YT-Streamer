@@ -17,16 +17,23 @@ class ConfigApi {
     this.log = log;
   }
 
-  // Form açılışında gösterilecek veri: mevcut plan + klip adayları.
+  // Form açılışında gösterilecek veri: mevcut plan + klip adayları + kapak adayları.
   async form() {
     const plan = this.configService.currentPlan();
     const clips = await this.configService.listClips();
-    return { plan, clips };
+    return { plan, clips, covers: this.#covers() };
+  }
+
+  #covers() {
+    return typeof this.configService.listCovers === 'function' ? this.configService.listCovers() : [];
   }
 
   /**
    * fields: { pomodoroEnabled: boolean, pomodoroType: string, studyVideos: string[],
-   *           breakVideos: string[], restart: boolean }
+   *           breakVideos: string[], title?: string, description?: string, cover?: string,
+   *           restart: boolean }
+   * title/description/cover VERİLMEZSE (undefined) mevcut değer korunur; boş metin
+   * "config.json'daki varsayılan" demektir (plan alanı null olur).
    * @returns {Promise<{ ok: boolean, plan?: StreamPlan, warnings?: string[],
    *                      restarted?: boolean, restartError?: string|null, error?: string }>}
    */
@@ -50,17 +57,41 @@ class ConfigApi {
       return { ok: false, error: `geçersiz pomodoro türü "${type}" — "<calisma>+<mola>" biçiminde olmalı (ornek "50+10")` };
     }
 
-    // music/cover/metadata KORUNUR — form onlara hiç dokunmuyor (v1'de müzik seçimi web
+    // Kapak da klipler gibi YALNIZCA listedeki görsellerden biri olabilir. Mevcut kapak
+    // listede olmasa bile (elle yazılmış yol) dokunulmadığı sürece korunur.
+    let cover = current.cover;
+    if (fields.cover !== undefined) {
+      const wanted = String(fields.cover).trim();
+      if (!wanted) cover = null;
+      else if (wanted === current.cover || this.#covers().includes(wanted)) cover = wanted;
+      else return { ok: false, error: `listede olmayan kapak yolu reddedildi: ${wanted}` };
+    }
+
+    const broadcast = { ...current.broadcast };
+    if (fields.title !== undefined) broadcast.title = String(fields.title).trim() || null;
+    if (fields.description !== undefined) {
+      broadcast.description = String(fields.description).replace(/\r\n/g, '\n').trim() || null;
+    }
+
+    // music/metadata KORUNUR — form onlara hiç dokunmuyor (v1'de müzik seçimi web
     // formunda yok, bkz. PLAN-yapilandirma-ui.md Faz N2 "Açık karar").
-    const plan = current.with({
-      pomodoro: {
-        enabled,
-        type: type || current.pomodoro.type,
-        rounds: current.pomodoro.rounds,
-        studyVideos,
-        breakVideos,
-      },
-    });
+    // Başlık/açıklama uzunluk sınırları StreamPlan'da doğrulanır; hata mesajı olduğu gibi gösterilir.
+    let plan;
+    try {
+      plan = current.with({
+        cover,
+        broadcast,
+        pomodoro: {
+          enabled,
+          type: type || current.pomodoro.type,
+          rounds: current.pomodoro.rounds,
+          studyVideos,
+          breakVideos,
+        },
+      });
+    } catch (err) {
+      return { ok: false, error: err.problems ? err.problems.join('; ') : err.message };
+    }
 
     let warnings;
     try {
