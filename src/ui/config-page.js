@@ -107,8 +107,14 @@ function switchInput(id, name, checked, text) {
 const POMO_PRESETS = ['50+10', '30+10', '45+15'];
 
 const STATE_LABELS ={ running: 'Çalışıyor', stopped: 'Durmuş', unknown: 'Bilinmiyor' };
-const STATE_TONE = { running: 'ok', stopped: 'idle', unknown: 'warn' };
-const dot = (tone) => `<span class="dot ${tone}" aria-hidden="true"></span>`;
+const STATE_TONE = { running: 'ok', stopped: 'idle', unknown: 'unk' };
+// Durum rozeti: simge (CSS) + kısa kelime. tone: ok | idle | warn | done | bad | unk
+const chip = (tone, text) => `<span class="chip ${tone}"><i aria-hidden="true"></i>${esc(text)}</span>`;
+// Görünürlük yalnızca simge (kelime erişilebilir ad/ipucu olarak durur)
+const privacyChip = (p) => (Object.hasOwn(PRIVACY_LABELS, p)
+  ? `<span class="chip pv" role="img" aria-label="Görünürlük: ${PRIVACY_LABELS[p]}" title="${PRIVACY_LABELS[p]}"><i class="pv-${p}" aria-hidden="true"></i></span>`
+  : '');
+const LIFECYCLE_TONE = { live: 'ok', complete: 'done', revoked: 'bad' };
 
 // Ana yayın süreci (streamState null ise hiç çıkmaz: özellik opsiyonel). AYRI formlar:
 // ana formun alanlarını (başlık, klipler…) göndermez, yani başlat/durdur ayarları kaydetmez.
@@ -126,7 +132,7 @@ function streamControls(streamState, action) {
   const buttons = { running: stop, stopped: start, unknown: `${start}${stop}` }[state];
   return `<div class="card">
     <h3>Ana yayın</h3>
-    <p class="state">${dot(STATE_TONE[state])}Durum: <strong>${esc(STATE_LABELS[state])}</strong></p>
+    <p class="state">${chip(STATE_TONE[state], STATE_LABELS[state])}</p>
     <div class="btnrow">
       ${buttons}
     </div>
@@ -254,7 +260,10 @@ function broadcastPicker({
   const b = items.find((x) => x.id === selectedId) ?? items[0];
   const act = withNonce(`/config/broadcast?token=${t}&broadcast=${encodeURIComponent(b.id)}`, nonce);
   const canEnd = ENDABLE_STATES.has(b.lifeCycleStatus);
-  const tone = b.lifeCycleStatus === 'live' ? 'ok' : (b.finished ? 'idle' : 'warn');
+  const lifeTone = LIFECYCLE_TONE[b.lifeCycleStatus] ?? (LIFECYCLE_LABELS[b.lifeCycleStatus] ? 'warn' : 'unk');
+  const when = formatStart(b.startAt)
+    ? `<span class="chip"><i class="${b.started ? 't-done' : 't-clock'}" aria-hidden="true"></i><span class="sr">${b.started ? 'Başladı' : 'Planlanan'}: </span>${esc(formatStart(b.startAt))}</span>`
+    : '';
   const detailsBody = `
         <label class="lbl" for="b-desc">Açıklama</label>
         <textarea name="description" id="b-desc" maxlength="${MAX_DESCRIPTION_LENGTH}">${esc(b.description)}</textarea>
@@ -266,7 +275,7 @@ ${covers.length ? '' : '<p class="hint">Kapak adayı yok.</p>'}
 
   return `${head}
     ${picker}
-    <p class="state">${dot(tone)}Durum: <strong>${esc(LIFECYCLE_LABELS[b.lifeCycleStatus] ?? b.lifeCycleStatus ?? 'Bilinmiyor')}</strong> · Görünürlük: <strong>${esc(PRIVACY_LABELS[b.privacyStatus] ?? b.privacyStatus ?? 'Bilinmiyor')}</strong>${formatStart(b.startAt) ? ` · ${b.started ? 'Başladı' : 'Planlanan'}: <strong>${esc(formatStart(b.startAt))}</strong>` : ''}</p>
+    <p class="state">${chip(lifeTone, LIFECYCLE_LABELS[b.lifeCycleStatus] ?? b.lifeCycleStatus ?? 'Bilinmiyor')}${privacyChip(b.privacyStatus)}${when}</p>
     <form method="post" action="${esc(act)}" data-guard>
       <input type="hidden" name="broadcastId" value="${esc(b.id)}">
       <label class="lbl" for="b-title">Başlık</label>
@@ -347,7 +356,7 @@ function instancesSection(instances, token, { keep = '', nonce = null } = {}) {
     const main = state === 'running' ? 'golive' : 'start';
     const extra = state === 'stopped' ? '' : fold('Diğer işlemler', null, btn(i.name, 'stop'), { cls: 'more' });
     return `<div class="card">
-      <p class="state">${dot(STATE_TONE[state])}<strong>${esc(i.name)}</strong> · ${esc(STATE_LABELS[state])}</p>
+      <p class="state"><strong>${esc(i.name)}</strong>${chip(STATE_TONE[state], STATE_LABELS[state])}</p>
       <div class="btnrow">
         ${btn(i.name, main)}
       </div>
@@ -365,27 +374,27 @@ const STYLE = `
     --border-strong: #9d5b80; --text: #fbe6f0; --muted: #c98cae; --head: #ffd3ea;
     --accent: #ec4899; --accent-strong: #be185d; --focus: #f472b6;
     --danger: #7a1f3d; --danger-edge: #e0699f; --ok: #34d399; --warn: #fbbf24; --idle: #a38a99;
-    --radius: 12px; --tap: 48px;
+    --radius: 10px; --tap: 44px;
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
   body {
-    margin: 0; padding: 16px 16px 48px; background: var(--bg); color: var(--text);
-    font: 16px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    margin: 0; padding: 12px 16px 40px; background: var(--bg); color: var(--text);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     max-width: 480px; margin-inline: auto;
   }
-  header { margin: 4px 0 20px; }
-  h1 { font-size: 22px; line-height: 1.2; margin: 0 0 4px; color: var(--head); }
-  .sub { margin: 0; color: var(--muted); font-size: 14px; }
-  section { margin-bottom: 28px; }
-  h2 { font-size: 17px; font-weight: 600; margin: 0 0 12px; color: var(--head); }
-  h3 { font-size: 14px; font-weight: 600; margin: 18px 0 8px; color: #f3b7d6; }
+  header { margin: 0 0 14px; }
+  h1 { font-size: 19px; line-height: 1.2; margin: 0 0 2px; color: var(--head); }
+  .sub { margin: 0; color: var(--muted); font-size: 12px; }
+  section { margin-bottom: 20px; }
+  h2 { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; margin: 0 0 8px; color: var(--head); }
+  h3 { font-size: 13px; font-weight: 600; margin: 14px 0 6px; color: #f3b7d6; }
   .card h3 { margin-top: 0; }
-  .lbl { display: block; font-size: 14px; font-weight: 600; margin: 14px 0 6px; }
-  .hint { font-size: 13px; color: var(--muted); margin: 4px 0 10px; }
-  .muted { color: var(--muted); font-size: 14px; }
+  .lbl { display: block; font-size: 12px; font-weight: 600; margin: 10px 0 4px; color: var(--muted); }
+  .hint { font-size: 12px; color: var(--muted); margin: 4px 0 8px; }
+  .muted { color: var(--muted); font-size: 12px; }
   .row {
-    display: flex; align-items: center; gap: 12px; padding: 12px 8px;
+    display: flex; align-items: center; gap: 10px; padding: 8px;
     border-bottom: 1px solid var(--line); min-height: var(--tap);
   }
   .row input[type=checkbox], .row input[type=radio] { width: 22px; height: 22px; flex-shrink: 0; accent-color: var(--accent); }
@@ -396,23 +405,23 @@ const STYLE = `
   .row span { overflow-wrap: anywhere; }
   .checklist { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
   input[type=text], textarea, select {
-    width: 100%; padding: 12px; font-size: 16px; border-radius: 8px; min-height: var(--tap);
+    width: 100%; padding: 9px 12px; font-size: 16px; border-radius: 8px; min-height: var(--tap);
     border: 1px solid var(--border-strong); background: var(--surface); color: var(--text);
     font-family: inherit;
   }
-  textarea { min-height: 140px; resize: vertical; }
+  textarea { min-height: 88px; resize: vertical; }
   select { margin-bottom: 8px; }
   :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   button {
-    width: 100%; padding: 12px 16px; font: inherit; font-weight: 600; border-radius: 10px;
-    border: 1px solid transparent; margin-top: 10px; min-height: var(--tap); cursor: pointer; color: var(--text);
+    width: 100%; padding: 9px 14px; font: inherit; font-size: 14px; font-weight: 600; border-radius: 10px;
+    border: 1px solid transparent; margin-top: 8px; min-height: var(--tap); cursor: pointer; color: var(--text);
   }
   .primary { background: var(--accent-strong); color: #fff; }
   .secondary { background: transparent; border-color: var(--border-strong); color: var(--text); }
   .danger { background: var(--danger); border-color: var(--danger-edge); color: #fff; }
   button:disabled { opacity: .5; cursor: not-allowed; }
-  .card, .state { padding: 12px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); }
-  .card { margin-bottom: 10px; }
+  .card, .state { padding: 10px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); }
+  .card { margin-bottom: 8px; }
   .card .state { padding: 0; border: 0; background: none; margin: 0 0 4px; }
   .state { margin: 0 0 8px; }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; background: var(--idle); }
@@ -422,8 +431,8 @@ const STYLE = `
   .btnrow form { flex: 1; margin: 0; }
   .fold { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); margin: 14px 0 4px; }
   .fold > summary {
-    list-style: none; cursor: pointer; padding: 12px; min-height: var(--tap);
-    display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 15px;
+    list-style: none; cursor: pointer; padding: 8px 12px; min-height: var(--tap);
+    display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px;
   }
   .fold > summary::-webkit-details-marker { display: none; }
   .fold > summary::after { content: '▾'; margin-left: auto; color: var(--muted); }
@@ -439,15 +448,15 @@ const STYLE = `
   .dd summary::after { content: '▾'; margin-left: auto; color: var(--muted); padding-left: 8px; }
   .dd[open] summary::after { content: '▴'; }
   .picklist { border-top: 1px solid var(--line); max-height: 60vh; overflow-y: auto; }
-  .pickrow { display: flex; align-items: center; gap: 12px; padding: 10px 12px; min-height: 52px; color: var(--text); text-decoration: none; }
+  .pickrow { display: flex; align-items: center; gap: 12px; padding: 8px 12px; min-height: 48px; color: var(--text); text-decoration: none; }
   .picklist .pickrow { border-bottom: 1px solid var(--line); }
   .pickrow.sel { background: #3a1430; }
-  .pickrow span:not(.thumb) { overflow-wrap: anywhere; flex: 1; font-size: 15px; }
+  .pickrow span:not(.thumb) { overflow-wrap: anywhere; flex: 1; font-size: 13px; }
   .pickrow .thumb { width: 64px; height: 36px; object-fit: cover; border-radius: 4px; background: var(--surface-2); flex-shrink: 0; display: inline-block; }
   .pickgroup { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0; padding: 8px 12px; background: var(--bg); }
   input[type=file] { width: 100%; padding: 10px 0; color: var(--text); }
-  .notice { background: #3a1430; border: 1px solid #d6459b; padding: 12px; border-radius: var(--radius); margin-bottom: 16px; }
-  .error { background: #3a1420; border: 1px solid #e0699f; padding: 12px; border-radius: var(--radius); margin-bottom: 16px; }
+  .notice { background: #3a1430; border: 1px solid #d6459b; padding: 9px 12px; font-size: 13px; border-radius: var(--radius); margin-bottom: 12px; }
+  .error { background: #3a1420; border: 1px solid #e0699f; padding: 9px 12px; font-size: 13px; border-radius: var(--radius); margin-bottom: 12px; }
   .savebar { margin-top: 8px; }
   .newlink {
     display: flex; align-items: center; justify-content: center; min-height: var(--tap);
@@ -470,7 +479,7 @@ const STYLE = `
 
   /* Aç/kapa anahtarı: gerçek onay kutusu */
   .sw { position: absolute; opacity: 0; width: 1px; height: 1px; }
-  .swl { display: flex; align-items: center; gap: 12px; min-height: var(--tap); cursor: pointer; font-weight: 600; }
+  .swl { display: flex; align-items: center; gap: 10px; font-size: 14px; min-height: var(--tap); cursor: pointer; font-weight: 600; }
   .track { position: relative; width: 48px; height: 28px; flex-shrink: 0; border-radius: 14px; border: 2px solid var(--border-strong); background: var(--surface-2); }
   .track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: var(--text); }
   .sw:checked + .swl .track { background: var(--accent); border-color: var(--accent); }
@@ -490,7 +499,7 @@ const STYLE = `
   .tw { display: flex; align-items: center; justify-content: center; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px; border: 2px solid var(--line); background: var(--surface-2); }
   .tw .thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
   .tw .ph { color: var(--muted); font-size: 18px; }
-  .tn { font-size: 12px; line-height: 1.25; color: var(--muted); overflow-wrap: anywhere; }
+  .tn { font-size: 11px; line-height: 1.25; color: var(--muted); overflow-wrap: anywhere; }
   .tin:checked ~ .tw { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
   .tin:checked ~ .tn { color: var(--text); }
   .tin:checked ~ .tn::before { content: '✓ '; color: var(--ok); font-weight: 700; }
@@ -544,6 +553,27 @@ const STYLE = `
   .seg label[for$=-public] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18'/%3E%3C/svg%3E"); }
   .seg label[for$=-unlisted] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1'/%3E%3C/svg%3E"); }
   .seg label[for$=-private] { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='11' width='14' height='10' rx='2'/%3E%3Cpath d='M8 11V8a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E"); }
+  /* Durum rozetleri: simge + kısa kelime; görünürlük yalnızca simge (seçicideki simgelerle aynı) */
+  .state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0; border: 0; background: none; margin: 0 0 10px; }
+  .card .state { margin: 0 0 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 2px 9px 2px 7px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); white-space: nowrap; }
+  .chip i { display: inline-block; flex: none; width: 14px; height: 14px; background: currentColor; -webkit-mask: var(--i) center / contain no-repeat; mask: var(--i) center / contain no-repeat; }
+  .chip.ok { color: var(--ok); border-color: currentColor; }
+  .chip.warn { color: var(--warn); }
+  .chip.bad { color: #ff9ec4; }
+  .chip.pv { padding: 3px 8px; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .chip.ok i { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='2' fill='black'/%3E%3Cpath d='M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 4.9a10 10 0 0 0 0 14.2M19.1 4.9a10 10 0 0 1 0 14.2'/%3E%3C/svg%3E"); }
+  .chip.idle i { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 5v14M15 5v14'/%3E%3C/svg%3E"); }
+  .chip.warn i { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3 2'/%3E%3C/svg%3E"); }
+  .chip.done i { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E"); }
+  .chip.bad i { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E"); }
+  .chip.unk i { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7M12 17h.01'/%3E%3C/svg%3E"); }
+  .chip i.pv-public { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18'/%3E%3C/svg%3E"); }
+  .chip i.pv-unlisted { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1'/%3E%3C/svg%3E"); }
+  .chip i.pv-private { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='11' width='14' height='10' rx='2'/%3E%3Cpath d='M8 11V8a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E"); }
+  .chip i.t-clock { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3 2'/%3E%3C/svg%3E"); }
+  .chip i.t-done { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E"); }
   .js-only { display: none; }
   html.js .js-only { display: flex; }
   html.js .pt-custom { display: none; }

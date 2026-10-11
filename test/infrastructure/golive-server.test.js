@@ -758,7 +758,7 @@ test('GET /config: streamManager varsa dropdown\'da "+ Yeni yayın" ve Ek Yayın
     async ({ base }) => {
       const html = await (await fetch(`${base}/config?token=${TOKEN}`)).text();
       assert.match(html, /\+ Yeni yayın aç…/);
-      assert.match(html, /<strong>lofi2<\/strong> · Çalışıyor/);
+      assert.match(html, /<strong>lofi2<\/strong><span class="chip ok">/);
       assert.equal(albumReads, 0, 'normal sayfada albüm kataloğu diskten okunmamalı');
       const form = await (await fetch(`${base}/config?token=${TOKEN}&new=1`)).text();
       assert.equal(albumReads, 1);

@@ -108,7 +108,7 @@ test('streamState verilmezse başlat/durdur düğmeleri çıkmaz', () => {
 
 test('çalışırken: durum görünür, yalnızca Durdur çizilir ve onay ister (pasif Başlat yok)', () => {
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState: 'running' });
-  assert.match(html, /Durum: <strong>Çalışıyor<\/strong>/);
+  assert.match(html, /<span class="chip ok"><i aria-hidden="true"><\/i>Çalışıyor<\/span>/);
   assert.match(html, /name="action" value="stop">Durdur/);
   assert.doesNotMatch(html, /value="start"/);
   assert.doesNotMatch(html, /<button[^>]*\bdisabled\b/);
@@ -117,7 +117,7 @@ test('çalışırken: durum görünür, yalnızca Durdur çizilir ve onay ister 
 
 test('durmuşken: yalnızca Başlat çizilir (birincil), Durdur yok; sonraki adım ipucu var', () => {
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState: 'stopped' });
-  assert.match(html, /Durum: <strong>Durmuş<\/strong>/);
+  assert.match(html, /<span class="chip idle"><i aria-hidden="true"><\/i>Durmuş<\/span>/);
   assert.match(html, /<button class="primary" type="submit" name="action" value="start">Başlat/);
   assert.doesNotMatch(html, /value="stop"/);
   assert.match(html, /canlıya al/);
@@ -125,7 +125,7 @@ test('durmuşken: yalnızca Başlat çizilir (birincil), Durdur yok; sonraki ad�
 
 test('durum bilinmiyorken ikisi de çizilir (hangisinin doğru olduğu belli değil)', () => {
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState: 'unknown' });
-  assert.match(html, /Durum: <strong>Bilinmiyor<\/strong>/);
+  assert.match(html, /<span class="chip unk"><i aria-hidden="true"><\/i>Bilinmiyor<\/span>/);
   assert.match(html, /value="start"/);
   assert.match(html, /value="stop"/);
 });
@@ -245,11 +245,12 @@ test('seçici: başlangıç tarihi Türkiye saatiyle etikette ve durum satırın
   });
   assert.match(html, /● Başlamış · Canlı · Herkese açık · 11 Eki.*16:05/);
   assert.match(html, /Planlı · Hazır · Gizli · 12 Eki.*12:30/);
-  assert.match(html, /Başladı: <strong>11 Eki.*16:05<\/strong>/);
+  assert.match(html, /<i class="t-done" aria-hidden="true"><\/i><span class="sr">Başladı: <\/span>11 Eki.*16:05/);
+  assert.match(html, /<span class="chip ok"><i aria-hidden="true"><\/i>Canlı<\/span><span class="chip pv" role="img" aria-label="Görünürlük: Herkese açık"/);
   const plannedHtml = renderConfigPage({
     plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { items: [started, planned] }, selectedId: 's2',
   });
-  assert.match(plannedHtml, /Planlanan: <strong>12 Eki.*12:30<\/strong>/);
+  assert.match(plannedHtml, /<i class="t-clock" aria-hidden="true"><\/i><span class="sr">Planlanan: <\/span>12 Eki.*12:30/);
 });
 
 test('seçici: tarih yok ya da geçersizse etiket bozulmaz (tarih sessizce atlanır)', () => {
@@ -360,8 +361,8 @@ test('Ek yayınlar: durum + bağlamsal ana düğme; durdur "Diğer işlemler" al
     ],
   });
   assert.match(html, /<h3>Ek yayınlar<\/h3>/);
-  assert.match(html, /<strong>lofi2<\/strong> · Çalışıyor/);
-  assert.match(html, /<strong>zen2<\/strong> · Durmuş/);
+  assert.match(html, /<strong>lofi2<\/strong><span class="chip ok"><i aria-hidden="true"><\/i>Çalışıyor<\/span>/);
+  assert.match(html, /<strong>zen2<\/strong><span class="chip idle"><i aria-hidden="true"><\/i>Durmuş<\/span>/);
   assert.match(html, /action="\/config\/instance\?token=tk"/);
   assert.match(html, /name="name" value="lofi2"/);
   assert.match(html, /confirm\('Bu yayın durdurulsun mu\?'\)/);
