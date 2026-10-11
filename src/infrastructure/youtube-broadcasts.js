@@ -194,7 +194,35 @@ async function updateVideoDetails({
   return { skipped: false, previousTitle: snippet.title ?? null };
 }
 
+// YouTube'da YENİ, yeniden kullanılabilir bir canlı yayın akışı (stream) oluşturur ve
+// anahtarını (stream key) döndürür. İkinci eşzamanlı yayın için gerekli: YouTube bir
+// anahtara aynı anda tek bağlantı kabul eder, ana yayının anahtarı kullanılamaz.
+//
+// ANAHTAR GİZLİDİR: dönüş değerinde streamKey var ama çağıran bunu loglamamalı, sayfaya
+// basmamalıdır. Yalnızca .env.<ad> dosyasına (izin 600) yazılır. isReusable:true →
+// yayın bittikten sonra aynı anahtar yeni broadcast'lerle tekrar kullanılabilir (7/24 akış).
+// Kota: 50 birim.
+async function createLiveStream({ accessToken, title }) {
+  const item = await apiRequest({
+    accessToken,
+    method: 'POST',
+    path: 'liveStreams',
+    params: { part: 'id,snippet,cdn,contentDetails' },
+    body: {
+      snippet: { title },
+      cdn: { frameRate: 'variable', ingestionType: 'rtmp', resolution: 'variable' },
+      contentDetails: { isReusable: true },
+    },
+  });
+  const streamKey = item?.cdn?.ingestionInfo?.streamName;
+  if (!item?.id || !streamKey) {
+    throw new Error('YouTube yeni stream için anahtar döndürmedi');
+  }
+  return { id: item.id, streamKey };
+}
+
 module.exports = {
   insertBroadcast, bindBroadcast, transitionBroadcast, getBroadcast, setThumbnail,
   findStreamIdByKey, getStreamStatus, updateVideoPrivacy, listBroadcasts, updateVideoDetails,
+  createLiveStream,
 };

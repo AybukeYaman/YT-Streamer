@@ -103,33 +103,47 @@ const shorten = (text, max) => (text.length > max ? `${text.slice(0, max)}…` :
 
 // Yayın seçici + seçili yayının işlem paneli. YouTube'daki VAR OLAN yayınlar üzerinde çalışır
 // (plandaki "sonraki yayın" ayarlarından ayrı). broadcasts: { items } | { error: true } | null.
-//   - null: özellik kapalı (broadcastAdmin yok) → bölüm hiç çıkmaz.
+//   - null ve canCreate yok: özellik kapalı → bölüm hiç çıkmaz.
 //   - { error }: YouTube listesi okunamadı → kısa not, sayfanın geri kalanı çalışır.
 // Seçim URL'de taşınır (?broadcast=<id>): <select> değişince o adrese gider, JS'siz de çalışan
 // düz bir GET. İşlem formları ana plan formundan AYRI (iç içe form olmaz, planı kaydetmez).
+// canCreate: "+ Yeni yayın" seçeneği (eşzamanlı ikinci yayın kurma formu, ?new=1).
 function broadcastPicker({
-  broadcasts, selectedId, token, covers,
+  broadcasts, selectedId, token, covers, canCreate = false, newMode = false, newFormHtml = '',
 }) {
-  if (!broadcasts) return '';
+  if (!broadcasts && !canCreate) return '';
   const head = '<section>\n    <h2>YouTube Yayınları</h2>';
-  if (broadcasts.error) return `${head}\n    <p class="muted">Yayın listesi şu an okunamadı (YouTube'a ulaşılamadı).</p>\n  </section>`;
-  const items = broadcasts.items ?? [];
+  const t = encodeURIComponent(token);
+  const newOption = canCreate
+    ? `<option value="${esc(`/config?token=${t}&new=1`)}"${newMode ? ' selected' : ''}>+ Yeni yayın aç…</option>`
+    : '';
+
+  const items = broadcasts?.items ?? [];
+  // Liste yok/boş/hata: yine de "+ Yeni yayın" seçilebilsin diye tek seçenekli seçici.
   if (!items.length) {
-    return `${head}\n    <p class="muted">Kanalda henüz yayın yok. Canlıya alınca burada görünür.</p>\n  </section>`;
+    const note = broadcasts?.error
+      ? 'Yayın listesi şu an okunamadı (YouTube\'a ulaşılamadı).'
+      : 'Kanalda henüz yayın yok. Canlıya alınca burada görünür.';
+    if (!canCreate) return `${head}\n    <p class="muted">${note}</p>\n  </section>`;
+    return `${head}
+    <select class="picker" onchange="location.href=this.value">${newMode ? '' : '<option value="" selected disabled>Yayın yok</option>'}${newOption}</select>
+    ${newMode ? newFormHtml : `<p class="muted">${note}</p>`}
+  </section>`;
   }
 
-  const t = encodeURIComponent(token);
   const label = (b) => [
     `${b.lifeCycleStatus === 'live' ? '● ' : ''}${shorten(b.title, 40)}`,
     LIFECYCLE_LABELS[b.lifeCycleStatus] ?? b.lifeCycleStatus ?? '?',
     PRIVACY_LABELS[b.privacyStatus] ?? b.privacyStatus ?? '?',
     formatStart(b.startAt),
   ].filter(Boolean).join(' · ');
-  const option = (b) => `<option value="${esc(`/config?token=${t}&broadcast=${encodeURIComponent(b.id)}`)}"${b.id === selectedId ? ' selected' : ''}>${esc(label(b))}</option>`;
+  const option = (b) => `<option value="${esc(`/config?token=${t}&broadcast=${encodeURIComponent(b.id)}`)}"${!newMode && b.id === selectedId ? ' selected' : ''}>${esc(label(b))}</option>`;
   const active = items.filter((b) => !b.finished);
   const finished = items.filter((b) => b.finished);
   const group = (name, list) => (list.length ? `<optgroup label="${name}">${list.map(option).join('')}</optgroup>` : '');
-  const picker = `<select class="picker" onchange="location.href=this.value">${group('Aktif / yaklaşan', active)}${group('Biten', finished)}</select>`;
+  const picker = `<select class="picker" onchange="location.href=this.value">${newOption}${group('Aktif / yaklaşan', active)}${group('Biten', finished)}</select>`;
+
+  if (newMode) return `${head}\n    ${picker}\n    ${newFormHtml}\n  </section>`;
 
   const b = items.find((x) => x.id === selectedId) ?? items[0];
   const act = `/config/broadcast?token=${t}&broadcast=${encodeURIComponent(b.id)}`;
@@ -162,6 +176,76 @@ function broadcastPicker({
   </section>`;
 }
 
+// "+ Yeni yayın aç…" formu: ikinci (eşzamanlı) yayını sunucuda kurar. draft: hata sonrası
+// girdiler korunsun diye önceki form değerleri. albums: katalog [{ name, trackCount, backgrounds }].
+// Albüm seçimi boşsa tüm kütüphane çalar (mevcut davranış). Pomodoro klipleri kapalı açılır:
+// ölçümde klip girişleri CPU'yu ~2x yapıyor, ikinci yayını hafif tutmak için.
+function newStreamForm({
+  token, covers, albums, draft = {}, keep = '',
+}) {
+  const t = encodeURIComponent(token);
+  const chosen = new Set(draft.albums ?? []);
+  const privacy = draft.privacy || 'unlisted';
+  const privacyOptions = Object.entries(PRIVACY_LABELS)
+    .map(([value, text]) => `<option value="${value}"${value === privacy ? ' selected' : ''}>${text}</option>`).join('');
+  const coverOptions = covers
+    .map((c) => `<option value="${esc(c)}"${c === draft.cover ? ' selected' : ''}>${esc(shortPath(c))}</option>`).join('');
+  const albumRows = albums.length
+    ? `<div class="checklist">${albums.map((a) => {
+      const thumb = a.backgrounds[0]
+        ? `/config/thumb?token=${t}&file=${encodeURIComponent(a.backgrounds[0])}`
+        : null;
+      return checkbox('albums', a.name, chosen.has(a.name), `${a.name} · ${a.trackCount} parça`, thumb);
+    }).join('')}</div>`
+    : '<p class="muted">Albüm bulunamadı — boş bırakırsan kütüphanedeki her şey çalar.</p>';
+
+  return `<form method="post" action="${esc(`/config/new?token=${t}${keep}`)}">
+      <p class="hint">Aynı anda ikinci bir yayın açar: YouTube'da yeni bir yayın anahtarı oluşturulur ve sunucuda ayrı bir yayın süreci kurulur. Sunucu CPU'su en fazla birkaç yayına yeter; doluysa reddedilir.</p>
+      <p class="hint">Yayın adı (sunucudaki ad: küçük harf, rakam, - _)</p>
+      <input type="text" name="name" value="${esc(draft.name ?? '')}" maxlength="20" placeholder="lofi2" autocapitalize="none" autocorrect="off">
+      <p class="hint">Başlık</p>
+      <input type="text" name="title" value="${esc(draft.title ?? '')}" maxlength="${MAX_TITLE_LENGTH}" placeholder="Başlık">
+      <p class="hint">Açıklama</p>
+      <textarea name="description" maxlength="${MAX_DESCRIPTION_LENGTH}" placeholder="Açıklama">${esc(draft.description ?? '')}</textarea>
+      <p class="hint">Görünürlük</p>
+      <select name="privacy">${privacyOptions}</select>
+      <p class="hint">Kapak</p>
+      <select name="cover"><option value="">Varsayılan</option>${coverOptions}</select>
+      <p class="hint">Hangi albümler çalsın? (müzik + arkaplan; boş = hepsi)</p>
+      ${albumRows}
+      <label class="row" for="goLiveNow">
+        <input type="checkbox" id="goLiveNow" name="goLiveNow" ${draft.goLiveNow === false ? '' : 'checked'}>
+        <span>Kurulunca otomatik canlıya al</span>
+      </label>
+      <button class="primary" type="submit" onclick="this.disabled=true;this.form.submit()">Yayını Kur ve Başlat</button>
+    </form>`;
+}
+
+// Kurulu ek yayınlar: durum + başlat/durdur/canlıya al. Ana yayın burada YOK (kendi bölümü var).
+function instancesSection(instances, token) {
+  if (!instances || !instances.length) return '';
+  const t = encodeURIComponent(token);
+  const labels = { running: 'Çalışıyor', stopped: 'Durmuş', unknown: 'Bilinmiyor' };
+  const rows = instances.map((i) => `<div class="state">
+      <strong>${esc(i.name)}</strong> · ${esc(labels[i.state] ?? labels.unknown)}
+      <div class="btnrow">
+        ${['start', 'golive', 'stop'].map((a) => {
+    const text = { start: 'Başlat', golive: 'Canlıya Al', stop: 'Durdur' }[a];
+    const disabled = (a === 'start' && i.state === 'running') || (a === 'stop' && i.state === 'stopped') || (a === 'golive' && i.state !== 'running');
+    const confirmAttr = a === 'stop' ? ' onsubmit="return confirm(\'Bu yayın durdurulsun mu?\')"' : '';
+    return `<form method="post" action="${esc(`/config/instance?token=${t}`)}"${confirmAttr}>
+          <input type="hidden" name="name" value="${esc(i.name)}">
+          <button class="${a === 'stop' ? 'danger' : 'secondary'}" type="submit" name="action" value="${a}"${disabled ? ' disabled' : ''}>${text}</button>
+        </form>`;
+  }).join('')}
+      </div>
+    </div>`).join('');
+  return `<section>
+    <h2>Ek Yayınlar</h2>
+    ${rows}
+  </section>`;
+}
+
 // plan: StreamPlan — currentPlan() hiç null dönmez, form her zaman bir taslakla açılır.
 // clips: string[] — ConfigApi#form()'dan (MediaLibrary.videos(), v1'de albüm taraması yok).
 // token: URL'deki ?token= değeri — form action'ına aynen eklenir (POST da aynı şekilde
@@ -170,6 +254,7 @@ function broadcastPicker({
 function renderConfigPage({
   plan, clips, covers = [], token, notice = null, error = null, streamState = null,
   broadcasts = null, selectedId = null, pendingCover = null,
+  canCreate = false, newMode = false, draft = {}, catalogAlbums = [], instances = null,
 }) {
   const p = plan.pomodoro;
   // Seçili yayın URL'de taşınır: kaydet/yükle/başlat sonrası seçim bozulmasın.
@@ -234,8 +319,11 @@ function renderConfigPage({
 <h1>Yayın Yapılandırması — ${esc(plan.name)}</h1>
 ${notice ? `<div class="notice">${esc(notice)}</div>` : ''}
 ${error ? `<div class="error">${esc(error)}</div>` : ''}
-${broadcastPicker({ broadcasts, selectedId, token, covers })}
+${broadcastPicker({
+  broadcasts, selectedId, token, covers, canCreate, newMode, newFormHtml: newMode ? newStreamForm({ token, covers, albums: catalogAlbums, draft }) : '',
+})}
 ${streamControls(streamState, action)}
+${instancesSection(instances, token)}
 <!-- Galeri yüklemesi: ana formun DIŞINDA (iç içe form olmaz); cover bölümündeki dosya
      alanı ve düğme form="coverUpload" ile buna bağlanır. -->
 <form id="coverUpload" method="post" enctype="multipart/form-data" action="${esc(uploadAction)}"></form>

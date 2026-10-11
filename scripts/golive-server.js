@@ -10,6 +10,7 @@
 //
 // Varsayılan bind 127.0.0.1. Dışarıya açmak `tailscale serve` ile yapılır — bkz.
 // scripts/deploy/README.md.
+const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
@@ -21,6 +22,12 @@ const { buildGoLive } = require('../src/composition/go-live-wiring');
 const { buildConfigService } = require('../src/composition/config-wiring');
 const { ConfigApi } = require('../src/application/config-api');
 const { BroadcastAdmin } = require('../src/application/broadcast-admin');
+const { StreamProvisioner } = require('../src/application/stream-provisioner');
+const { StreamManager } = require('../src/application/stream-manager');
+const { StreamInstances, defaultRunAsync } = require('../src/infrastructure/stream-instances');
+const { AlbumCatalog } = require('../src/infrastructure/album-catalog');
+const { StreamPlanStore } = require('../src/infrastructure/stream-plan-store');
+const { writeFileAtomic } = require('../src/infrastructure/atomic-file');
 const { ensureThumbnail } = require('../src/infrastructure/video-thumbnail');
 const { saveUploadedCover } = require('../src/infrastructure/cover-upload');
 const { GoLiveServer } = require('../src/infrastructure/golive-server');
@@ -167,6 +174,48 @@ async function main() {
   const thumbnailProvider = (file) => ensureThumbnail({
     sourcePath: file, runtimeDir: config.paths.runtime, log: logger.child('thumb'),
   });
+  // Ek yayınlar (eşzamanlı ikinci yayın): kurulum add-stream.sh ile, anahtar YouTube API'sinden.
+  // Her ek yayının kendi GoLiveService'i (config.<ad>.json + .env.<ad>) ilk canlıya almada kurulur
+  // ve önbelleğe alınır: anahtar .env.<ad>'a yazıldıktan SONRA kurulması şart (loadConfig okur).
+  const instances = new StreamInstances({
+    repoRoot: REPO_ROOT, runAsync: defaultRunAsync, log: logger.child('ek-yayin'),
+  });
+  const instanceGoLive = new Map();
+  const goLiveForInstance = (name) => {
+    if (!instanceGoLive.has(name)) {
+      const built = buildGoLive({
+        configFile: `config.${name}.json`, envFile: `.env.${name}`, logger: logger.child(`go-live-${name}`), alerter,
+      });
+      instanceGoLive.set(name, built.service);
+    }
+    return instanceGoLive.get(name).requestGoLive();
+  };
+  // CPU tavanı: 720p24 yayın başına ~1.1 çekirdek varsayımı, %80 kullanım (add-stream.sh ile aynı kural).
+  // Ölçülen ana yayın (Pomodoro klipli) ~1.4 çekirdek; ek yayınlar klipsiz/hafif açılır.
+  const maxStreams = Math.max(1, Math.floor((os.cpus().length * 0.8) / 1.1));
+  const catalog = new AlbumCatalog({ dir: config.paths.albums ?? null });
+  const streamManager = new StreamManager({
+    provisioner: new StreamProvisioner({
+      createStream: async ({ title }) => {
+        const { accessToken } = await youtubeApi.getAccessToken();
+        return youtubeApi.createLiveStream({ accessToken, title });
+      },
+      instances,
+      writePlan: (name, planJson) => new StreamPlanStore({
+        runtimeDir: instances.runtimeDir(name), writeFile: writeFileAtomic, log: logger.child('plan'),
+      }).saveActive(planJson),
+      albums: () => catalog.list(),
+      covers: () => configService.listCovers(),
+      goLive: goLiveForInstance,
+      maxStreams,
+      log: logger.child('yeni-yayin'),
+    }),
+    instances,
+    catalog,
+    goLive: goLiveForInstance,
+    log: logger.child('yeni-yayin'),
+  });
+
   const monitor = new HealthMonitor({
     checks: [
       new IngestCheck({ goLiveService: service }),
@@ -196,6 +245,7 @@ async function main() {
     // /config'teki yayın seçici: kanaldaki var olan yayınlar üzerinde işlem (başlık, görünürlük,
     // kapak, bitirme). Aynı YouTube istemcisi (go-live ile ortak OAuth).
     broadcastAdmin: new BroadcastAdmin({ api: youtubeApi, log: logger.child('yayin-yonetimi') }),
+    streamManager,
   });
 
   await server.listen();

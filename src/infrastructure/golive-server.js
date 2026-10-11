@@ -20,6 +20,8 @@
 //   POST /config    → sayfadaki formu uygular (ya da action=start|stop: yayını başlat/durdur)
 //   POST /config/upload → telefon galerisinden kapak yükler (multipart, coverFile alanı)
 //   POST /config/broadcast → YouTube'daki SEÇİLİ yayına işlem (action=apply|end)
+//   POST /config/new       → yeni (eşzamanlı) yayın kur: YouTube stream + sistemde servis
+//   POST /config/instance  → kurulu ek yayına işlem (start|stop|golive)
 //   (GET /config?broadcast=<id> yayın seçiciyi o yayına açar)
 //   GET  /config/thumb  → klip/kapak önizleme JPEG'i
 const http = require('http');
@@ -57,6 +59,9 @@ const RATE_LIMITS = Object.freeze({
   '/config/upload': { windowMs: 60000, max: 6 },
   // YouTube'a yazan işlemler (her biri 50 kota birimi): dar bütçe.
   '/config/broadcast': { windowMs: 60000, max: 10 },
+  // Yeni yayın kurma: YouTube'a yazar, sistemde servis kurar. Çok dar bütçe.
+  '/config/new': { windowMs: 60000, max: 3 },
+  '/config/instance': { windowMs: 60000, max: 20 },
   // Yetkisiz denemeler: tek kova, tüm route'lar ortak.
   unauthorized: { windowMs: 60000, max: 20 },
 });
@@ -146,6 +151,7 @@ class GoLiveServer {
     configApi = null,
     thumbnailProvider = null,
     broadcastAdmin = null,
+    streamManager = null,
   }) {
     if (typeof authToken !== 'string' || authToken.trim().length < 32) {
       // Fail-closed: auth'suz ayağa kalkmak sessiz bir güvenlik açığı olurdu.
@@ -163,6 +169,8 @@ class GoLiveServer {
     this.configApi = configApi;
     this.thumbnailProvider = thumbnailProvider;
     this.broadcastAdmin = broadcastAdmin;
+    // streamManager: StreamManager — ek yayınlar (yeni yayın kur, başlat/durdur/canlıya al). Yoksa özellik kapalı.
+    this.streamManager = streamManager;
     this.hits = new Map(); // kova adı → istek zaman damgaları
     this.server = http.createServer((req, res) => this.#handle(req, res));
   }
@@ -305,8 +313,17 @@ class GoLiveServer {
     const form = await this.configApi.form();
     const broadcasts = await this.#broadcastList();
     const selectedId = await this.#pickBroadcast(broadcasts, wantedBroadcastId);
+    const mgr = this.streamManager;
     const body = renderConfigPage({
-      ...form, token, broadcasts, selectedId, ...extra,
+      ...form,
+      token,
+      broadcasts,
+      selectedId,
+      canCreate: Boolean(mgr),
+      instances: mgr ? mgr.list() : null,
+      // Albüm kataloğu yalnızca "Yeni yayın" formu açıkken okunur (diske her sayfada gitme).
+      catalogAlbums: mgr && extra.newMode ? mgr.albums() : [],
+      ...extra,
     });
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
@@ -440,7 +457,10 @@ class GoLiveServer {
         const token = url.searchParams.get('token') ?? '';
         // Seçili yayın URL'de taşınır (?broadcast=<id>): kaydet/başlat/durdur sonrası seçim bozulmaz.
         const wanted = url.searchParams.get('broadcast');
-        if (req.method === 'GET') return this.#configPage(res, token, {}, {}, wanted);
+        if (req.method === 'GET') {
+          const newMode = url.searchParams.get('new') === '1' && Boolean(this.streamManager);
+          return this.#configPage(res, token, newMode ? { newMode: true } : {}, {}, wanted);
+        }
         if (req.method === 'POST') {
           const text = await readBody(req);
           const params = new URLSearchParams(text);
@@ -472,6 +492,37 @@ class GoLiveServer {
           return this.#configPage(res, token, { notice }, {}, wanted);
         }
         return this.#json(res, 405, { error: 'method_not_allowed' });
+      }
+
+      // Yeni (eşzamanlı) yayın kur: YouTube stream + sunucuda servis. Yavaş olabilir (add-stream.sh,
+      // ~10 sn); başarısızsa form girdileri korunarak aynı sayfa hatayla döner.
+      if (route === '/config/new') {
+        if (!this.configApi || !this.streamManager) return this.#json(res, 404, { error: 'not_found' });
+        if (req.method !== 'POST') return this.#json(res, 405, { error: 'method_not_allowed' });
+        const token = url.searchParams.get('token') ?? '';
+        const params = new URLSearchParams(await readBody(req));
+        const input = {
+          name: params.get('name') ?? '',
+          title: params.get('title') ?? '',
+          description: params.get('description') ?? '',
+          privacy: params.get('privacy') ?? '',
+          cover: params.get('cover') ?? '',
+          albums: params.getAll('albums'),
+          goLiveNow: params.has('goLiveNow'),
+        };
+        const result = await this.streamManager.create(input);
+        if (!result.ok) return this.#configPage(res, token, { newMode: true, draft: input, error: result.error });
+        return this.#configPage(res, token, { notice: result.message });
+      }
+
+      // Kurulu EK yayına işlem (başlat/durdur/canlıya al). Ana yayın bu yoldan yönetilmez.
+      if (route === '/config/instance') {
+        if (!this.configApi || !this.streamManager) return this.#json(res, 404, { error: 'not_found' });
+        if (req.method !== 'POST') return this.#json(res, 405, { error: 'method_not_allowed' });
+        const token = url.searchParams.get('token') ?? '';
+        const params = new URLSearchParams(await readBody(req));
+        const result = await this.streamManager.control(params.get('name') ?? '', params.get('action') ?? '');
+        return this.#configPage(res, token, result.ok ? { notice: result.message } : { error: result.error });
       }
 
       // YouTube'daki SEÇİLİ yayın üzerinde işlem: başlık/açıklama, görünürlük, kapak, bitirme.

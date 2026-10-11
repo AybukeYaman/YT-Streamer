@@ -735,3 +735,134 @@ test('POST /config/upload: uploadCover yoksa 404; yetkisiz 401; GET 405', () => 
     assert.equal((await call('/config/upload')).status, 405);
   },
 ));
+
+// ─── Yeni yayın ve ek yayınlar (/config/new, /config/instance) ─────────────
+
+function fakeManager({ instances = [], create = async () => ({ ok: true, message: 'kuruldu' }), control = async () => ({ ok: true, message: 'tamam' }) } = {}) {
+  const calls = [];
+  return {
+    calls,
+    list: () => instances,
+    albums: () => [{ name: 'mimi', trackCount: 5, backgrounds: ['/m/mimi/bg.mp4'] }],
+    create: async (input) => { calls.push(['create', input]); return create(input); },
+    control: async (name, action) => { calls.push(['control', name, action]); return control(name, action); },
+  };
+}
+
+test('GET /config: streamManager varsa dropdown\'da "+ Yeni yayın" ve Ek Yayınlar görünür; albüm kataloğu SADECE yeni modda okunur', () => {
+  let albumReads = 0;
+  const mgr = fakeManager({ instances: [{ name: 'lofi2', state: 'running' }] });
+  mgr.albums = () => { albumReads += 1; return []; };
+  return withServer(
+    { goLiveService: fakeService(), configApi: apiWithCovers(), broadcastAdmin: fakeAdmin([B1]), streamManager: mgr },
+    async ({ base }) => {
+      const html = await (await fetch(`${base}/config?token=${TOKEN}`)).text();
+      assert.match(html, /\+ Yeni yayın aç…/);
+      assert.match(html, /<strong>lofi2<\/strong> · Çalışıyor/);
+      assert.equal(albumReads, 0, 'normal sayfada albüm kataloğu diskten okunmamalı');
+      const form = await (await fetch(`${base}/config?token=${TOKEN}&new=1`)).text();
+      assert.equal(albumReads, 1);
+      assert.match(form, /action="\/config\/new\?token=/);
+      assert.match(form, /name="goLiveNow"/);
+    },
+  );
+});
+
+test('GET /config?new=1: streamManager yoksa normal sayfa açılır (form yok)', () => withServer(
+  { goLiveService: fakeService(), configApi: apiWithCovers(), broadcastAdmin: fakeAdmin([B1]) },
+  async ({ base }) => {
+    const html = await (await fetch(`${base}/config?token=${TOKEN}&new=1`)).text();
+    assert.doesNotMatch(html, /\/config\/new/);
+    assert.match(html, /value="apply"/);
+  },
+));
+
+test('POST /config/new: alanlar create\'e taşınır; başarıda mesaj ve normal sayfa', () => {
+  const mgr = fakeManager();
+  return withServer(
+    { goLiveService: fakeService(), configApi: apiWithCovers(), broadcastAdmin: fakeAdmin([B1]), streamManager: mgr },
+    async ({ base }) => {
+      const body = new URLSearchParams();
+      body.set('name', 'lofi2'); body.set('title', 'Gece'); body.set('description', 'açıklama');
+      body.set('privacy', 'public'); body.set('cover', '/c/a.jpg'); body.set('goLiveNow', 'on');
+      body.append('albums', 'mimi'); body.append('albums', 'zen');
+      const res = await fetch(`${base}/config/new?token=${TOKEN}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString(),
+      });
+      assert.equal(res.status, 200);
+      const html = await res.text();
+      assert.match(html, /class="notice">kuruldu/);
+      assert.doesNotMatch(html, /name="goLiveNow"/, 'başarıdan sonra form kapanır');
+      assert.deepEqual(mgr.calls[0][1], {
+        name: 'lofi2', title: 'Gece', description: 'açıklama', privacy: 'public', cover: '/c/a.jpg', albums: ['mimi', 'zen'], goLiveNow: true,
+      });
+    },
+  );
+});
+
+test('POST /config/new: hata olursa form AÇIK kalır, girdiler korunur, hata gösterilir', () => {
+  const mgr = fakeManager({ create: async () => ({ ok: false, error: 'kapasite dolu: şu an 2 yayın çalışıyor' }) });
+  return withServer(
+    { goLiveService: fakeService(), configApi: apiWithCovers(), broadcastAdmin: fakeAdmin([B1]), streamManager: mgr },
+    async ({ base }) => {
+      const res = await fetch(`${base}/config/new?token=${TOKEN}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'name=lofi2&title=Gece&albums=mimi',
+      });
+      const html = await res.text();
+      assert.match(html, /class="error">kapasite dolu/);
+      assert.match(html, /name="name" value="lofi2"/);
+      assert.match(html, /name="title" value="Gece"/);
+      assert.match(html, /name="albums" value="mimi" checked/);
+      assert.doesNotMatch(html, /name="goLiveNow" checked/, 'işaretlenmemişti, işaretli gelmemeli');
+    },
+  );
+});
+
+test('POST /config/instance: control çağrılır; hata sayfada görünür', () => {
+  const mgr = fakeManager();
+  return withServer(
+    { goLiveService: fakeService(), configApi: apiWithCovers(), streamManager: mgr },
+    async ({ base }) => {
+      const post = (fields) => fetch(`${base}/config/instance?token=${TOKEN}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields).toString(),
+      });
+      assert.match(await (await post({ name: 'lofi2', action: 'stop' })).text(), /class="notice">tamam/);
+      assert.deepEqual(mgr.calls.at(-1), ['control', 'lofi2', 'stop']);
+      mgr.control = async () => ({ ok: false, error: '"x" adlı ek yayın bulunamadı' });
+      assert.match(await (await post({ name: 'x', action: 'start' })).text(), /ek yayın bulunamadı/);
+    },
+  );
+});
+
+test('/config/new ve /config/instance: streamManager yoksa 404, GET 405, yetkisiz 401', () => withServer(
+  { goLiveService: fakeService(), configApi: apiWithCovers() },
+  async ({ call }) => {
+    assert.equal((await call('/config/new', { method: 'POST' })).status, 404);
+    assert.equal((await call('/config/instance', { method: 'POST' })).status, 404);
+  },
+));
+
+test('/config/new ve /config/instance: GET 405, yetkisiz 401', () => withServer(
+  { goLiveService: fakeService(), configApi: apiWithCovers(), streamManager: fakeManager() },
+  async ({ call }) => {
+    assert.equal((await call('/config/new')).status, 405);
+    assert.equal((await call('/config/instance')).status, 405);
+    assert.equal((await call('/config/new', { method: 'POST', token: null })).status, 401);
+    assert.equal((await call('/config/instance', { method: 'POST', token: null })).status, 401);
+  },
+));
+
+test('/config/new çok dar hız sınırında: 3 istekten sonra 429', () => withServer(
+  { goLiveService: fakeService(), configApi: apiWithCovers(), streamManager: fakeManager(), now: () => 1000 },
+  async ({ base }) => {
+    const codes = [];
+    for (let i = 0; i < 5; i++) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await fetch(`${base}/config/new?token=${TOKEN}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'name=a',
+      });
+      codes.push(res.status);
+    }
+    assert.deepEqual(codes, [200, 200, 200, 429, 429]);
+  },
+));

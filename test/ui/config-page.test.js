@@ -236,3 +236,110 @@ test('seçici: tarih yok ya da geçersizse etiket bozulmaz (tarih sessizce atlan
   assert.match(html, /Tarihsiz · Hazır · Herkese açık<\/option>/);
   assert.doesNotMatch(html, /Invalid Date|NaN/);
 });
+
+// ─── Yeni yayın formu + ek yayınlar ────────────────────────────────────────
+
+const ALBUM_CAT = [
+  { name: 'mimi', trackCount: 12, backgrounds: ['X:/m/mimi/bg.mp4'] },
+  { name: 'zen', trackCount: 3, backgrounds: [] },
+];
+
+test('canCreate yoksa "+ Yeni yayın" seçeneği çıkmaz', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { items: [PB1] }, selectedId: 'b1',
+  });
+  assert.doesNotMatch(html, /Yeni yayın aç/);
+});
+
+test('canCreate ile dropdown\'un ilk seçeneği "+ Yeni yayın aç…" ve ?new=1\'e gider', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 'tk', canCreate: true, broadcasts: { items: [PB1] }, selectedId: 'b1',
+  });
+  assert.match(html, /<select class="picker" onchange="location\.href=this\.value"><option value="\/config\?token=tk&amp;new=1">\+ Yeni yayın aç…<\/option>/);
+  // Yeni yayın modunda değilken mevcut yayın seçili kalır.
+  assert.match(html, /broadcast=b1" selected>/);
+  assert.doesNotMatch(html, /name="goLiveNow"/);
+});
+
+test('newMode: form açılır (ad, başlık, açıklama, görünürlük, kapak, albümler, otomatik canlıya al); yayın paneli gizlenir', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], covers: ['X:/c/a.jpg'], token: 'tk', canCreate: true, newMode: true,
+    broadcasts: { items: [PB1] }, selectedId: 'b1', catalogAlbums: ALBUM_CAT,
+  });
+  assert.match(html, /\+ Yeni yayın aç…<\/option>/);
+  assert.match(html, /<option value="\/config\?token=tk&amp;new=1" selected>/);
+  assert.doesNotMatch(html, /broadcast=b1" selected>/, 'yeni yayın modunda mevcut yayın seçili görünmemeli');
+  assert.match(html, /action="\/config\/new\?token=tk"/);
+  for (const field of ['name="name"', 'name="title"', 'name="description"', 'name="privacy"', 'name="cover"', 'name="goLiveNow"']) {
+    assert.ok(html.includes(field), field);
+  }
+  assert.match(html, /<option value="unlisted" selected>Liste dışı<\/option>/, 'güvenli varsayılan: liste dışı');
+  assert.match(html, /name="albums" value="mimi"[^>]*>/);
+  assert.match(html, /mimi · 12 parça/);
+  assert.match(html, /src="\/config\/thumb\?token=tk&amp;file=X%3A%2Fm%2Fmimi%2Fbg\.mp4"/);
+  assert.match(html, /<option value="X:\/c\/a\.jpg">/);
+  assert.match(html, /name="goLiveNow" checked/);
+  // Mevcut yayının Bu Yayına Uygula formu görünmemeli.
+  assert.doesNotMatch(html, /value="apply"/);
+});
+
+test('newMode: hata sonrası girdiler korunur (draft), kaçışlıdır', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], covers: ['X:/c/a.jpg'], token: 't', canCreate: true, newMode: true, broadcasts: { items: [] },
+    catalogAlbums: ALBUM_CAT,
+    draft: {
+      name: 'lofi2', title: 'Gece "yayını" <b>', description: 'açıklama', privacy: 'private', cover: 'X:/c/a.jpg', albums: ['zen'], goLiveNow: false,
+    },
+    error: 'kapasite dolu',
+  });
+  assert.match(html, /name="name" value="lofi2"/);
+  assert.match(html, /name="title" value="Gece &quot;yayını&quot; &lt;b&gt;"/);
+  assert.match(html, /<option value="private" selected>Gizli<\/option>/);
+  assert.match(html, /<option value="X:\/c\/a\.jpg" selected>/);
+  assert.match(html, /name="albums" value="zen" checked/);
+  assert.doesNotMatch(html, /name="albums" value="mimi" checked/);
+  assert.doesNotMatch(html, /name="goLiveNow" checked/);
+  assert.match(html, /class="error">kapasite dolu/);
+});
+
+test('hiç yayın yokken de yalnızca "+ Yeni yayın" ile seçici görünür', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 't', canCreate: true, broadcasts: { items: [] },
+  });
+  assert.match(html, /Yayın yok/);
+  assert.match(html, /\+ Yeni yayın aç…/);
+  assert.match(html, /Kanalda henüz yayın yok/);
+  // YouTube hatasında da yeni yayın açılabilir.
+  const err = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', canCreate: true, broadcasts: { error: true } });
+  assert.match(err, /\+ Yeni yayın aç…/);
+  assert.match(err, /okunamadı/);
+});
+
+test('albüm yoksa form "boş bırakırsan hepsi" notunu gösterir', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 't', canCreate: true, newMode: true, broadcasts: { items: [] }, catalogAlbums: [],
+  });
+  assert.match(html, /Albüm bulunamadı/);
+});
+
+test('Ek Yayınlar: durum + başlat/canlıya al/durdur; durdur onay ister; duruma göre pasif', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 'tk',
+    instances: [{ name: 'lofi2', state: 'running' }, { name: 'zen2', state: 'stopped' }],
+  });
+  assert.match(html, /<h2>Ek Yayınlar<\/h2>/);
+  assert.match(html, /<strong>lofi2<\/strong> · Çalışıyor/);
+  assert.match(html, /<strong>zen2<\/strong> · Durmuş/);
+  assert.match(html, /action="\/config\/instance\?token=tk"/);
+  assert.match(html, /name="name" value="lofi2"/);
+  assert.match(html, /confirm\('Bu yayın durdurulsun mu\?'\)/);
+  // lofi2 çalışıyor: Başlat pasif; zen2 durmuş: Canlıya Al ve Durdur pasif.
+  assert.match(html, /name="name" value="lofi2">\s*<button class="secondary" type="submit" name="action" value="start" disabled>/);
+  assert.match(html, /name="name" value="zen2">\s*<button class="secondary" type="submit" name="action" value="golive" disabled>/);
+  assert.match(html, /name="name" value="zen2">\s*<button class="danger" type="submit" name="action" value="stop" disabled>/);
+});
+
+test('ek yayın yoksa Ek Yayınlar bölümü çıkmaz', () => {
+  assert.doesNotMatch(renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', instances: [] }), /Ek Yayınlar/);
+  assert.doesNotMatch(renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' }), /Ek Yayınlar/);
+});

@@ -230,3 +230,27 @@ test('başlık/açıklama: video yoksa ATMAZ, skipped döner ve yazma çağrıs�
     assert.equal(calls.length, 1);
   });
 });
+
+// ── createLiveStream ────────────────────────────────────────────────────────
+
+test('createLiveStream: yeniden kullanılabilir rtmp stream ister, id ve anahtarı döndürür', async () => {
+  const { createLiveStream } = require('../../src/infrastructure/youtube-broadcasts');
+  await withFetch([{ body: { id: 'strm-9', cdn: { ingestionInfo: { streamName: 'k1k1-k2k2-k3k3-k4k4' } } } }], async (calls) => {
+    const result = await createLiveStream({ accessToken: 'at', title: 'lofi2 — Gece' });
+    assert.deepEqual(result, { id: 'strm-9', streamKey: 'k1k1-k2k2-k3k3-k4k4' });
+    assert.equal(calls[0].options.method, 'POST');
+    assert.match(calls[0].url, /liveStreams\?/);
+    assert.match(calls[0].url, /part=id%2Csnippet%2Ccdn%2CcontentDetails|part=id,snippet,cdn,contentDetails/);
+    const body = JSON.parse(calls[0].options.body);
+    assert.equal(body.snippet.title, 'lofi2 — Gece');
+    assert.equal(body.cdn.ingestionType, 'rtmp');
+    assert.equal(body.contentDetails.isReusable, true);
+  });
+});
+
+test('createLiveStream: yanıtta anahtar yoksa hata fırlatır, anahtar mesaja SIZMAZ', async () => {
+  const { createLiveStream } = require('../../src/infrastructure/youtube-broadcasts');
+  await withFetch([{ body: { id: 'strm-9', cdn: {} } }], async () => {
+    await assert.rejects(createLiveStream({ accessToken: 'at', title: 'x' }), /anahtar döndürmedi/);
+  });
+});
