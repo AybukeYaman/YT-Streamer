@@ -198,13 +198,21 @@ function videoFilter(profile, overlay, overlayTexts = [], pomodoro = null) {
 // concat demuxer girdilerin kodek/çözünürlük/fps/pix_fmt/SAR/timebase'inin BİREBİR aynı
 // olmasını şart koşar; sapan tek dosya yayını bozar. Bu yüzden klipleri üreten taraf
 // (yayın paketi sözleşmesi) setsar=1 dahil hepsini sabitliyor.
+//
+// -threads 1 (giriş seçeneği = bu girişin ÇÖZÜCÜSÜ): 720p24 H.264'ü tek iş parçacığı rahat
+// çözer; varsayılan çok iş parçacıklı çözme küçük VPS'te (3 çekirdek) yalnızca eşzamanlama
+// yükü ekliyor. Gerçek yayın komutunun varyantlarıyla ölçüldü (11 Ekim 2026): tam yayın
+// grafiğinde toplam CPU ~%25 düştü. Kodlayıcının (x264) iş parçacıklarına DOKUNMAZ: o çıkış
+// seçeneği, bu ise girişten önce. Giriş sayısı arttıkça (study/break klipleri) kazanç büyür.
+const DECODER_THREADS = ['-threads', '1'];
+
 function videoInputArgs({ backgroundPath, backgroundPlaylistPath }) {
   if (Boolean(backgroundPath) === Boolean(backgroundPlaylistPath)) {
     throw new Error('video girişi olarak backgroundPath ya da backgroundPlaylistPath\'ten tam olarak biri verilmeli');
   }
   return backgroundPlaylistPath
-    ? ['-stream_loop', '-1', '-f', 'concat', '-safe', '0', '-i', backgroundPlaylistPath]
-    : ['-stream_loop', '-1', '-i', backgroundPath];
+    ? ['-stream_loop', '-1', ...DECODER_THREADS, '-f', 'concat', '-safe', '0', '-i', backgroundPlaylistPath]
+    : ['-stream_loop', '-1', ...DECODER_THREADS, '-i', backgroundPath];
 }
 
 // Pomodoro uyarı bipleri. Ayrı bir ses dosyası tutulmuyor: ffmpeg'in kendi sine üreteci
@@ -318,7 +326,7 @@ function buildFfmpegArgs({
     '-y', // local modda çıktının üzerine yaz; yoksa ffmpeg stdin'den onay bekler
     ...videoInputArgs({ backgroundPath, backgroundPlaylistPath }),
     ...audioInputArgs({ audioPath, playlistPath }),
-    ...distinctPaths.flatMap((p) => ['-stream_loop', '-1', '-i', p]),
+    ...distinctPaths.flatMap((p) => ['-stream_loop', '-1', ...DECODER_THREADS, '-i', p]),
     ...(mixing ? BEEP_INPUT_ARGS : []),
     ...(complex
       ? ['-filter_complex',

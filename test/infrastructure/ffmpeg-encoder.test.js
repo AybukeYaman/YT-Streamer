@@ -45,7 +45,7 @@ test('argümanlar Faz 1 doğrulanmış komutla birebir aynı (local)', () => {
   const args = buildFfmpegArgs({ profile, backgroundPath: BG, audioPath: AUDIO, output: LOCAL });
   assert.deepEqual(args, [
     '-hide_banner', '-y',
-    '-stream_loop', '-1', '-i', BG,
+    '-stream_loop', '-1', '-threads', '1', '-i', BG,
     '-re', '-i', AUDIO,
     '-map', '0:v', '-map', '1:a',
     '-vf', 'scale=1280:720',
@@ -61,7 +61,7 @@ test('playlist modu: -re -f concat -safe 0 -i <playlist> ve -shortest; geri kala
   const PL = 'C:/Users/Aybuke Yeni/Desktop/Youtube/YT Stream System/runtime/playlist.txt';
   const single = buildFfmpegArgs({ profile, backgroundPath: BG, audioPath: AUDIO, output: LOCAL });
   const pl = buildFfmpegArgs({ profile, backgroundPath: BG, playlistPath: PL, output: LOCAL });
-  assert.deepEqual(pl.slice(4, 11), ['-i', BG, '-re', '-f', 'concat', '-safe', '0']);
+  assert.deepEqual(pl.slice(6, 13), ['-i', BG, '-re', '-f', 'concat', '-safe', '0']);
   assert.equal(pl[pl.indexOf('concat') + 4], PL);
   assert.deepEqual(pl.slice(-4), ['-shortest', '-f', 'flv', LOCAL.localPath]);
   // Encode parametreleri iki modda aynı
@@ -354,7 +354,7 @@ test('FfmpegEncoder start\'ta verilen backgroundPath kurulumdakini ezer (albüm 
   const { spawnFn, calls } = fakeSpawn();
   const enc = new FfmpegEncoder({ profile, backgroundPath: BG, output: LOCAL, spawnFn });
   enc.start({ playlistPath: 'p', runNumber: 1, backgroundPath: 'C:/ms/A/background.mp4' });
-  assert.equal(calls[0].args[calls[0].args.indexOf('-stream_loop') + 3], 'C:/ms/A/background.mp4');
+  assert.equal(calls[0].args[calls[0].args.indexOf('-stream_loop') + 5], 'C:/ms/A/background.mp4');
 });
 
 // ── Arkaplan rotasyonu (çoğul arkaplan) ──────────────────────────────────────
@@ -364,9 +364,9 @@ test('rotasyon modu: video girişi -stream_loop -1 -f concat -safe 0 -i <liste>'
   const args = buildFfmpegArgs({
     profile, backgroundPlaylistPath: BGLIST, playlistPath: 'p', output: LOCAL,
   });
-  assert.deepEqual(args.slice(0, 10), [
+  assert.deepEqual(args.slice(0, 12), [
     '-hide_banner', '-y',
-    '-stream_loop', '-1', '-f', 'concat', '-safe', '0', '-i', BGLIST,
+    '-stream_loop', '-1', '-threads', '1', '-f', 'concat', '-safe', '0', '-i', BGLIST,
   ]);
 });
 
@@ -486,8 +486,8 @@ test('tek faz klibi: ikinci video girişi overlay ile bindirilir, yazılar üstt
     phaseBackgrounds: [{ path: '/runtime/break.mp4', start: 600, end: null }],
   });
   // Giriş sırası: 0 arkaplan, 1 müzik, 2 faz klibi (sonsuz döngüde)
-  assert.deepEqual(args.slice(args.lastIndexOf('-stream_loop'), args.lastIndexOf('-stream_loop') + 4),
-    ['-stream_loop', '-1', '-i', '/runtime/break.mp4']);
+  assert.deepEqual(args.slice(args.lastIndexOf('-stream_loop'), args.lastIndexOf('-stream_loop') + 6),
+    ['-stream_loop', '-1', '-threads', '1', '-i', '/runtime/break.mp4']);
   const fc = args[args.indexOf('-filter_complex') + 1];
   assert.ok(fc.includes('[2:v]scale=1280:720,setsar=1[ph0_0]'), 'klip ölçeklenip SAR sabitlenmeli');
   assert.ok(fc.includes("[phbase][ph0_0]overlay=enable='gte(t\\,600.000)'[phcomp]"));
