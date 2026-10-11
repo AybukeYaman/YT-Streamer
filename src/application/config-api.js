@@ -11,17 +11,53 @@ class ConfigApi {
   // configService: StreamConfigService
   // restartStream: () => Promise<{ ok, message }> | null — verilmezse restart denenmez,
   //   kullanıcı restart istese bile plan kaydedilir, yalnızca devreye alınamaz.
-  constructor({ configService, restartStream = null, log }) {
+  // streamControl: { start(), stop(), status() } | null — yayın sürecini (yt-streamer)
+  //   başlatır/durdurur. status(): 'running' | 'stopped' | 'unknown'. Verilmezse sayfada
+  //   başlat/durdur düğmeleri çıkmaz (özellik opsiyonel, mevcut kurulumlar etkilenmez).
+  constructor({
+    configService, restartStream = null, streamControl = null, log,
+  }) {
     this.configService = configService;
     this.restartStream = restartStream;
+    this.streamControl = streamControl;
     this.log = log;
   }
 
-  // Form açılışında gösterilecek veri: mevcut plan + klip adayları + kapak adayları.
+  // Form açılışında gösterilecek veri: mevcut plan + klip adayları + kapak adayları +
+  // yayın süreci durumu (streamControl yoksa null → düğmeler gösterilmez).
   async form() {
     const plan = this.configService.currentPlan();
     const clips = await this.configService.listClips();
-    return { plan, clips, covers: this.#covers() };
+    return { plan, clips, covers: this.#covers(), streamState: await this.#streamState() };
+  }
+
+  async #streamState() {
+    if (!this.streamControl) return null;
+    try {
+      return await this.streamControl.status();
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  // Yayını başlatır/durdurur. Plana DOKUNMAZ (form alanları bu yola girmez).
+  // @returns {Promise<{ ok: boolean, message?: string, error?: string }>}
+  async control(action) {
+    if (!this.streamControl) return { ok: false, error: 'bu sunucu yayını başlatıp durduramıyor' };
+    if (action !== 'start' && action !== 'stop') return { ok: false, error: `bilinmeyen işlem: ${action}` };
+    try {
+      await this.streamControl[action]();
+    } catch (err) {
+      this.log?.warn?.(`yayın ${action} başarısız: ${err.message}`);
+      return { ok: false, error: `yayın ${action === 'start' ? 'başlatılamadı' : 'durdurulamadı'}: ${err.message}` };
+    }
+    this.log?.info?.(`yayın ${action === 'start' ? 'başlatıldı' : 'durduruldu'} (/config)`);
+    return {
+      ok: true,
+      message: action === 'start'
+        ? 'Yayın başlatıldı. Canlıya almak için 30-60 sn sonra go-live tetikle.'
+        : 'Yayın durduruldu.',
+    };
   }
 
   #covers() {

@@ -178,3 +178,48 @@ test('save: çok uzun başlık hata olarak döner, plan YAZILMAZ', async () => {
   assert.match(result.error, /en fazla 100/);
   assert.equal(configService.applied.length, 0);
 });
+
+// ─── Yayın başlat / durdur ─────────────────────────────────────────────────
+
+function fakeStreamControl({ state = 'running', fail = null } = {}) {
+  const calls = [];
+  return {
+    calls,
+    start: async () => { calls.push('start'); if (fail) throw new Error(fail); },
+    stop: async () => { calls.push('stop'); if (fail) throw new Error(fail); },
+    status: async () => state,
+  };
+}
+
+test('form(): streamControl varsa yayın durumunu döner, yoksa null', async () => {
+  const withCtl = new ConfigApi({ configService: fakeConfigService(), streamControl: fakeStreamControl({ state: 'stopped' }), log: {} });
+  assert.equal((await withCtl.form()).streamState, 'stopped');
+  const without = new ConfigApi({ configService: fakeConfigService(), log: {} });
+  assert.equal((await without.form()).streamState, null);
+});
+
+test('form(): status() hata fırlatırsa unknown (sayfa açılır)', async () => {
+  const ctl = { ...fakeStreamControl(), status: async () => { throw new Error('x'); } };
+  const api = new ConfigApi({ configService: fakeConfigService(), streamControl: ctl, log: {} });
+  assert.equal((await api.form()).streamState, 'unknown');
+});
+
+test('control: start/stop streamControl çağrılır, planı YAZMAZ', async () => {
+  const configService = fakeConfigService();
+  const ctl = fakeStreamControl();
+  const api = new ConfigApi({ configService, streamControl: ctl, log: {} });
+  assert.equal((await api.control('start')).ok, true);
+  assert.equal((await api.control('stop')).ok, true);
+  assert.deepEqual(ctl.calls, ['start', 'stop']);
+  assert.equal(configService.applied.length, 0);
+});
+
+test('control: hata mesajla döner; bilinmeyen işlem ve streamControl yokluğu reddedilir', async () => {
+  const api = new ConfigApi({ configService: fakeConfigService(), streamControl: fakeStreamControl({ fail: 'izin yok' }), log: {} });
+  const failed = await api.control('stop');
+  assert.equal(failed.ok, false);
+  assert.match(failed.error, /durdurulamadı: izin yok/);
+  assert.equal((await api.control('reboot')).ok, false);
+  const none = new ConfigApi({ configService: fakeConfigService(), log: {} });
+  assert.equal((await none.control('start')).ok, false);
+});

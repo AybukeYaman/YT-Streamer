@@ -94,3 +94,32 @@ test('planda olup listede olmayan kapak ek satır olarak görünür (kaybolmaz)'
   const html = renderConfigPage({ plan: new StreamPlan({ cover: 'X:/elle.jpg' }), clips: [], covers: [], token: 't' });
   assert.match(html, /name="cover" value="X:\/elle\.jpg" checked/);
 });
+
+test('streamState verilmezse başlat/durdur düğmeleri çıkmaz', () => {
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
+  assert.doesNotMatch(html, /value="start"/);
+  assert.doesNotMatch(html, /value="stop"/);
+});
+
+test('çalışırken: durum görünür, Başlat kapalı, Durdur açık ve onay ister', () => {
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState: 'running' });
+  assert.match(html, /Durum: <strong>Çalışıyor<\/strong>/);
+  assert.match(html, /value="start" disabled/);
+  assert.match(html, /value="stop" >/);
+  assert.match(html, /onsubmit="return confirm\(/);
+});
+
+test('durmuşken: Durdur kapalı, Başlat açık', () => {
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState: 'stopped' });
+  assert.match(html, /Durum: <strong>Durmuş<\/strong>/);
+  assert.match(html, /value="stop" disabled/);
+  assert.match(html, /value="start" >/);
+});
+
+test('başlat/durdur düğmeleri ana formdan AYRI: ayar alanları onlarla gönderilmez', () => {
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState: 'running' });
+  const startIdx = html.indexOf('value="start"');
+  const titleIdx = html.indexOf('name="title"');
+  assert.ok(startIdx > 0 && startIdx < titleIdx);
+  assert.ok(html.slice(startIdx, titleIdx).includes('</form>'));
+});

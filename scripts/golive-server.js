@@ -120,8 +120,30 @@ async function main() {
   // iki süreç aynı dosyaya yazınca canlı ffmpeg bozuk klip okuyup duraksıyor, ayrıca küçük
   // VPS'te çift kodlama CPU'yu yiyordu. Klipleri yayın süreci kendi açılışında hazırlar;
   // /config'ten kaydedince (apply) hazırlama yine bu süreçte, ama atomik (geçici dosya+rename).
+  // systemctl'i tek yerden çağırır: start/stop/status aynı unit'i (STREAM_UNIT) hedefler.
+  const systemctl = (...args) => spawnSync('systemctl', args, { encoding: 'utf8' });
+  const streamControl = {
+    async start() {
+      const res = systemctl('start', STREAM_UNIT);
+      if (res.error) throw new Error(`systemctl çalıştırılamadı: ${res.error.message}`);
+      if (res.status !== 0) throw new Error(`systemctl start başarısız (kod ${res.status}): ${(res.stderr || '').trim()}`);
+    },
+    async stop() {
+      const res = systemctl('stop', STREAM_UNIT);
+      if (res.error) throw new Error(`systemctl çalıştırılamadı: ${res.error.message}`);
+      if (res.status !== 0) throw new Error(`systemctl stop başarısız (kod ${res.status}): ${(res.stderr || '').trim()}`);
+    },
+    async status() {
+      const res = systemctl('is-active', STREAM_UNIT);
+      if (res.error) return 'unknown';
+      const state = (res.stdout || '').trim();
+      if (state === 'active' || state === 'activating') return 'running';
+      return state === 'inactive' || state === 'failed' ? 'stopped' : 'unknown';
+    },
+  };
   const configApi = new ConfigApi({
     configService,
+    streamControl,
     restartStream: async () => {
       try {
         await configService.restart();

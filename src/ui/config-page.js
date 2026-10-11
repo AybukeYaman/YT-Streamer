@@ -59,12 +59,36 @@ function clipList(name, clips, selected, token) {
   }).join('')}</div>`;
 }
 
+// Yayın süreci düğmeleri (streamState null ise hiç çıkmaz: özellik opsiyonel). AYRI formlar:
+// ana formun alanlarını (başlık, klipler…) göndermez, yani başlat/durdur ayarları kaydetmez.
+// Durdurma onay ister — telefonda yanlışlıkla dokunulabilir ve canlı yayını keser.
+function streamControls(streamState, action) {
+  if (!streamState) return '';
+  const labels = { running: 'Çalışıyor', stopped: 'Durmuş', unknown: 'Bilinmiyor' };
+  const label = labels[streamState] ?? labels.unknown;
+  return `<section>
+    <h2>Yayın</h2>
+    <p class="state">Durum: <strong>${esc(label)}</strong></p>
+    <p class="hint">Başlattıktan 30-60 sn sonra canlıya almak için go-live tetikle (Shortcuts).</p>
+    <div class="btnrow">
+      <form method="post" action="${esc(action)}">
+        <button class="secondary" type="submit" name="action" value="start" ${streamState === 'running' ? 'disabled' : ''}>Başlat</button>
+      </form>
+      <form method="post" action="${esc(action)}" onsubmit="return confirm('Yayın durdurulsun mu? Canlı yayın kesilir.')">
+        <button class="danger" type="submit" name="action" value="stop" ${streamState === 'stopped' ? 'disabled' : ''}>Durdur</button>
+      </form>
+    </div>
+  </section>`;
+}
+
 // plan: StreamPlan — currentPlan() hiç null dönmez, form her zaman bir taslakla açılır.
 // clips: string[] — ConfigApi#form()'dan (MediaLibrary.videos(), v1'de albüm taraması yok).
 // token: URL'deki ?token= değeri — form action'ına aynen eklenir (POST da aynı şekilde
 //   yetkilensin diye; gövdeden token okumak auth'tan ÖNCE gövdeyi okumayı gerektirirdi).
 // notice/error: POST sonrası aynı sayfaya basılan sonuç mesajı.
-function renderConfigPage({ plan, clips, covers = [], token, notice = null, error = null }) {
+function renderConfigPage({
+  plan, clips, covers = [], token, notice = null, error = null, streamState = null,
+}) {
   const p = plan.pomodoro;
   const action = `/config?token=${encodeURIComponent(token)}`;
   return `<!doctype html>
@@ -108,6 +132,11 @@ function renderConfigPage({ plan, clips, covers = [], token, notice = null, erro
   }
   .primary { background: #ec4899; color: #fff; font-weight: 600; }
   .secondary { background: #3a2130; color: #fbe6f0; }
+  .danger { background: #7a1f3d; color: #fff; font-weight: 600; }
+  button:disabled { opacity: .4; }
+  .state { padding: 10px 12px; border-radius: 8px; background: #241320; border: 1px solid #3a2130; margin-bottom: 4px; }
+  .btnrow { display: flex; gap: 10px; }
+  .btnrow form { flex: 1; margin: 0; }
   .muted { color: #c98cae; font-size: 14px; }
   .notice { background: #3a1430; border: 1px solid #d6459b; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
   .error { background: #3a1420; border: 1px solid #c2447a; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
@@ -117,6 +146,7 @@ function renderConfigPage({ plan, clips, covers = [], token, notice = null, erro
 <h1>Yayın Yapılandırması — ${esc(plan.name)}</h1>
 ${notice ? `<div class="notice">${esc(notice)}</div>` : ''}
 ${error ? `<div class="error">${esc(error)}</div>` : ''}
+${streamControls(streamState, action)}
 <form method="post" action="${esc(action)}">
   <section>
     <h2>Yayın Başlığı</h2>

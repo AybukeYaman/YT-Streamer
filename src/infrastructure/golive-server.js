@@ -313,6 +313,15 @@ class GoLiveServer {
         if (req.method === 'POST') {
           const text = await readBody(req);
           const params = new URLSearchParams(text);
+          // Başlat/durdur: plana dokunmayan ayrı işlem, kaydetme yoluna GİRMEZ.
+          const action = params.get('action');
+          if ((action === 'start' || action === 'stop') && typeof this.configApi.control === 'function') {
+            const result = await this.configApi.control(action);
+            const form = await this.configApi.form();
+            return this.#html(res, 200, renderConfigPage({
+              ...form, token, ...(result.ok ? { notice: result.message } : { error: result.error }),
+            }));
+          }
           const fields = {
             pomodoroEnabled: params.has('pomodoroEnabled'),
             pomodoroType: params.get('pomodoroType') || '',

@@ -462,3 +462,45 @@ test('POST /config: başarılı restart notice\'ta görünür', async () => {
     await server.close();
   }
 });
+
+test('POST /config action=start/stop: control çağrılır, save ÇAĞRILMAZ', async () => {
+  const { log } = fakeLog();
+  const api = fakeConfigApi();
+  const controls = [];
+  api.control = async (a) => { controls.push(a); return { ok: true, message: `tamam-${a}` }; };
+  const server = new GoLiveServer({ authToken: TOKEN, log, port: 0, goLiveService: fakeService(), configApi: api });
+  await server.listen();
+  const base = `http://127.0.0.1:${server.boundPort}`;
+  try {
+    for (const action of ['start', 'stop']) {
+      const res = await fetch(`${base}/config?token=${TOKEN}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `action=${action}`,
+      });
+      assert.equal(res.status, 200);
+      assert.match(await res.text(), new RegExp(`tamam-${action}`));
+    }
+    assert.deepEqual(controls, ['start', 'stop']);
+    assert.equal(api.saveCalls.length, 0, 'başlat/durdur plan kaydetmemeli');
+  } finally {
+    await server.close();
+  }
+});
+
+test('POST /config action=start: control hata dönerse hata sayfada görünür', async () => {
+  const { log } = fakeLog();
+  const api = fakeConfigApi();
+  api.control = async () => ({ ok: false, error: 'systemctl yok' });
+  const server = new GoLiveServer({ authToken: TOKEN, log, port: 0, goLiveService: fakeService(), configApi: api });
+  await server.listen();
+  const base = `http://127.0.0.1:${server.boundPort}`;
+  try {
+    const res = await fetch(`${base}/config?token=${TOKEN}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'action=start',
+    });
+    assert.match(await res.text(), /systemctl yok/);
+  } finally {
+    await server.close();
+  }
+});
