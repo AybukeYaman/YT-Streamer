@@ -12,7 +12,8 @@
     "test": "node --test \"test/**/*.test.{js,mjs}\"",
     "youtube:token": "node scripts/youtube/get-refresh-token.js",
     "youtube:verify": "node scripts/youtube/verify-access.js",
-    "albums:publish": "node scripts/publish-albums.js"
+    "albums:publish": "node scripts/publish-albums.js",
+    "loops:prepare": "node scripts/prepare-loops.js"
   },
   "engines": {
     "node": ">=20.12"
