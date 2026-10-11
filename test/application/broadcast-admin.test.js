@@ -123,3 +123,32 @@ test('önbellekte olmayan id için bir kez taze liste denenir (yeni açılan yay
   await admin.setPrivacy('yeni', 'private');
   assert.deepEqual(calls.find((c) => c[0] === 'privacy'), ['privacy', 'yeni', 'private']);
 });
+
+test('list: başlangıç tarihi — gerçek başlangıç > planlanan > oluşturulma; started işareti doğru', async () => {
+  const withSnippet = (id, snippet, lifeCycleStatus) => ({ id, snippet: { title: id, ...snippet }, status: { lifeCycleStatus, privacyStatus: 'public' } });
+  const { admin } = setup({
+    items: [
+      withSnippet('a', { actualStartTime: '2026-10-11T13:00:00Z', scheduledStartTime: '2026-10-11T12:00:00Z' }, 'live'),
+      withSnippet('b', { scheduledStartTime: '2026-10-12T09:00:00Z', publishedAt: '2026-10-10T00:00:00Z' }, 'ready'),
+      withSnippet('c', { publishedAt: '2026-10-10T00:00:00Z' }, 'created'),
+      withSnippet('d', {}, 'created'),
+    ],
+  });
+  const byId = Object.fromEntries((await admin.list()).map((b) => [b.id, b]));
+  assert.deepEqual([byId.a.startAt, byId.a.started], ['2026-10-11T13:00:00Z', true]);
+  assert.deepEqual([byId.b.startAt, byId.b.started], ['2026-10-12T09:00:00Z', false]);
+  assert.deepEqual([byId.c.startAt, byId.c.started], ['2026-10-10T00:00:00Z', false]);
+  assert.deepEqual([byId.d.startAt, byId.d.started], [null, false]);
+});
+
+test('list: canlı yayın en üstte; biten yayınlar en yeni 5 ile sınırlı', async () => {
+  const items = [
+    raw('r1', 'Hazır', 'ready'),
+    raw('l1', 'Canlı', 'live'),
+    ...[1, 2, 3, 4, 5, 6, 7].map((n) => raw(`c${n}`, `Bitti ${n}`, 'complete')),
+  ];
+  const { admin } = setup({ items });
+  const list = await admin.list();
+  assert.deepEqual(list.slice(0, 2).map((b) => b.id), ['l1', 'r1']);
+  assert.deepEqual(list.slice(2).map((b) => b.id), ['c1', 'c2', 'c3', 'c4', 'c5']);
+});

@@ -14,6 +14,7 @@ const PRIVACY_VALUES = ['public', 'unlisted', 'private'];
 // geçişe izin vermez; yalnızca testing/live (ve liveStarting) bitirilebilir.
 const ENDABLE = new Set(['live', 'testing', 'liveStarting']);
 const FINISHED = new Set(['complete', 'revoked']);
+const MAX_FINISHED = 5; // seçicide gösterilecek en fazla biten yayın
 
 class BroadcastAdminError extends Error {}
 
@@ -44,10 +45,25 @@ class BroadcastAdmin {
       privacyStatus: b.status?.privacyStatus ?? null,
       lifeCycleStatus: b.status?.lifeCycleStatus ?? null,
       finished: FINISHED.has(b.status?.lifeCycleStatus),
+      // Gerçek başlangıç (canlıya geçince dolar) yoksa planlanan; ikisi de yoksa oluşturulma.
+      // started: tarih gerçek başlangıç mı, planlanan mı (sayfa "Başladı"/"Planlanan" yazar).
+      startAt: b.snippet?.actualStartTime ?? b.snippet?.scheduledStartTime ?? b.snippet?.publishedAt ?? null,
+      started: Boolean(b.snippet?.actualStartTime),
     }));
-    items.sort((a, b) => Number(a.finished) - Number(b.finished)); // Array#sort kararlı
-    this.cache = { at: this.now(), items };
-    return items;
+    // Canlı önce, sonra test/geçiş, sonra hazır/oluşturulmuş, en sonda biten. Array#sort kararlı:
+    // aynı sıradakiler API sırasını (en yeni önce) korur.
+    const rank = (b) => {
+      if (b.finished) return 3;
+      if (b.lifeCycleStatus === 'live') return 0;
+      return ENDABLE.has(b.lifeCycleStatus) ? 1 : 2;
+    };
+    items.sort((a, b) => rank(a) - rank(b));
+    // Biten yayınlar listeyi şişirmesin: en yeni MAX_FINISHED tanesi.
+    const active = items.filter((b) => !b.finished);
+    const finished = items.filter((b) => b.finished).slice(0, MAX_FINISHED);
+    const shown = [...active, ...finished];
+    this.cache = { at: this.now(), items: shown };
+    return shown;
   }
 
   async get(id) {

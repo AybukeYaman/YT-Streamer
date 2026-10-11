@@ -89,6 +89,16 @@ const LIFECYCLE_LABELS = {
 
 const ENDABLE_STATES = new Set(['live', 'testing', 'liveStarting']);
 
+// Sunucu UTC'de çalışır; kullanıcı Türkiye saatiyle okur. Geçersiz/eksik tarih sessizce boş.
+const DISPLAY_TZ = 'Europe/Istanbul';
+const dateFormat = new Intl.DateTimeFormat('tr-TR', {
+  day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: DISPLAY_TZ,
+});
+function formatStart(iso) {
+  const date = iso ? new Date(iso) : null;
+  return date && !Number.isNaN(date.getTime()) ? dateFormat.format(date) : '';
+}
+
 const shorten = (text, max) => (text.length > max ? `${text.slice(0, max)}…` : text);
 
 // Yayın seçici + seçili yayının işlem paneli. YouTube'daki VAR OLAN yayınlar üzerinde çalışır
@@ -109,7 +119,12 @@ function broadcastPicker({
   }
 
   const t = encodeURIComponent(token);
-  const label = (b) => `${shorten(b.title, 40)} · ${LIFECYCLE_LABELS[b.lifeCycleStatus] ?? b.lifeCycleStatus ?? '?'} · ${PRIVACY_LABELS[b.privacyStatus] ?? b.privacyStatus ?? '?'}`;
+  const label = (b) => [
+    `${b.lifeCycleStatus === 'live' ? '● ' : ''}${shorten(b.title, 40)}`,
+    LIFECYCLE_LABELS[b.lifeCycleStatus] ?? b.lifeCycleStatus ?? '?',
+    PRIVACY_LABELS[b.privacyStatus] ?? b.privacyStatus ?? '?',
+    formatStart(b.startAt),
+  ].filter(Boolean).join(' · ');
   const option = (b) => `<option value="${esc(`/config?token=${t}&broadcast=${encodeURIComponent(b.id)}`)}"${b.id === selectedId ? ' selected' : ''}>${esc(label(b))}</option>`;
   const active = items.filter((b) => !b.finished);
   const finished = items.filter((b) => b.finished);
@@ -126,7 +141,7 @@ function broadcastPicker({
 
   return `${head}
     ${picker}
-    <p class="state">Durum: <strong>${esc(LIFECYCLE_LABELS[b.lifeCycleStatus] ?? b.lifeCycleStatus ?? 'Bilinmiyor')}</strong> · Görünürlük: <strong>${esc(PRIVACY_LABELS[b.privacyStatus] ?? b.privacyStatus ?? 'Bilinmiyor')}</strong></p>
+    <p class="state">Durum: <strong>${esc(LIFECYCLE_LABELS[b.lifeCycleStatus] ?? b.lifeCycleStatus ?? 'Bilinmiyor')}</strong> · Görünürlük: <strong>${esc(PRIVACY_LABELS[b.privacyStatus] ?? b.privacyStatus ?? 'Bilinmiyor')}</strong>${formatStart(b.startAt) ? ` · ${b.started ? 'Başladı' : 'Planlanan'}: <strong>${esc(formatStart(b.startAt))}</strong>` : ''}</p>
     <form method="post" action="${esc(act)}">
       <input type="hidden" name="broadcastId" value="${esc(b.id)}">
       <p class="hint">Başlık (YouTube'da şu an yazan)</p>

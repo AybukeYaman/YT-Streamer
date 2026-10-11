@@ -205,3 +205,34 @@ test('yüklenen kapak (pendingCover) listede işaretli gelir', () => {
   assert.match(html, /name="cover" value="X:\/c\/galeri-1\.jpg" checked/);
   assert.doesNotMatch(html, /name="cover" value="X:\/c\/a\.jpg" checked/);
 });
+
+test('seçici: başlangıç tarihi Türkiye saatiyle etikette ve durum satırında görünür', () => {
+  // 13:05 UTC = 16:05 Türkiye saati
+  const started = {
+    id: 's1', title: 'Başlamış', description: '', privacyStatus: 'public', lifeCycleStatus: 'live', finished: false,
+    startAt: '2026-10-11T13:05:00Z', started: true,
+  };
+  const planned = {
+    id: 's2', title: 'Planlı', description: '', privacyStatus: 'private', lifeCycleStatus: 'ready', finished: false,
+    startAt: '2026-10-12T09:30:00Z', started: false,
+  };
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { items: [started, planned] }, selectedId: 's1',
+  });
+  assert.match(html, /● Başlamış · Canlı · Herkese açık · 11 Eki.*16:05/);
+  assert.match(html, /Planlı · Hazır · Gizli · 12 Eki.*12:30/);
+  assert.match(html, /Başladı: <strong>11 Eki.*16:05<\/strong>/);
+  const plannedHtml = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { items: [started, planned] }, selectedId: 's2',
+  });
+  assert.match(plannedHtml, /Planlanan: <strong>12 Eki.*12:30<\/strong>/);
+});
+
+test('seçici: tarih yok ya da geçersizse etiket bozulmaz (tarih sessizce atlanır)', () => {
+  const bad = {
+    id: 'x', title: 'Tarihsiz', description: '', privacyStatus: 'public', lifeCycleStatus: 'ready', finished: false, startAt: 'bozuk-tarih',
+  };
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { items: [bad] }, selectedId: 'x' });
+  assert.match(html, /Tarihsiz · Hazır · Herkese açık<\/option>/);
+  assert.doesNotMatch(html, /Invalid Date|NaN/);
+});
