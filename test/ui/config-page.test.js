@@ -1,8 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { renderConfigPage, esc } = require('../../src/ui/config-page');
 const { StreamPlan } = require('../../src/domain/stream-plan');
+const { canonicalForms } = require('./helpers/form-data');
+const { scenarios } = require('./helpers/scenarios');
 
 test('esc: HTML özel karakterleri kaçışlar', () => {
   assert.equal(esc(`a < b & "c" 'd'`), 'a &lt; b &amp; &quot;c&quot; &#39;d&#39;');
@@ -64,9 +68,10 @@ test('her klip satırında önizleme <img> var, token ile', () => {
   assert.match(html, /onerror="this\.style\.display='none'"/);
 });
 
-test('dokunma hedefleri en az 44px (CSS min-height)', () => {
+test('dokunma hedefleri en az 44px (CSS --tap token\'ı)', () => {
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
-  assert.match(html, /min-height:\s*44px/);
+  assert.match(html, /--tap:\s*(4[4-9]|[5-9]\d)px/);
+  assert.match(html, /button\s*\{[^}]*min-height:\s*var\(--tap\)/);
 });
 
 test('başlık ve açıklama mevcut plandan doldurulur, kaçışlanır', () => {
@@ -101,27 +106,38 @@ test('streamState verilmezse başlat/durdur düğmeleri çıkmaz', () => {
   assert.doesNotMatch(html, /value="stop"/);
 });
 
-test('çalışırken: durum görünür, Başlat kapalı, Durdur açık ve onay ister', () => {
+test('çalışırken: durum görünür, yalnızca Durdur çizilir ve onay ister (pasif Başlat yok)', () => {
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState: 'running' });
   assert.match(html, /Durum: <strong>Çalışıyor<\/strong>/);
-  assert.match(html, /value="start" disabled/);
-  assert.match(html, /value="stop" >/);
-  assert.match(html, /onsubmit="return confirm\(/);
+  assert.match(html, /name="action" value="stop">Durdur/);
+  assert.doesNotMatch(html, /value="start"/);
+  assert.doesNotMatch(html, /<button[^>]*\bdisabled\b/);
+  assert.match(html, /onsubmit="return confirm\('Yayın durdurulsun mu\?/);
 });
 
-test('durmuşken: Durdur kapalı, Başlat açık', () => {
+test('durmuşken: yalnızca Başlat çizilir (birincil), Durdur yok; sonraki adım ipucu var', () => {
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState: 'stopped' });
   assert.match(html, /Durum: <strong>Durmuş<\/strong>/);
-  assert.match(html, /value="stop" disabled/);
-  assert.match(html, /value="start" >/);
+  assert.match(html, /<button class="primary" type="submit" name="action" value="start">Başlat/);
+  assert.doesNotMatch(html, /value="stop"/);
+  assert.match(html, /go-live tetikle/);
+});
+
+test('durum bilinmiyorken ikisi de çizilir (hangisinin doğru olduğu belli değil)', () => {
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState: 'unknown' });
+  assert.match(html, /Durum: <strong>Bilinmiyor<\/strong>/);
+  assert.match(html, /value="start"/);
+  assert.match(html, /value="stop"/);
 });
 
 test('başlat/durdur düğmeleri ana formdan AYRI: ayar alanları onlarla gönderilmez', () => {
-  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState: 'running' });
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState: 'stopped' });
   const startIdx = html.indexOf('value="start"');
   const titleIdx = html.indexOf('name="title"');
   assert.ok(startIdx > 0 && startIdx < titleIdx);
   assert.ok(html.slice(startIdx, titleIdx).includes('</form>'));
+  // Ana yayın kartı "Şu an" bölümünde, plan formundan ÖNCE.
+  assert.ok(html.indexOf('<h2>Şu an</h2>') < html.indexOf('id="planForm"'));
 });
 
 // ─── Yayın seçici + galeri yükleme ─────────────────────────────────────────
@@ -135,7 +151,7 @@ const PB2 = {
 
 test('broadcasts verilmezse yayın seçici hiç çıkmaz', () => {
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
-  assert.doesNotMatch(html, /YouTube Yayınları/);
+  assert.doesNotMatch(html, /YouTube'daki yayın/);
 });
 
 test('seçici: aktif ve biten yayınlar ayrı gruplarda, durum+görünürlük etiketli, seçili işaretli', () => {
@@ -162,10 +178,11 @@ test('seçili yayının MEVCUT başlığı/açıklaması/görünürlüğü formd
   assert.match(html, /action="\/config\/broadcast\?token=t&amp;broadcast=b1"/);
 });
 
-test('Yayını Bitir yalnızca canlı/test yayında çıkar ve onay ister', () => {
+test('Yayını Bitir yalnızca canlı/test yayında çıkar, katlı tehlike bölgesinde ve onay ister', () => {
   const live = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { items: [PB1] }, selectedId: 'b1' });
   assert.match(live, /value="end"/);
   assert.match(live, /confirm\('Bu yayın BİTİRİLSİN mi\?/);
+  assert.match(live, /<details class="fold dangerzone"><summary>Yayını bitir…/, 'varsayılan kapalı: yanlışlıkla dokunulmasın');
   const done = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { items: [PB2] }, selectedId: 'b2' });
   assert.doesNotMatch(done, /value="end"/);
 });
@@ -174,7 +191,7 @@ test('kapak seçeneği: "Değiştirme" varsayılan, kapak adayları listelenir',
   const html = renderConfigPage({
     plan: new StreamPlan({}), clips: [], covers: ['X:/c/a.jpg'], token: 't', broadcasts: { items: [PB1] }, selectedId: 'b1',
   });
-  assert.match(html, /<select name="cover"><option value="">Değiştirme<\/option><option value="X:\/c\/a\.jpg">/);
+  assert.match(html, /<select id="b-cover" name="cover"><option value="">Değiştirme<\/option><option value="X:\/c\/a\.jpg">/);
 });
 
 test('seçici: hata ve boş liste durumunda kısa not', () => {
@@ -188,14 +205,14 @@ test('seçili yayın diğer formların action\'ına taşınır (kaydet sonrası 
   const html = renderConfigPage({
     plan: new StreamPlan({}), clips: [], token: 'tk', broadcasts: { items: [PB1] }, selectedId: 'b1', streamState: 'running',
   });
-  assert.match(html, /<form method="post" action="\/config\?token=tk&amp;broadcast=b1">/);
+  assert.match(html, /<form id="planForm" method="post" action="\/config\?token=tk&amp;broadcast=b1">/);
   assert.match(html, /action="\/config\/upload\?token=tk&amp;broadcast=b1"/);
 });
 
 test('galeri yükleme: multipart form ana formun DIŞINDA, dosya alanı form= ile bağlı', () => {
   const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 'tk' });
   assert.match(html, /<form id="coverUpload" method="post" enctype="multipart\/form-data" action="\/config\/upload\?token=tk"><\/form>/);
-  assert.match(html, /<input type="file" name="coverFile" accept="image\/jpeg,image\/png,image\/webp" form="coverUpload"/);
+  assert.match(html, /<input type="file" id="coverFile" name="coverFile" accept="image\/jpeg,image\/png,image\/webp" form="coverUpload"/);
   assert.match(html, /<button class="secondary" type="submit" form="coverUpload">Yükle<\/button>/);
 });
 
@@ -260,6 +277,8 @@ test('canCreate ile dropdown\'un ilk seçeneği "+ Yeni yayın aç…" ve ?new=1
   // Yeni yayın modunda değilken mevcut yayın seçili kalır.
   assert.match(html, /class="pickrow sel" href="[^"]*broadcast=b1"/);
   assert.doesNotMatch(html, /name="goLiveNow"/);
+  // Sayfa sonunda da keşfedilebilir bir bağlantı var (menünün içine gömülü kalmasın).
+  assert.match(html, /<a class="newlink" href="\/config\?token=tk&amp;new=1">/);
 });
 
 test('newMode: form açılır (ad, başlık, açıklama, görünürlük, kapak, albümler, otomatik canlıya al); yayın paneli gizlenir', () => {
@@ -282,9 +301,11 @@ test('newMode: form açılır (ad, başlık, açıklama, görünürlük, kapak, 
   assert.match(html, /name="goLiveNow" checked/);
   // Mevcut yayının Bu Yayına Uygula formu görünmemeli.
   assert.doesNotMatch(html, /value="apply"/);
+  // Albümler katlı bölümde ama FORM İÇİNDE (tarayıcı kapalı <details> alanlarını da gönderir).
+  assert.match(html, /<details class="fold"><summary>Kapak ve albümler <span class="sumnote">· tüm kütüphane çalar/);
 });
 
-test('newMode: hata sonrası girdiler korunur (draft), kaçışlıdır', () => {
+test('newMode: hata sonrası girdiler korunur (draft), kaçışlıdır; seçili albüm bölümü açık gelir', () => {
   const html = renderConfigPage({
     plan: new StreamPlan({}), clips: [], covers: ['X:/c/a.jpg'], token: 't', canCreate: true, newMode: true, broadcasts: { items: [] },
     catalogAlbums: ALBUM_CAT,
@@ -301,6 +322,7 @@ test('newMode: hata sonrası girdiler korunur (draft), kaçışlıdır', () => {
   assert.doesNotMatch(html, /name="albums" value="mimi" checked/);
   assert.doesNotMatch(html, /name="goLiveNow" checked/);
   assert.match(html, /class="error">kapasite dolu/);
+  assert.match(html, /<details class="fold" open><summary>Kapak ve albümler <span class="sumnote">· 1 albüm seçili/);
 });
 
 test('hiç yayın yokken de yalnızca "+ Yeni yayın" ile seçici görünür', () => {
@@ -323,26 +345,39 @@ test('albüm yoksa form "boş bırakırsan hepsi" notunu gösterir', () => {
   assert.match(html, /Albüm bulunamadı/);
 });
 
-test('Ek Yayınlar: durum + başlat/canlıya al/durdur; durdur onay ister; duruma göre pasif', () => {
+test('Ek yayınlar: durum + bağlamsal ana düğme; durdur "Diğer işlemler" altında ve onay ister', () => {
   const html = renderConfigPage({
     plan: new StreamPlan({}), clips: [], token: 'tk',
-    instances: [{ name: 'lofi2', state: 'running' }, { name: 'zen2', state: 'stopped' }],
+    instances: [
+      { name: 'lofi2', state: 'running' }, { name: 'zen2', state: 'stopped' }, { name: 'kim', state: 'unknown' },
+    ],
   });
-  assert.match(html, /<h2>Ek Yayınlar<\/h2>/);
+  assert.match(html, /<h3>Ek yayınlar<\/h3>/);
   assert.match(html, /<strong>lofi2<\/strong> · Çalışıyor/);
   assert.match(html, /<strong>zen2<\/strong> · Durmuş/);
   assert.match(html, /action="\/config\/instance\?token=tk"/);
   assert.match(html, /name="name" value="lofi2"/);
   assert.match(html, /confirm\('Bu yayın durdurulsun mu\?'\)/);
-  // lofi2 çalışıyor: Başlat pasif; zen2 durmuş: Canlıya Al ve Durdur pasif.
-  assert.match(html, /name="name" value="lofi2">\s*<button class="secondary" type="submit" name="action" value="start" disabled>/);
-  assert.match(html, /name="name" value="zen2">\s*<button class="secondary" type="submit" name="action" value="golive" disabled>/);
-  assert.match(html, /name="name" value="zen2">\s*<button class="danger" type="submit" name="action" value="stop" disabled>/);
+  assert.doesNotMatch(html, /<button[^>]*\bdisabled\b/);
+  const card =(name) => {
+    const i = html.indexOf(`<strong>${name}</strong>`);
+    const next = Math.min(
+      ...['<div class="card">', '</section>'].map((m) => html.indexOf(m, i)).filter((n) => n !== -1),
+    );
+    return html.slice(i, next);
+  };
+  const actions = (name) => [...card(name).matchAll(/name="action" value="(\w+)"/g)].map((m) => m[1]);
+  // Eskiden SUNUCUDA GEÇERLİ olan her işlem hâlâ erişilebilir; yalnızca anlamsız olanlar kalktı.
+  assert.deepEqual(actions('lofi2'), ['golive', 'stop'], 'çalışıyor: Canlıya Al ana, Durdur diğer işlemlerde');
+  assert.deepEqual(actions('zen2'), ['start'], 'durmuş: yalnızca Başlat');
+  assert.deepEqual(actions('kim'), ['start', 'stop'], 'bilinmiyor: Başlat ana, Durdur diğer işlemlerde');
+  assert.match(card('lofi2'), /<details class="fold more"><summary>Diğer işlemler/);
+  assert.doesNotMatch(card('zen2'), /<details/);
 });
 
-test('ek yayın yoksa Ek Yayınlar bölümü çıkmaz', () => {
-  assert.doesNotMatch(renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', instances: [] }), /Ek Yayınlar/);
-  assert.doesNotMatch(renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' }), /Ek Yayınlar/);
+test('ek yayın yoksa Ek yayınlar bölümü çıkmaz', () => {
+  assert.doesNotMatch(renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', instances: [] }), /Ek yayınlar/);
+  assert.doesNotMatch(renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' }), /Ek yayınlar/);
 });
 
 // ─── Dropdown küçük resimleri ──────────────────────────────────────────────
@@ -382,4 +417,102 @@ test('"+ Yeni yayın aç…" satırı resimsiz yer tutucuyla gelir ve ilk sırad
   });
   const list = html.slice(html.indexOf('<div class="picklist">'));
   assert.ok(list.indexOf('Yeni yayın aç…') < list.indexOf('Canlı &lt;Yayın&gt;'));
+});
+
+// ─── Yeniden tasarım (mobile-ux-redesign-plan.md): eşdeğerlik ve erişilebilirlik ───
+
+test('FORM EŞDEĞERLİĞİ: yeni sayfa, eski sürümle aynı alan/değer çiftlerini gönderir (altın örnekler)', () => {
+  const golden = JSON.parse(fs.readFileSync(path.join(__dirname, 'config-page.form-golden.json'), 'utf8'));
+  for (const [name, make] of Object.entries(scenarios)) {
+    const actual = canonicalForms(renderConfigPage(make())).map((f) => JSON.parse(f));
+    assert.deepEqual(actual, golden[name], `senaryo "${name}": gönderilen form verisi eski sürümden farklı`);
+  }
+});
+
+test('sayfa sırası: Şu an → YouTube\'daki yayın → Sonraki yayın; Kaydet düğmeleri formun sonunda', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 't', streamState: 'running', broadcasts: { items: [PB1] }, selectedId: 'b1',
+  });
+  const order = ['<h2>Şu an</h2>', "<h2>YouTube'daki yayın</h2>", '<h2>Sonraki yayın</h2>', 'value="save"', 'value="save_restart"'];
+  const idx = order.map((s) => html.indexOf(s));
+  assert.ok(idx.every((i) => i > 0), `eksik bölüm: ${JSON.stringify(idx)}`);
+  assert.deepEqual([...idx].sort((a, b) => a - b), idx, 'bölümler beklenen sırada değil');
+  // Implicit submit (Enter) formdaki İLK gönder düğmesini kullanır: bu Kaydet olmalı, yeniden başlatma değil.
+  const planForm = html.slice(html.indexOf('id="planForm"'));
+  assert.ok(planForm.indexOf('value="save"') < planForm.indexOf('value="save_restart"'));
+});
+
+test('erişilebilirlik: her metin/textarea/select/dosya alanı gerçek bir <label for> ile bağlı', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: ['X:/a.mp4'], covers: ['X:/c.jpg'], token: 't', canCreate: true, newMode: true,
+    broadcasts: { items: [PB1] }, selectedId: 'b1', catalogAlbums: ALBUM_CAT, instances: [{ name: 'x', state: 'running' }],
+  });
+  const withBroadcast = renderConfigPage({
+    plan: new StreamPlan({}), clips: ['X:/a.mp4'], covers: ['X:/c.jpg'], token: 't', broadcasts: { items: [PB1] }, selectedId: 'b1',
+  });
+  for (const page of [html, withBroadcast]) {
+    const labelFor = new Set([...page.matchAll(/<label[^>]*\sfor="([^"]+)"/g)].map((m) => m[1]));
+    const controls = [...page.matchAll(/<(input|textarea|select)\b([^>]*)>/g)]
+      .map((m) => ({ tag: m[1], attrs: m[2] }))
+      .filter((c) => !/type="(hidden|submit|button)"/.test(c.attrs));
+    assert.ok(controls.length > 5);
+    for (const c of controls) {
+      const id = /\bid="([^"]+)"/.exec(c.attrs)?.[1];
+      assert.ok(id, `id'siz kontrol: <${c.tag}${c.attrs}>`);
+      assert.ok(labelFor.has(id), `<label for="${id}"> yok`);
+    }
+    // id'ler benzersiz (aynı kapak/albüm iki formda tekrarlansa bile).
+    const ids = [...page.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
+    assert.equal(new Set(ids).size, ids.length, 'tekrarlanan id var');
+  }
+});
+
+test('D5: arayüzde SSH/terminal gerektiren metin yok; müzik notu gerçek duruma göre', () => {
+  const states = [
+    renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' }),
+    renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState: 'stopped', canCreate: true }),
+  ];
+  const picked = new StreamPlan({ music: { albums: [{ name: 'a', trackPaths: ['x/1.mp3', 'x/2.mp3'] }] } });
+  states.push(renderConfigPage({ plan: picked, clips: [], token: 't' }));
+  for (const html of states) assert.doesNotMatch(html, /npm run|SSH|sihirbaz/i);
+  assert.match(states[0], /Müzik: kütüphanedeki tüm parçalar çalıyor/);
+  assert.match(states[2], /Müzik: 2 parça seçili/);
+});
+
+test('katlı bölümler varsayılan kapalı ama alanları formda (kapalı <details> alanları da gönderilir)', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({ pomodoro: { enabled: true, studyVideos: ['X:/a.mp4'] } }), clips: ['X:/a.mp4'], token: 't',
+  });
+  assert.match(html, /<details class="fold"><summary>Çalışma görselleri <span class="sumnote">· 1 seçili/);
+  assert.match(html, /<details class="fold"><summary>Mola görselleri <span class="sumnote">· 0 seçili/);
+  const plan = canonicalForms(html).map((f) => JSON.parse(f)).find((f) => f.action === '/config?token=t');
+  assert.ok(plan.entries.some(([k, v]) => k === 'studyVideos' && v === 'X:/a.mp4'));
+});
+
+// ─── Renk kontrastı (WCAG) ─────────────────────────────────────────────────
+
+function luminance(hex) {
+  const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+const contrast = (a, b) => {
+  const [x, y] = [luminance(a), luminance(b)];
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+};
+
+test('kontrast: metin ≥ 4.5:1, bileşen kenarı/durum noktası ≥ 3:1 (token çiftleri)', () => {
+  const html = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
+  const tok = Object.fromEntries([...html.matchAll(/--([\w-]+):\s*(#[0-9a-fA-F]{6})/g)].map((m) => [m[1], m[2]]));
+  const textPairs = [
+    ['text', 'bg'], ['text', 'surface'], ['text', 'surface-2'], ['muted', 'bg'], ['muted', 'surface'], ['muted', 'surface-2'],
+    ['head', 'bg'], ['focus', 'surface'],
+  ];
+  for (const [fg, bg] of textPairs) assert.ok(contrast(tok[fg], tok[bg]) >= 4.5, `${fg} on ${bg}: ${contrast(tok[fg], tok[bg]).toFixed(2)}`);
+  // Düğme metinleri (beyaz): birincil (accent-strong) ve tehlike.
+  for (const bg of ['accent-strong', 'danger']) assert.ok(contrast('#ffffff', tok[bg]) >= 4.5, `beyaz on ${bg}`);
+  // Bileşen sınırları ve durum noktaları (WCAG 1.4.11): kart yüzeyinde ve zeminde ≥ 3:1.
+  for (const fg of ['border-strong', 'ok', 'warn', 'idle', 'danger-edge']) {
+    for (const bg of ['bg', 'surface']) assert.ok(contrast(tok[fg], tok[bg]) >= 3, `${fg} on ${bg}: ${contrast(tok[fg], tok[bg]).toFixed(2)}`);
+  }
 });

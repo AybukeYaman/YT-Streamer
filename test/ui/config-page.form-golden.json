@@ -1,0 +1,284 @@
+{
+  "tam": [
+    {
+      "method": "post",
+      "action": "/config/broadcast?token=tk&broadcast=b1",
+      "entries": [
+        [
+          "broadcastId",
+          "b1"
+        ],
+        [
+          "cover",
+          ""
+        ],
+        [
+          "description",
+          "açıklama\nikinci satır"
+        ],
+        [
+          "privacy",
+          "unlisted"
+        ],
+        [
+          "title",
+          "Canlı \"yayın\" <1>"
+        ]
+      ]
+    },
+    {
+      "method": "post",
+      "action": "/config/broadcast?token=tk&broadcast=b1",
+      "entries": [
+        [
+          "broadcastId",
+          "b1"
+        ]
+      ]
+    },
+    {
+      "method": "post",
+      "action": "/config/upload?token=tk&broadcast=b1",
+      "entries": [
+        [
+          "coverFile",
+          "<file>"
+        ]
+      ]
+    },
+    {
+      "method": "post",
+      "action": "/config?token=tk&broadcast=b1",
+      "entries": [
+        [
+          "breakVideos",
+          "X:/clips/b & c.mp4"
+        ],
+        [
+          "cover",
+          "X:/c/b.jpg"
+        ],
+        [
+          "description",
+          "Sonraki\naçıklama"
+        ],
+        [
+          "pomodoroEnabled",
+          "on"
+        ],
+        [
+          "pomodoroType",
+          "45+15"
+        ],
+        [
+          "studyVideos",
+          "X:/clips/a.mp4"
+        ],
+        [
+          "studyVideos",
+          "X:/clips/<d>.mp4"
+        ],
+        [
+          "title",
+          "Sonraki \"başlık\""
+        ]
+      ]
+    }
+  ],
+  "varsayilan": [
+    {
+      "method": "post",
+      "action": "/config/upload?token=tk",
+      "entries": [
+        [
+          "coverFile",
+          "<file>"
+        ]
+      ]
+    },
+    {
+      "method": "post",
+      "action": "/config?token=tk",
+      "entries": [
+        [
+          "cover",
+          ""
+        ],
+        [
+          "description",
+          ""
+        ],
+        [
+          "pomodoroType",
+          "50+10"
+        ],
+        [
+          "title",
+          ""
+        ]
+      ]
+    }
+  ],
+  "yeniVarsayilan": [
+    {
+      "method": "post",
+      "action": "/config/new?token=tk",
+      "entries": [
+        [
+          "cover",
+          ""
+        ],
+        [
+          "description",
+          ""
+        ],
+        [
+          "goLiveNow",
+          "on"
+        ],
+        [
+          "name",
+          ""
+        ],
+        [
+          "privacy",
+          "unlisted"
+        ],
+        [
+          "title",
+          ""
+        ]
+      ]
+    },
+    {
+      "method": "post",
+      "action": "/config/upload?token=tk",
+      "entries": [
+        [
+          "coverFile",
+          "<file>"
+        ]
+      ]
+    },
+    {
+      "method": "post",
+      "action": "/config?token=tk",
+      "entries": [
+        [
+          "cover",
+          ""
+        ],
+        [
+          "description",
+          ""
+        ],
+        [
+          "pomodoroType",
+          "50+10"
+        ],
+        [
+          "title",
+          ""
+        ]
+      ]
+    }
+  ],
+  "yeniTaslak": [
+    {
+      "method": "post",
+      "action": "/config/new?token=tk",
+      "entries": [
+        [
+          "albums",
+          "zen"
+        ],
+        [
+          "cover",
+          "X:/c/a.jpg"
+        ],
+        [
+          "description",
+          "a\nb"
+        ],
+        [
+          "name",
+          "lofi2"
+        ],
+        [
+          "privacy",
+          "private"
+        ],
+        [
+          "title",
+          "Gece <b>"
+        ]
+      ]
+    },
+    {
+      "method": "post",
+      "action": "/config/upload?token=tk&broadcast=b1",
+      "entries": [
+        [
+          "coverFile",
+          "<file>"
+        ]
+      ]
+    },
+    {
+      "method": "post",
+      "action": "/config?token=tk&broadcast=b1",
+      "entries": [
+        [
+          "cover",
+          ""
+        ],
+        [
+          "description",
+          ""
+        ],
+        [
+          "pomodoroType",
+          "50+10"
+        ],
+        [
+          "title",
+          ""
+        ]
+      ]
+    }
+  ],
+  "yukluKapak": [
+    {
+      "method": "post",
+      "action": "/config/upload?token=tk",
+      "entries": [
+        [
+          "coverFile",
+          "<file>"
+        ]
+      ]
+    },
+    {
+      "method": "post",
+      "action": "/config?token=tk",
+      "entries": [
+        [
+          "cover",
+          "X:/c/galeri.jpg"
+        ],
+        [
+          "description",
+          ""
+        ],
+        [
+          "pomodoroType",
+          "50+10"
+        ],
+        [
+          "title",
+          ""
+        ]
+      ]
+    }
+  ]
+}
