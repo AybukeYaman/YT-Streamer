@@ -152,6 +152,11 @@ function formatStart(iso) {
   return date && !Number.isNaN(date.getTime()) ? dateFormat.format(date) : '';
 }
 
+// İşlem kimliği (n): sunucu sayfa başına üretir; POST action URL'sine eklenir ki aynı sayfadan
+// ikinci gönderim işlemi tekrar çalıştırmasın (bkz. src/infrastructure/action-dedupe.js).
+// Verilmezse URL değişmez (form altın testleri, eski kullanım).
+const withNonce = (url, nonce) => (nonce ? `${url}&n=${encodeURIComponent(nonce)}` : url);
+
 const shorten = (text, max) => (text.length > max ? `${text.slice(0, max)}…` : text);
 
 // Yayın küçük resmi: YouTube'un kendi CDN'inden (i.ytimg.com). Yalnızca https ve ytimg.com
@@ -194,7 +199,7 @@ const existingPrivacyControl = (id, current) => (Object.hasOwn(PRIVACY_LABELS, c
 // İşlem formları ana plan formundan AYRI (iç içe form olmaz, planı kaydetmez).
 // canCreate: "+ Yeni yayın" satırı (eşzamanlı ikinci yayın kurma formu, ?new=1).
 function broadcastPicker({
-  broadcasts, selectedId, token, covers, canCreate = false, newMode = false, newFormHtml = '',
+  broadcasts, selectedId, token, covers, canCreate = false, newMode = false, newFormHtml = '', nonce = null,
 }) {
   if (!broadcasts && !canCreate) return '';
   const head = '<section>\n    <h2>YouTube\'daki yayın</h2>';
@@ -244,7 +249,7 @@ function broadcastPicker({
   if (newMode) return `${head}\n    ${picker}\n    ${newFormHtml}\n  </section>`;
 
   const b = items.find((x) => x.id === selectedId) ?? items[0];
-  const act = `/config/broadcast?token=${t}&broadcast=${encodeURIComponent(b.id)}`;
+  const act = withNonce(`/config/broadcast?token=${t}&broadcast=${encodeURIComponent(b.id)}`, nonce);
   const canEnd = ENDABLE_STATES.has(b.lifeCycleStatus);
   const tone = b.lifeCycleStatus === 'live' ? 'ok' : (b.finished ? 'idle' : 'warn');
   const detailsBody = `
@@ -281,7 +286,7 @@ function broadcastPicker({
 // Albüm seçimi boşsa tüm kütüphane çalar (mevcut davranış). Pomodoro klipleri kapalı açılır:
 // ölçümde klip girişleri CPU'yu ~2x yapıyor, ikinci yayını hafif tutmak için.
 function newStreamForm({
-  token, covers, albums, draft = {}, keep = '',
+  token, covers, albums, draft = {}, keep = '', nonce = null,
 }) {
   const t = encodeURIComponent(token);
   const chosen = new Set(draft.albums ?? []);
@@ -304,7 +309,7 @@ function newStreamForm({
       <p class="hint">Müzik + arkaplan; boş bırakırsan kütüphanedeki her şey çalar.</p>
       ${albumRows}`;
 
-  return `<form method="post" action="${esc(`/config/new?token=${t}${keep}`)}" data-guard>
+  return `<form method="post" action="${esc(withNonce(`/config/new?token=${t}${keep}`, nonce))}" data-guard>
       <p class="hint">Aynı anda ikinci bir yayın açar: YouTube'da yeni bir yayın anahtarı oluşturulur ve sunucuda ayrı bir yayın süreci kurulur. Sunucu CPU'su en fazla birkaç yayına yeter; doluysa reddedilir.</p>
       <label class="lbl" for="n-name">Yayın adı</label>
       <p class="hint">Sunucudaki ad: küçük harf, rakam, - _</p>
@@ -325,14 +330,14 @@ function newStreamForm({
 //   durmuş/bilinmiyor → Başlat (Durdur diğer işlemlerde, bilinmiyorken); çalışıyor → Canlıya Al
 //   (Durdur diğer işlemlerde). Eskiden pasif görünen (çalışırken Başlat, durmuşken Canlıya Al/
 //   Durdur) düğmeler artık hiç çizilmez — o durumlarda sunucuda da anlamsızdı.
-function instancesSection(instances, token) {
+function instancesSection(instances, token, { keep = '', nonce = null } = {}) {
   if (!instances || !instances.length) return '';
   const t = encodeURIComponent(token);
   const btn = (name, a) => {
     const text = { start: 'Başlat', golive: 'Canlıya Al', stop: 'Durdur' }[a];
     const confirmAttr = a === 'stop' ? ' onsubmit="return confirm(\'Bu yayın durdurulsun mu?\')"' : '';
     const cls = { start: 'primary', golive: 'primary', stop: 'danger' }[a];
-    return `<form method="post" action="${esc(`/config/instance?token=${t}`)}"${confirmAttr}>
+    return `<form method="post" action="${esc(withNonce(`/config/instance?token=${t}${keep}`, nonce))}"${confirmAttr}>
           <input type="hidden" name="name" value="${esc(name)}">
           <button class="${cls}" type="submit" name="action" value="${a}">${text}</button>
         </form>`;
@@ -532,6 +537,13 @@ const SCRIPT = `
 (function () {
   var d = document;
 
+  // POST sonrası yönlendirmeyle gelen tek seferlik mesaj kimliğini adresten sil: yenileme mesajı
+  // tekrar göstermesin. (JS yoksa kimlik kısa süre geçerli kalır; zararsız.)
+  if (window.history && history.replaceState && location.search.indexOf('flash=') >= 0) {
+    var kept = location.search.replace('?', '').split('&').filter(function (p) { return p.indexOf('flash=') !== 0; }).join('&');
+    history.replaceState(null, '', location.pathname + (kept ? '?' + kept : ''));
+  }
+
   // Pomodoro süre kısayolları: kısayol metin alanını doldurur; "Özel" alanı açar.
   var typeInput = d.getElementById('pomodoroType');
   var presets = d.getElementById('pomoPresets');
@@ -725,14 +737,14 @@ const SCRIPT = `
 function renderConfigPage({
   plan, clips, covers = [], token, notice = null, error = null, streamState = null,
   broadcasts = null, selectedId = null, pendingCover = null,
-  canCreate = false, newMode = false, draft = {}, catalogAlbums = [], instances = null,
+  canCreate = false, newMode = false, draft = {}, catalogAlbums = [], instances = null, nonce = null,
 }) {
   const p = plan.pomodoro;
   // Seçili yayın URL'de taşınır: kaydet/yükle/başlat sonrası seçim bozulmasın.
   const keep = selectedId ? `&broadcast=${encodeURIComponent(selectedId)}` : '';
-  const action = `/config?token=${encodeURIComponent(token)}${keep}`;
-  const uploadAction = `/config/upload?token=${encodeURIComponent(token)}${keep}`;
-  const nowSection = streamControls(streamState, action) + instancesSection(instances, token);
+  const action = withNonce(`/config?token=${encodeURIComponent(token)}${keep}`, nonce);
+  const uploadAction = withNonce(`/config/upload?token=${encodeURIComponent(token)}${keep}`, nonce);
+  const nowSection = streamControls(streamState, action) + instancesSection(instances, token, { keep, nonce });
   // D1: yeniden başlatma canlı yayını keser — her durumda net bir onay (metin duruma göre).
   const restartConfirm = {
     running: 'Yayın şu an ÇALIŞIYOR. Yeniden başlatma yayını kısa süreliğine KESER ve yeni planla baştan başlatır. Devam edilsin mi?',
@@ -762,7 +774,9 @@ ${nowSection ? `<section>
   ${nowSection}
 </section>` : ''}
 ${broadcastPicker({
-  broadcasts, selectedId, token, covers, canCreate, newMode, newFormHtml: newMode ? newStreamForm({ token, covers, albums: catalogAlbums, draft }) : '',
+  broadcasts, selectedId, token, covers, canCreate, newMode, newFormHtml: newMode ? newStreamForm({
+    token, covers, albums: catalogAlbums, draft, keep, nonce,
+  }) : '', nonce,
 })}
 <!-- Galeri yüklemesi: ana formun DIŞINDA (iç içe form olmaz); cover bölümündeki dosya
      alanı ve düğme form="coverUpload" ile buna bağlanır. -->

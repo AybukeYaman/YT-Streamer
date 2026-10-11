@@ -186,7 +186,7 @@
   "yeniTaslak": [
     {
       "method": "post",
-      "action": "/config/new?token=tk",
+      "action": "/config/new?token=tk&broadcast=b1",
       "entries": [
         [
           "albums",

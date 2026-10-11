@@ -267,3 +267,24 @@ test('KURU ÇALIŞTIRMA: gerçek dosyalarla tam kurulum — config, env(600), pl
   const again = await p.create({ ...GOOD, goLiveNow: false });
   assert.match(again.error, /zaten kullanılıyor/);
 });
+
+test('aynı ad için eşzamanlı ikinci istek reddedilir: tek YouTube stream; kilit sonra bırakılır', async () => {
+  const { p, calls } = setup();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const original = p.createStream;
+  p.createStream = async (arg) => { await gate; return original(arg); };
+
+  const first = p.create({ ...GOOD, goLiveNow: false });
+  const second = await p.create({ ...GOOD, name: ' LOFI2 ', goLiveNow: false });
+  assert.equal(second.ok, false);
+  assert.match(second.error, /kurulum zaten sürüyor/);
+  assert.equal(calls.filter((c) => c[0] === 'createStream').length, 0, 'ikinci istek YouTube\'a gitmedi');
+
+  release();
+  assert.equal((await first).ok, true);
+  assert.equal(calls.filter((c) => c[0] === 'createStream').length, 1);
+
+  // Kilit bırakıldı: farklı ad engellenmez.
+  assert.equal((await p.create({ ...GOOD, name: 'baska', goLiveNow: false })).ok, true);
+});

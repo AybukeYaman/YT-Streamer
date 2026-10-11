@@ -63,8 +63,23 @@ class StreamProvisioner {
     };
   }
 
+  // Aynı ad için kurulum sürerken ikinci istek (çift dokunuş, ağ tekrarı) reddedilir: yoksa iki istek de
+  // "ad kullanılıyor" denetimini geçip YouTube'da iki stream oluştururdu (ikincisi öksüz kalırdı).
+  #inflight = new Set();
+
   // @returns {Promise<{ ok: boolean, name?: string, message?: string, error?: string }>}
   async create(input) {
+    const key = String(input?.name ?? '').trim().toLowerCase();
+    if (key && this.#inflight.has(key)) return { ok: false, error: `"${key}" için kurulum zaten sürüyor, bitmesini bekle` };
+    if (key) this.#inflight.add(key);
+    try {
+      return await this.#create(input);
+    } finally {
+      this.#inflight.delete(key);
+    }
+  }
+
+  async #create(input) {
     let v;
     try {
       v = this.#validate(input);

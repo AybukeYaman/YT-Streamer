@@ -246,6 +246,8 @@ async function main() {
     // kapak, bitirme). Aynı YouTube istemcisi (go-live ile ortak OAuth).
     broadcastAdmin: new BroadcastAdmin({ api: youtubeApi, log: logger.child('yayin-yonetimi') }),
     streamManager,
+    // POST /config* → 303 → GET (Faz 4). GOLIVE_CONFIG_PRG=0 eski davranışa (200 HTML) döndürür.
+    configPrg: process.env.GOLIVE_CONFIG_PRG !== '0',
   });
 
   await server.listen();

@@ -23,12 +23,16 @@
 //   POST /config/new       → yeni (eşzamanlı) yayın kur: YouTube stream + sistemde servis
 //   POST /config/instance  → kurulu ek yayına işlem (start|stop|golive)
 //   (GET /config?broadcast=<id> yayın seçiciyi o yayına açar)
+//   Her POST /config* işlemi 303 ile GET /config?flash=<id>'ye yönlendirir (Post/Redirect/Get);
+//   sonuç mesajı FlashStore'da, tekrar gönderim ?n=<işlem kimliği> ile ActionDedupe'ta tutulur.
 //   GET  /config/thumb  → klip/kapak önizleme JPEG'i
 const http = require('http');
 const crypto = require('crypto');
 const fs = require('fs');
 const { renderConfigPage } = require('../ui/config-page');
 const { parseMultipart } = require('./multipart');
+const { FlashStore } = require('./flash-store');
+const { ActionDedupe } = require('./action-dedupe');
 
 const MAX_BODY_BYTES = 4096;
 // /config formu: çok sayıda klip yolu (checkbox) taşıyabilir — /go-live'ın boş gövdesinden
@@ -152,6 +156,9 @@ class GoLiveServer {
     thumbnailProvider = null,
     broadcastAdmin = null,
     streamManager = null,
+    // configPrg: POST /config* sonucu 303 + GET (Post/Redirect/Get, Faz 4). false → eski davranış
+    // (aynı istekte 200 HTML); GOLIVE_CONFIG_PRG=0 ile kapatılır (geri alma bayrağı).
+    configPrg = true,
   }) {
     if (typeof authToken !== 'string' || authToken.trim().length < 32) {
       // Fail-closed: auth'suz ayağa kalkmak sessiz bir güvenlik açığı olurdu.
@@ -171,6 +178,9 @@ class GoLiveServer {
     this.broadcastAdmin = broadcastAdmin;
     // streamManager: StreamManager — ek yayınlar (yeni yayın kur, başlat/durdur/canlıya al). Yoksa özellik kapalı.
     this.streamManager = streamManager;
+    this.configPrg = configPrg;
+    this.flash = new FlashStore({ now });
+    this.dedupe = new ActionDedupe({ now });
     this.hits = new Map(); // kova adı → istek zaman damgaları
     this.server = http.createServer((req, res) => this.#handle(req, res));
   }
@@ -323,6 +333,8 @@ class GoLiveServer {
       instances: mgr ? mgr.list() : null,
       // Albüm kataloğu yalnızca "Yeni yayın" formu açıkken okunur (diske her sayfada gitme).
       catalogAlbums: mgr && extra.newMode ? mgr.albums() : [],
+      // Sayfa başına rastgele işlem kimliği: formlar bunu action URL'sinde taşır (tekrar önleme).
+      nonce: this.configPrg ? crypto.randomBytes(16).toString('hex') : undefined,
       ...extra,
     });
     res.writeHead(200, {
@@ -332,6 +344,46 @@ class GoLiveServer {
       ...headers,
     });
     res.end(body);
+  }
+
+  // POST işleminin sonucu. PRG açıksa: sonuç flash'a yazılır, 303 ile GET /config'e yönlendirilir
+  // (göreli adres; token yalnızca isteğin query'sinde varsa taşınır). Kapalıysa eski yol.
+  // ctx: { token, broadcast, nonce, newMode }.
+  #postResult(res, ctx, extra, headers = {}) {
+    if (!this.configPrg) return this.#configPage(res, ctx.token, extra, headers, ctx.broadcast ?? null);
+    const flashId = this.flash.put(extra);
+    this.dedupe.finish(ctx.nonce);
+    const q = [];
+    if (ctx.token) q.push(`token=${encodeURIComponent(ctx.token)}`);
+    if (ctx.broadcast) q.push(`broadcast=${encodeURIComponent(ctx.broadcast)}`);
+    if (ctx.newMode) q.push('new=1');
+    q.push(`flash=${flashId}`);
+    res.writeHead(303, {
+      Location: `/config?${q.join('&')}`, 'Content-Length': 0, 'Cache-Control': 'no-store', ...headers,
+    });
+    return res.end();
+  }
+
+  // Aynı işlem kimliğiyle (n) ikinci gönderim işlemi ÇALIŞTIRMAZ: sürüyorsa/bitmişse yalnızca
+  // bilgi mesajıyla yönlendirir. n yoksa (eski sekme, Shortcuts) işlem eskisi gibi çalışır.
+  async #guarded(req, res, ctx, run) {
+    if (this.configPrg) {
+      const state = this.dedupe.begin(ctx.nonce);
+      if (state !== 'new') {
+        req.resume(); // gövde okunmadan atılır (yükleme ffmpeg'e gitmez)
+        this.log.warn(`tekrarlanan gönderim engellendi (${state})`);
+        const notice = state === 'inflight'
+          ? 'Bu işlem zaten sürüyor; birkaç saniye sonra sayfayı yenile.'
+          : 'Bu işlem zaten uygulandı. Sayfa yenilendi.';
+        return this.#postResult(res, { ...ctx, nonce: null, newMode: false }, { notice }, { Connection: 'close' });
+      }
+    }
+    try {
+      return await run();
+    } catch (err) {
+      this.dedupe.release(ctx.nonce); // beklenmedik hata: yeniden denenebilsin
+      throw err;
+    }
   }
 
   #authorized(req) {
@@ -459,16 +511,30 @@ class GoLiveServer {
         const wanted = url.searchParams.get('broadcast');
         if (req.method === 'GET') {
           const newMode = url.searchParams.get('new') === '1' && Boolean(this.streamManager);
-          return this.#configPage(res, token, newMode ? { newMode: true } : {}, {}, wanted);
+          const extra = newMode ? { newMode: true } : {};
+          // POST sonrası yönlendirme: tek seferlik sonuç (mesaj / yeni-yayın taslağı / yüklenen kapak).
+          const flashed = this.configPrg ? this.flash.get(url.searchParams.get('flash')) : null;
+          if (flashed) {
+            if (flashed.notice) extra.notice = flashed.notice;
+            if (flashed.error) extra.error = flashed.error;
+            if (newMode && flashed.draft) extra.draft = flashed.draft;
+            // Yüklenen kapak yalnızca listedeki bir dosyaysa kabul edilir (yol sızması yok).
+            if (flashed.pendingCover && ((await this.configApi.form()).covers ?? []).includes(flashed.pendingCover)) {
+              extra.pendingCover = flashed.pendingCover;
+            }
+          }
+          return this.#configPage(res, token, extra, {}, wanted);
         }
         if (req.method === 'POST') {
+          const ctx = { token, broadcast: wanted, nonce: url.searchParams.get('n') };
+          return await this.#guarded(req, res, ctx, async () => {
           const text = await readBody(req);
           const params = new URLSearchParams(text);
           // Başlat/durdur: plana dokunmayan ayrı işlem, kaydetme yoluna GİRMEZ.
           const action = params.get('action');
           if ((action === 'start' || action === 'stop') && typeof this.configApi.control === 'function') {
             const result = await this.configApi.control(action);
-            return this.#configPage(res, token, result.ok ? { notice: result.message } : { error: result.error }, {}, wanted);
+            return this.#postResult(res, ctx, result.ok ? { notice: result.message } : { error: result.error });
           }
           const fields = {
             pomodoroEnabled: params.has('pomodoroEnabled'),
@@ -483,13 +549,14 @@ class GoLiveServer {
           if (params.has('description')) fields.description = params.get('description');
           if (params.has('cover')) fields.cover = params.get('cover');
           const result = await this.configApi.save(fields);
-          if (!result.ok) return this.#configPage(res, token, { error: result.error }, {}, wanted);
+          if (!result.ok) return this.#postResult(res, ctx, { error: result.error });
           const notice = result.restarted
             ? 'Plan kaydedildi ve yayın yeniden başlatıldı.'
             : result.restartError
               ? `Plan kaydedildi — ${result.restartError}`
               : 'Plan kaydedildi.';
-          return this.#configPage(res, token, { notice }, {}, wanted);
+          return this.#postResult(res, ctx, { notice });
+          });
         }
         return this.#json(res, 405, { error: 'method_not_allowed' });
       }
@@ -500,6 +567,8 @@ class GoLiveServer {
         if (!this.configApi || !this.streamManager) return this.#json(res, 404, { error: 'not_found' });
         if (req.method !== 'POST') return this.#json(res, 405, { error: 'method_not_allowed' });
         const token = url.searchParams.get('token') ?? '';
+        const ctx = { token, broadcast: url.searchParams.get('broadcast'), nonce: url.searchParams.get('n') };
+        return await this.#guarded(req, res, ctx, async () => {
         const params = new URLSearchParams(await readBody(req));
         const input = {
           name: params.get('name') ?? '',
@@ -511,8 +580,9 @@ class GoLiveServer {
           goLiveNow: params.has('goLiveNow'),
         };
         const result = await this.streamManager.create(input);
-        if (!result.ok) return this.#configPage(res, token, { newMode: true, draft: input, error: result.error });
-        return this.#configPage(res, token, { notice: result.message });
+        if (!result.ok) return this.#postResult(res, { ...ctx, newMode: true }, { newMode: true, draft: input, error: result.error });
+        return this.#postResult(res, ctx, { notice: result.message });
+        });
       }
 
       // Kurulu EK yayına işlem (başlat/durdur/canlıya al). Ana yayın bu yoldan yönetilmez.
@@ -520,9 +590,12 @@ class GoLiveServer {
         if (!this.configApi || !this.streamManager) return this.#json(res, 404, { error: 'not_found' });
         if (req.method !== 'POST') return this.#json(res, 405, { error: 'method_not_allowed' });
         const token = url.searchParams.get('token') ?? '';
-        const params = new URLSearchParams(await readBody(req));
-        const result = await this.streamManager.control(params.get('name') ?? '', params.get('action') ?? '');
-        return this.#configPage(res, token, result.ok ? { notice: result.message } : { error: result.error });
+        const ctx = { token, broadcast: url.searchParams.get('broadcast'), nonce: url.searchParams.get('n') };
+        return await this.#guarded(req, res, ctx, async () => {
+          const params = new URLSearchParams(await readBody(req));
+          const result = await this.streamManager.control(params.get('name') ?? '', params.get('action') ?? '');
+          return this.#postResult(res, ctx, result.ok ? { notice: result.message } : { error: result.error });
+        });
       }
 
       // YouTube'daki SEÇİLİ yayın üzerinde işlem: başlık/açıklama, görünürlük, kapak, bitirme.
@@ -532,10 +605,14 @@ class GoLiveServer {
         if (!this.configApi || !this.broadcastAdmin) return this.#json(res, 404, { error: 'not_found' });
         if (req.method !== 'POST') return this.#json(res, 405, { error: 'method_not_allowed' });
         const token = url.searchParams.get('token') ?? '';
-        const params = new URLSearchParams(await readBody(req));
-        const id = params.get('broadcastId') ?? '';
-        const outcome = await this.#broadcastAction(params, id);
-        return this.#configPage(res, token, outcome, {}, id);
+        // Seçili yayın action URL'sinde de taşınır (?broadcast=): tekrar engellenirse gövde okunmadan da korunur.
+        const ctx = { token, broadcast: url.searchParams.get('broadcast'), nonce: url.searchParams.get('n') };
+        return await this.#guarded(req, res, ctx, async () => {
+          const params = new URLSearchParams(await readBody(req));
+          const id = params.get('broadcastId') ?? '';
+          const outcome = await this.#broadcastAction(params, id);
+          return this.#postResult(res, { ...ctx, broadcast: id || ctx.broadcast }, outcome);
+        });
       }
 
       // Telefon galerisinden kapak yükleme (multipart). Ham dosya sınırı CONFIG_UPLOAD_MAX_BYTES;
@@ -546,23 +623,26 @@ class GoLiveServer {
         const token = url.searchParams.get('token') ?? '';
         const wanted = url.searchParams.get('broadcast');
         if (typeof this.configApi.uploadCover !== 'function') return this.#json(res, 404, { error: 'not_found' });
+        const ctx = { token, broadcast: wanted, nonce: url.searchParams.get('n') };
+        return await this.#guarded(req, res, ctx, async () => {
         let body;
         try {
           body = await readBodyBuffer(req, CONFIG_UPLOAD_MAX_BYTES);
         } catch (err) {
           if (err.statusCode !== 413) throw err;
-          return this.#configPage(res, token, {
+          return this.#postResult(res, ctx, {
             error: `dosya çok büyük (en fazla ${Math.round(CONFIG_UPLOAD_MAX_BYTES / 1048576)} MB)`,
-          }, { Connection: 'close' }, wanted);
+          }, { Connection: 'close' });
         }
         const part = parseMultipart(body, req.headers['content-type']).find((p) => p.name === 'coverFile');
-        if (!part || part.data.length === 0) return this.#configPage(res, token, { error: 'görsel seçilmedi' }, {}, wanted);
+        if (!part || part.data.length === 0) return this.#postResult(res, ctx, { error: 'görsel seçilmedi' });
         const result = await this.configApi.uploadCover(part.data);
-        if (!result.ok) return this.#configPage(res, token, { error: result.error }, {}, wanted);
-        return this.#configPage(res, token, {
+        if (!result.ok) return this.#postResult(res, ctx, { error: result.error });
+        return this.#postResult(res, ctx, {
           notice: 'Görsel eklendi ve listede seçildi. Kapağı uygulamak için Kaydet\'e bas.',
           pendingCover: result.path,
-        }, {}, wanted);
+        });
+        });
       }
 
       return this.#json(res, 404, { error: 'not_found' });

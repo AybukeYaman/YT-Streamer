@@ -1,6 +1,6 @@
 # Faz 4 — POST → 303 → GET (Post/Redirect/Get) planı
 
-**Durum:** YALNIZCA PLAN. Backend koduna dokunulmadı; uygulama için ayrıca onay beklenir.
+**Durum:** UYGULANDI (öneriler onaylandı). Kararlar: bellek-içi flash; pendingCover flash'ta; nonce tüm POST rotalarında (riskli 4 işlem dahil); GOLIVE_CONFIG_PRG bayrağı eklendi (0 = eski davranış); plan formu taslağı ve /config hız kovası payı bu fazda YOK. Gerçekleme: src/infrastructure/flash-store.js, action-dedupe.js, golive-server.js, stream-provisioner.js (aynı-ad kilidi), config-page.js (n + flash temizliği). Testler: test/infrastructure/golive-server.prg.test.js.
 **Kaynak:** `src/infrastructure/golive-server.js` (rotalar), `src/application/config-api.js`,
 `src/application/stream-manager.js`, `src/application/stream-provisioner.js`,
 `src/infrastructure/cover-upload.js`, `scripts/golive-server.js` (composition),

@@ -294,7 +294,7 @@ test('newMode: form açılır (ad, başlık, açıklama, görünürlük, kapak, 
   assert.match(html, /\+ Yeni yayın aç…<\/span>/);
   assert.match(html, /<a class="pickrow sel" href="\/config\?token=tk&amp;new=1">/);
   assert.doesNotMatch(html, /class="pickrow sel" href="[^"]*broadcast=b1"/, 'yeni yayın modunda mevcut yayın seçili görünmemeli');
-  assert.match(html, /action="\/config\/new\?token=tk"/);
+  assert.match(html, /action="\/config\/new\?token=tk&amp;broadcast=b1"/, 'seçili yayın yeni-yayın formunda da taşınır');
   for (const field of ['name="name"', 'name="title"', 'name="description"', 'name="privacy"', 'name="cover"', 'name="goLiveNow"']) {
     assert.ok(html.includes(field), field);
   }
