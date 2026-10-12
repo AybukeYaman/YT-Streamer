@@ -11,6 +11,7 @@
 // Varsayılan bind 127.0.0.1. Dışarıya açmak `tailscale serve` ile yapılır — bkz.
 // scripts/deploy/README.md.
 const os = require('os');
+const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
@@ -98,6 +99,7 @@ async function main() {
   }
   // Park işareti yolu: .env → .env.disabled, .env.stream2 → .env.stream2.disabled.
   // deploy.sh/add-stream.sh ile tek sözleşme (bkz. scripts/deploy/lib/instance-state.sh).
+  const userStopPath = path.join(config.paths.runtime, 'user-stopped');
   const parkMarkerPath = path.join(REPO_ROOT, `${args.envFile}.disabled`);
   // Encoder kalp atışı kontrolü İKİ yerde kullanılıyor: periyodik izleme ve go-live'ın
   // hızlı ön kontrolü (ffmpeg basmıyorken ingest beklemek boşuna). Tek nesne, tek eşik.
@@ -133,11 +135,13 @@ async function main() {
   const systemctl = (...args) => spawnSync('systemctl', args, { encoding: 'utf8' });
   const streamControl = {
     async start() {
+      fs.rmSync(userStopPath, { force: true });
       const res = systemctl('start', STREAM_UNIT);
       if (res.error) throw new Error(`systemctl çalıştırılamadı: ${res.error.message}`);
       if (res.status !== 0) throw new Error(`systemctl start başarısız (kod ${res.status}): ${(res.stderr || '').trim()}`);
     },
     async stop() {
+      fs.writeFileSync(userStopPath, new Date().toISOString());
       const res = systemctl('stop', STREAM_UNIT);
       if (res.error) throw new Error(`systemctl çalıştırılamadı: ${res.error.message}`);
       if (res.status !== 0) throw new Error(`systemctl stop başarısız (kod ${res.status}): ${(res.stderr || '').trim()}`);
@@ -241,7 +245,10 @@ async function main() {
     pingAlive: createAlivePinger({ url: credentials.heartbeatPingUrl, log: healthLog }),
     // Park işareti: deploy.sh ve add-stream.sh ile AYNI dosya (.env.<isim>.disabled).
     // Bilerek kapatılmış bir yayın için alarm üretmek gürültüden başka bir şey değil.
-    paused: () => fileExists(parkMarkerPath),
+    // Telefondan "Durdur" ile bilerek durdurulan ana yayın için de alarm yok. İşaret yalnızca servis
+    // gerçekten durmuşken geçerli: deploy yayını yeniden açtıysa izleme kendiliğinden devreye girer.
+    paused: () => fileExists(parkMarkerPath)
+      || (fileExists(userStopPath) && spawnSync('systemctl', ['is-active', '--quiet', STREAM_UNIT]).status !== 0),
   });
   const server = new GoLiveServer({
     goLiveService: service,
@@ -263,7 +270,8 @@ async function main() {
   });
 
   await server.listen();
-  log.info(`yayın başlığı: "${config.broadcast.title}" (${config.broadcast.privacyStatus})`);
+  const bc = service.broadcastConfig;
+  log.info(`yayın başlığı: "${bc.title}" (${bc.privacyStatus}, ${bc.titleSource ?? "config.json'dan"})`);
   log.info('POST /go-live · GET /status · GET /healthz · GET+POST /config');
 
   monitor.start();

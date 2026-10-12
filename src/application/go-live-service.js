@@ -410,7 +410,8 @@ class GoLiveService {
       // yenisini açmak kanalda çöp bırakırdı.
       this.log.info(`yarım kalan broadcast yeniden kullanılıyor: ${broadcastId} (${existing.status})`);
     } else {
-      this.log.info(`broadcast oluşturuluyor: "${title}" (${this.broadcastConfig.privacyStatus})`);
+      const source = this.broadcastConfig.titleSource ? `, ${this.broadcastConfig.titleSource}` : '';
+      this.log.info(`broadcast oluşturuluyor: "${title}" (${this.broadcastConfig.privacyStatus}${source})`);
       const created = await this.api.insertBroadcast({
         accessToken,
         title,

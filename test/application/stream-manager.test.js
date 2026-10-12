@@ -42,3 +42,22 @@ test('stop: yayın canlı değilse neden yazılır', async () => {
   const res = await manager.control('lofi3', 'stop');
   assert.match(res.message, /bitirilmedi: kayıtlı yayın yok/);
 });
+
+test('golive: "busy" başarısızlık sayılmaz', async () => {
+  const instances = { names: () => ['lofi3'], start() {}, stop() {} };
+  const busy = Object.assign(new Error('go-live şu an sürüyor'), { code: 'busy' });
+  const manager = new StreamManager({
+    provisioner: {}, instances, catalog: {}, goLive: async () => { throw busy; }, log: { warn: () => {} },
+  });
+  const res = await manager.control('lofi3', 'golive');
+  assert.equal(res.ok, true);
+  assert.match(res.message, /zaten sürüyor/);
+});
+
+test('golive: başka hata hâlâ başarısız', async () => {
+  const instances = { names: () => ['lofi3'], start() {}, stop() {} };
+  const manager = new StreamManager({
+    provisioner: {}, instances, catalog: {}, goLive: async () => { throw new Error('x'); }, log: { warn: () => {} },
+  });
+  assert.equal((await manager.control('lofi3', 'golive')).ok, false);
+});

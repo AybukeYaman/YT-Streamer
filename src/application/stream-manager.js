@@ -69,6 +69,10 @@ class StreamManager {
       }[result?.action] ?? 'istek gönderildi';
       return { ok: true, message: `"${name}": ${text}.` };
     } catch (err) {
+      // go-live zaten sürüyorsa iş yapılıyor demektir: başarısızlık değil.
+      if (action === 'golive' && err?.code === 'busy') {
+        return { ok: true, message: `"${name}": canlıya alma zaten sürüyor, birkaç dakika sonra listeye bak.` };
+      }
       this.log?.warn?.(`ek yayın "${name}" ${action} başarısız: ${err.message}`);
       return { ok: false, error: `"${name}" ${action} başarısız: ${err.message}` };
     }

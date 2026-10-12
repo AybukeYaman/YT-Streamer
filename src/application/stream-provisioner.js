@@ -189,7 +189,9 @@ class StreamProvisioner {
       Promise.resolve()
         .then(() => this.goLive(v.name))
         .then(() => this.log?.info?.(`yeni yayın "${v.name}" canlıya alındı`))
-        .catch((err) => this.log?.warn?.(`yeni yayın "${v.name}" canlıya alınamadı: ${err.message}`));
+        .catch((err) => (err?.code === 'busy'
+          ? this.log?.info?.(`yeni yayın "${v.name}": go-live zaten sürüyor, ikinci tetik atlandı`)
+          : this.log?.warn?.(`yeni yayın "${v.name}" canlıya alınamadı: ${err.message}`)));
     }
     return {
       ok: true,

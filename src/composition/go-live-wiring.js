@@ -68,6 +68,10 @@ function buildGoLive({
     get title() {
       return planStore.loadActive()?.broadcast?.title || config.broadcast.title;
     },
+    // Başlığın nereden geldiği (log için): kullanılan değerle log'daki değer ayrışmasın.
+    get titleSource() {
+      return planStore.loadActive()?.broadcast?.title ? 'yayın planından' : "config.json'dan";
+    },
     get description() {
       const fromPlan = planStore.loadActive()?.broadcast?.description;
       return fromPlan ?? config.broadcast.description;

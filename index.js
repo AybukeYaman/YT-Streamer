@@ -187,7 +187,12 @@ async function main() {
       writeFile: writeFileAtomic,
       rotationSeconds: config.background.rotationMinutes * 60,
     }),
-    speedWindow: new SpeedWindow({ fps: profile.fps }),
+    // Saf modda (copy) hız -re ile gerçek zamana kilitli ve 30 sn'lik pencere ağ/arabellek
+    // dalgalanmasıyla 0.8-1.2x arasında gezebiliyor (VPS'te gözlendi): eşikler gevşek, yanlış alarm olmasın.
+    speedWindow: new SpeedWindow({
+      fps: profile.fps,
+      ...(config.video.mode === 'copy' ? { low: 0.85, high: 1.25 } : {}),
+    }),
     // Hız eşiğinin dışına çıkıp orada KALMAK bildirim üretir. Diğer kontroller bu durumu
     // göremiyor: ffmpeg ilerleme basmaya devam ettiği için kalp atışı ve ingest sağlıklı.
     speedAlarm: new SpeedAlarm({ alerter, log: logger.child('hız') }),
