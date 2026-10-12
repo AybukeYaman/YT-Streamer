@@ -135,7 +135,7 @@ function streamControls(streamState, action, title = '') {
   const buttons = { running: stop, stopped: start, unknown: `${start}${stop}` }[state];
   return `<div class="card">
     <h3>Ana yayın</h3>
-    <p class="state">${chip(STATE_TONE[state], STATE_LABELS[state])}</p>
+    <p class="state">${title ? `<strong>${esc(shorten(title, 40))}</strong>` : ''}${chip(STATE_TONE[state], STATE_LABELS[state])}</p>
     <div class="btnrow">
       ${buttons}
     </div>

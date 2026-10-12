@@ -140,6 +140,16 @@ test('başlat/durdur düğmeleri ana formdan AYRI: ayar alanları onlarla gönde
   assert.ok(html.indexOf('<h2>Şu an</h2>') < html.indexOf('id="planForm"'));
 });
 
+test('Ana yayın kartında yayın başlığı görünür (kaçışlı); başlık yoksa yalnızca durum', () => {
+  const withTitle = renderConfigPage({
+    plan: new StreamPlan({ broadcast: { title: 'Lofi <Radyo>' } }), clips: [], token: 't', streamState: 'running',
+  });
+  const card = withTitle.slice(withTitle.indexOf('<h3>Ana yayın</h3>'));
+  assert.match(card.slice(0, 300), /<strong>Lofi &lt;Radyo&gt;<\/strong>/);
+  const noTitle = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't', streamState: 'running' });
+  assert.doesNotMatch(noTitle.slice(noTitle.indexOf('<h3>Ana yayın</h3>')).slice(0, 200), /<strong>/);
+});
+
 // ─── Yayın seçici + galeri yükleme ─────────────────────────────────────────
 
 const PB1 = {
