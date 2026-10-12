@@ -46,3 +46,10 @@ test('dizin yok ya da null ise boş katalog, hata atmaz', () => {
   assert.deepEqual(new AlbumCatalog({ dir: null }).list(), []);
   assert.deepEqual(new AlbumCatalog({ dir: path.join(os.tmpdir(), 'yt-yok-klasor-xyz') }).list(), []);
 });
+
+test('loop.mp4 varsa loopPath dolar, yoksa null', () => {
+  const root = build(['a/music/x.m4a', 'a/background.mp4', 'a/loop.mp4', 'b/music/y.m4a', 'b/background.mp4']);
+  const list = new AlbumCatalog({ dir: root }).list();
+  assert.equal(list[0].loopPath, path.join(root, 'a', 'loop.mp4'));
+  assert.equal(list[1].loopPath, null);
+});

@@ -32,7 +32,7 @@ class AlbumCatalog {
     this.dir = dir;
   }
 
-  // [{ name, trackPaths, backgrounds, trackCount }] — ada göre sıralı. Parçası ya da
+  // [{ name, trackPaths, backgrounds, trackCount, loopPath }] — ada göre sıralı. Parçası ya da
   // arkaplanı olmayan klasör atlanır (AlbumRepository da onu atlıyor).
   list() {
     if (!this.dir) return [];
@@ -51,8 +51,10 @@ class AlbumCatalog {
         const trackPaths = filesWith(path.join(albumDir, 'music'), AUDIO_EXT);
         let backgrounds = filesWith(path.join(albumDir, 'backgrounds'), VIDEO_EXT);
         if (!backgrounds.length) backgrounds = filesWith(albumDir, VIDEO_EXT).filter((f) => path.basename(f).toLowerCase() === 'background.mp4');
+        // Saf mod için hazır döngü (scripts/prepare-loops.js): yoksa null.
+        const loop = path.join(albumDir, 'loop.mp4');
         return {
-          name, trackPaths, backgrounds, trackCount: trackPaths.length,
+          name, trackPaths, backgrounds, trackCount: trackPaths.length, loopPath: fs.existsSync(loop) ? loop : null,
         };
       })
       .filter((a) => a.trackPaths.length > 0 && a.backgrounds.length > 0);

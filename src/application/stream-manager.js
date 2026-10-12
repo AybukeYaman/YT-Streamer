@@ -19,12 +19,16 @@ class StreamManager {
 
   // [{ name, state }] — state: running | stopped | unknown
   list() {
-    return this.instances.names().map((name) => ({ name, state: this.instances.status(name) }));
+    return this.instances.names().map((name) => ({
+      name, state: this.instances.status(name), videoMode: this.instances.videoMode?.(name) ?? 'encode',
+    }));
   }
 
-  // Form için: [{ name, trackCount, backgrounds }] (parça yolları sayfaya GİTMEZ, sunucuda kalır).
+  // Form için: [{ name, trackCount, backgrounds, hasLoop }] (parça yolları sayfaya GİTMEZ, sunucuda kalır).
   albums() {
-    return this.catalog.list().map((a) => ({ name: a.name, trackCount: a.trackCount, backgrounds: a.backgrounds }));
+    return this.catalog.list().map((a) => ({
+      name: a.name, trackCount: a.trackCount, backgrounds: a.backgrounds, hasLoop: Boolean(a.loopPath),
+    }));
   }
 
   create(input) {

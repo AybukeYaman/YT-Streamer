@@ -794,7 +794,7 @@ test('POST /config/new: alanlar create\'e taşınır; başarıda mesaj ve normal
       assert.match(html, /class="notice">kuruldu/);
       assert.doesNotMatch(html, /name="goLiveNow"/, 'başarıdan sonra form kapanır');
       assert.deepEqual(mgr.calls[0][1], {
-        name: 'lofi2', title: 'Gece', description: 'açıklama', privacy: 'public', cover: '/c/a.jpg', albums: ['mimi', 'zen'], goLiveNow: true,
+        name: 'lofi2', title: 'Gece', description: 'açıklama', privacy: 'public', cover: '/c/a.jpg', albums: ['mimi', 'zen'], videoMode: '', goLiveNow: true,
       });
     },
   );

@@ -143,3 +143,14 @@ test('seedDurations: ana yayının durations.json dosyasını yeni yayının run
 test('seedDurations: ana yayının önbelleği yoksa sessizce false döner', () => {
   assert.equal(new StreamInstances({ repoRoot: tmp(), log }).seedDurations('lofi3'), false);
 });
+
+test('videoMode(): config.<ad>.json\'daki video.mode; yoksa/bozuksa/geçersiz adda "encode"', () => {
+  const root = tmp();
+  fs.writeFileSync(path.join(root, 'config.saf.json'), JSON.stringify({ video: { mode: 'copy' } }));
+  fs.writeFileSync(path.join(root, 'config.yazili.json'), JSON.stringify({ video: { mode: 'encode' } }));
+  fs.writeFileSync(path.join(root, 'config.eski.json'), '{}');
+  fs.writeFileSync(path.join(root, 'config.bozuk.json'), '{ yarım');
+  const inst = new StreamInstances({ repoRoot: root, log });
+  assert.equal(inst.videoMode('saf'), 'copy');
+  for (const n of ['yazili', 'eski', 'bozuk', 'yok', '../etc']) assert.equal(inst.videoMode(n), 'encode', n);
+});

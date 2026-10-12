@@ -17,7 +17,9 @@ const { PRIVACY_VALUES } = require('./broadcast-admin');
 const { validInstanceName } = require('../domain/instance-name');
 
 // Yük koruması: yeni yayının tahmini maliyeti (çekirdek) ve toplam yükün çekirdeğe oranı sınırı.
-const NEW_STREAM_CORES = 1;
+// Yazılı (kodlama) yaklaşık bir çekirdek; Saf (hazır döngü, kopya) ölçümde ~0,1 çekirdek.
+const NEW_STREAM_CORES = { encode: 1, copy: 0.1 };
+const VIDEO_MODES = ['copy', 'encode'];
 const LOAD_LIMIT = 0.95;
 
 class ProvisionError extends Error {}
@@ -64,8 +66,20 @@ class StreamProvisioner {
     if (unknown.length) throw new ProvisionError(`listede olmayan albüm reddedildi: ${unknown[0]}`);
     const selected = wanted.map((a) => catalog.get(a));
 
+    // Görüntü modu: 'copy' = Saf (albümün hazır loop.mp4'ü kodlanmadan akar; şarkı adı/Pomodoro yok),
+    // 'encode' = Yazılı. Verilmezse Yazılı (eski çağrılar değişmez).
+    const videoMode = input.videoMode || 'encode';
+    if (!VIDEO_MODES.includes(videoMode)) throw new ProvisionError(`geçersiz görüntü modu: ${videoMode}`);
+    if (videoMode === 'copy') {
+      if (!selected.length) throw new ProvisionError('Saf modda en az bir albüm seçmelisin (döngü albüme bağlı)');
+      const noLoop = selected.filter((a) => !a.loopPath).map((a) => a.name);
+      if (noLoop.length) {
+        throw new ProvisionError(`Saf mod için albümde hazır döngü (loop.mp4) yok: ${noLoop.join(', ')} — npm run loops:prepare ile hazırla ya da Yazılı seç`);
+      }
+    }
+
     return {
-      name, title, description, privacy, cover, selected, goLiveNow: Boolean(input.goLiveNow),
+      name, title, description, privacy, cover, selected, videoMode, goLiveNow: Boolean(input.goLiveNow),
     };
   }
 
@@ -76,11 +90,11 @@ class StreamProvisioner {
   // Yeni bir yayın yaklaşık bir çekirdek ekler; sunucu zaten bunu kaldıramıyorsa ana yayın yavaşlar
   // (ölçüldü: 3 çekirdekte ana + ek yayın → ana yayın 0,5x). 1 dk'lık yük ortalaması + yeni yayının
   // maliyeti çekirdeklerin %95'ini aşıyorsa reddedilir.
-  #checkLoad() {
+  #checkLoad(cost) {
     if (!this.systemLoad) return;
     const { load1, cores } = this.systemLoad();
     if (!Number.isFinite(load1) || !Number.isFinite(cores) || cores < 1) return;
-    if (load1 + NEW_STREAM_CORES > cores * LOAD_LIMIT) {
+    if (load1 + cost > cores * LOAD_LIMIT) {
       throw new ProvisionError(
         `sunucu yükü yüksek (yük ${load1.toFixed(1)} / ${cores} çekirdek): yeni yayın ana yayını yavaşlatır. `
         + 'Önce bir yayını durdur ya da sunucuya çekirdek ekle.',
@@ -113,7 +127,7 @@ class StreamProvisioner {
     try {
       v = this.#validate(input);
       if (this.instances.exists(v.name)) throw new ProvisionError(`"${v.name}" adı zaten kullanılıyor, başka bir ad seç`);
-      this.#checkLoad();
+      this.#checkLoad(NEW_STREAM_CORES[v.videoMode]);
       const running = this.instances.runningCount();
       if (running >= this.maxStreams) {
         throw new ProvisionError(
@@ -142,6 +156,9 @@ class StreamProvisioner {
         };
         // Hafif varsayılan: Pomodoro klip girişleri CPU'yu ~2x yapıyor (ölçüldü), ikinci yayın kapalı açılır.
         config.pomodoro = { ...(config.pomodoro || {}), enabled: false };
+        config.video = { ...(config.video || {}), mode: v.videoMode };
+        // Saf modda görüntüye yazı basılamaz: şarkı adı da kapalı (Pomodoro zaten kapalı).
+        if (v.videoMode === 'copy') config.overlay = { ...(config.overlay || {}), enabled: false };
         return config;
       });
       this.writePlan(v.name, {

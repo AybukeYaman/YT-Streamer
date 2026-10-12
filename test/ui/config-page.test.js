@@ -716,3 +716,37 @@ function checkContrast(tok, themeName) {
   }
   }
 }
+
+// ─── Faz 5.3: Görüntü modu (Saf / Yazılı) ───
+const newForm = (extra = {}) => renderConfigPage({
+  plan: new StreamPlan({}), clips: [], token: 't', canCreate: true, newMode: true,
+  broadcasts: { items: [PB1] }, selectedId: 'b1', ...extra,
+});
+const checkedMode = (html) => /name="videoMode" value="(\w+)" checked/.exec(html)?.[1];
+
+test('yeni yayın formu: Görüntü seçimi Saf/Yazılı; hazır döngülü albüm varsa varsayılan Saf, yoksa Yazılı', () => {
+  const html = newForm({ catalogAlbums: [{ name: 'a', trackCount: 1, backgrounds: [], hasLoop: true }] });
+  assert.match(html, /name="videoMode" value="copy"/);
+  assert.match(html, /name="videoMode" value="encode"/);
+  assert.match(html, />Saf<\/label>/);
+  assert.match(html, />Yazılı<\/label>/);
+  assert.equal(checkedMode(html), 'copy');
+  assert.equal(checkedMode(newForm({ catalogAlbums: ALBUM_CAT })), 'encode');
+});
+
+test('yeni yayın formu: hata sonrası taslaktaki mod korunur; döngüsüz albüm satırında not çıkar', () => {
+  const albums = [{ name: 'a', trackCount: 1, backgrounds: [], hasLoop: false }];
+  const html = newForm({ catalogAlbums: albums, draft: { videoMode: 'copy' } });
+  assert.equal(checkedMode(html), 'copy');
+  assert.match(html, /a · 1 parça · döngü yok/);
+});
+
+test('ek yayın kartı: Saf modda "Saf" rozeti, Yazılı\'da rozet yok', () => {
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 't', broadcasts: { items: [PB1] }, selectedId: 'b1',
+    instances: [{ name: 'lofi3', state: 'running', videoMode: 'copy' }, { name: 'lofi4', state: 'running', videoMode: 'encode' }],
+  });
+  const card = (n) => html.slice(html.indexOf(`<strong>${n}</strong>`), html.indexOf('</p>', html.indexOf(`<strong>${n}</strong>`)));
+  assert.match(card('lofi3'), /Saf/);
+  assert.doesNotMatch(card('lofi4'), /Saf/);
+});

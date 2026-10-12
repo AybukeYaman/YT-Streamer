@@ -319,10 +319,14 @@ function newStreamForm({
       const thumb = a.backgrounds[0]
         ? `/config/thumb?token=${t}&file=${encodeURIComponent(a.backgrounds[0])}`
         : null;
-      return checkbox('albums', a.name, chosen.has(a.name), `${a.name} · ${a.trackCount} parça`, thumb, 'checkbox', 'n-');
+      const loopNote = a.hasLoop === false ? ' · döngü yok' : '';
+      return checkbox('albums', a.name, chosen.has(a.name), `${a.name} · ${a.trackCount} parça${loopNote}`, thumb, 'checkbox', 'n-');
     }).join('')}</div>`
     : '<p class="muted">Albüm bulunamadı — boş bırakırsan kütüphanedeki her şey çalar.</p>';
   const chosenCount = chosen.size;
+  // Görüntü modu: Saf = hazır döngü kodlanmadan akar (çok hafif; şarkı adı/Pomodoro yok), Yazılı = bugünkü.
+  // Varsayılan Saf, yalnızca kütüphanede hazır döngülü albüm varsa; yoksa Yazılı.
+  const videoMode = draft.videoMode || (albums.some((a) => a.hasLoop) ? 'copy' : 'encode');
   const advancedBody = `
       <p class="lbl">Kapak</p>
       ${coverGrid({
@@ -340,6 +344,10 @@ function newStreamForm({
       <label class="lbl" for="n-desc">Açıklama</label>
       <textarea name="description" id="n-desc" maxlength="${MAX_DESCRIPTION_LENGTH}" placeholder="Açıklama">${esc(draft.description ?? '')}</textarea>
       ${privacyControl('n-privacy', privacy)}
+      ${segmented({
+    id: 'n-video', name: 'videoMode', label: 'Görüntü', options: [['copy', 'Saf'], ['encode', 'Yazılı']], current: videoMode,
+  })}
+      <p class="hint">Saf: çok az işlemci kullanır, ama şarkı adı ve Pomodoro olmaz; albüm seçmen ve albümde hazır döngü olması gerekir. Yazılı: şarkı adı/Pomodoro mümkün, daha çok işlemci.</p>
       ${fold('Kapak ve albümler', chosenCount ? `${chosenCount} albüm seçili` : 'tüm kütüphane çalar', advancedBody, { open: Boolean(chosenCount || draft.cover) })}
       <div class="switchrow">${switchInput('goLiveNow', 'goLiveNow', draft.goLiveNow !== false, 'Kurulunca otomatik canlıya al')}</div>
       <button class="primary" type="submit" data-busy="Yayın kuruluyor (birkaç sn sürebilir)…">Yayını Kur ve Başlat</button>
@@ -368,7 +376,7 @@ function instancesSection(instances, token, { keep = '', nonce = null } = {}) {
     const main = state === 'running' ? 'golive' : 'start';
     const extra = state === 'stopped' ? '' : fold('Diğer işlemler', null, btn(i.name, 'stop'), { cls: 'more' });
     return `<div class="card">
-      <p class="state"><strong>${esc(i.name)}</strong>${chip(STATE_TONE[state], STATE_LABELS[state])}</p>
+      <p class="state"><strong>${esc(i.name)}</strong>${chip(STATE_TONE[state], STATE_LABELS[state])}${i.videoMode === 'copy' ? chip('idle', 'Saf') : ''}</p>
       <div class="btnrow">
         ${btn(i.name, main)}
       </div>

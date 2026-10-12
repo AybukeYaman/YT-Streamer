@@ -171,7 +171,7 @@ function manager({ names: n = ['lofi2'], state = 'running', goLiveResult = { act
 
 test('StreamManager.list/albums: durumla birlikte; albüm parça yolları dışarı VERİLMEZ', () => {
   const { m } = manager();
-  assert.deepEqual(m.list(), [{ name: 'lofi2', state: 'running' }]);
+  assert.deepEqual(m.list(), [{ name: 'lofi2', state: 'running', videoMode: 'encode' }]);
   const albums = m.albums();
   assert.equal(albums[0].trackCount, 2);
   assert.equal(albums[0].trackPaths, undefined);
@@ -319,4 +319,75 @@ test('yük koruması: systemLoad verilmezse ya da sayı geçersizse denetim yap�
   const b = setup();
   b.p.systemLoad = () => ({ load1: NaN, cores: 0 });
   assert.equal((await b.p.create({ ...GOOD, goLiveNow: false })).ok, true);
+});
+
+// ── Saf görüntü modu (videoMode: 'copy') ─────────────────────────────────────────
+const LOOP_ALBUMS = [
+  { ...ALBUMS[0], loopPath: '/m/mimi/loop.mp4' },
+  { ...ALBUMS[1], loopPath: null },
+];
+const SAF = { ...GOOD, albums: ['mimi'], videoMode: 'copy' };
+
+function loopSetup(opts) {
+  const s = setup(opts);
+  s.p.albums = () => LOOP_ALBUMS;
+  return s;
+}
+
+test('Saf: config\'e video.mode=copy yazılır, overlay ve Pomodoro kapanır', async () => {
+  const { p, calls } = loopSetup();
+  assert.equal((await p.create(SAF)).ok, true);
+  const cfg = calls.find((c) => c[0] === 'patchConfig')[2];
+  assert.deepEqual(cfg.video, { mode: 'copy' });
+  assert.equal(cfg.overlay.enabled, false);
+  assert.equal(cfg.pomodoro.enabled, false);
+});
+
+test('Yazılı (varsayılan): video.mode=encode yazılır, overlay\'e dokunulmaz', async () => {
+  const { p, calls } = loopSetup();
+  assert.equal((await p.create({ ...GOOD, albums: ['mimi'] })).ok, true);
+  const cfg = calls.find((c) => c[0] === 'patchConfig')[2];
+  assert.deepEqual(cfg.video, { mode: 'encode' });
+  assert.equal(cfg.overlay, undefined);
+});
+
+test('Saf: albüm seçilmemişse, seçilen albümde loop.mp4 yoksa ya da mod geçersizse reddedilir; hiçbir şey kurulmaz', async () => {
+  const none = loopSetup();
+  const r1 = await none.p.create({ ...SAF, albums: [] });
+  assert.match(r1.error, /en az bir albüm/);
+
+  const missing = loopSetup();
+  const r2 = await missing.p.create({ ...SAF, albums: ['mimi', 'zen'] });
+  assert.match(r2.error, /hazır döngü \(loop\.mp4\) yok: zen/);
+
+  const bad = loopSetup();
+  const r3 = await bad.p.create({ ...SAF, videoMode: 'turbo' });
+  assert.match(r3.error, /geçersiz görüntü modu/);
+
+  for (const s of [none, missing, bad]) assert.equal(s.calls.length, 0, 'YouTube\'a ve sisteme hiç gidilmemeli');
+});
+
+test('yük koruması moda göre: Saf ~0,1 çekirdek sayılır, Yazılı 1', async () => {
+  const saf = loopSetup({ max: 5 });
+  saf.p.systemLoad = () => ({ load1: 2.7, cores: 3 }); // 2.7 + 0.1 <= 2.85
+  assert.equal((await saf.p.create({ ...SAF, goLiveNow: false })).ok, true);
+
+  const yazili = loopSetup({ max: 5 });
+  yazili.p.systemLoad = () => ({ load1: 2.7, cores: 3 }); // 2.7 + 1 > 2.85
+  const r = await yazili.p.create({ ...GOOD, albums: ['mimi'], goLiveNow: false });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /sunucu yükü yüksek/);
+});
+
+test('StreamManager.albums hasLoop, list videoMode taşır', () => {
+  const m = new StreamManager({
+    provisioner: null,
+    instances: { names: () => ['lofi3'], status: () => 'running', videoMode: () => 'copy' },
+    catalog: { list: () => LOOP_ALBUMS },
+    goLive: async () => ({}),
+    log: { warn() {} },
+  });
+  assert.deepEqual(m.list(), [{ name: 'lofi3', state: 'running', videoMode: 'copy' }]);
+  assert.deepEqual(m.albums().map((a) => [a.name, a.hasLoop]), [['mimi', true], ['zen', false]]);
+  assert.equal(m.albums()[0].loopPath, undefined, 'dosya yolu sayfaya gitmez');
 });

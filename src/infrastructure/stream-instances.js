@@ -73,6 +73,17 @@ class StreamInstances {
       .sort();
   }
 
+  // Ek yayının görüntü modu: config.<ad>.json'daki video.mode ('copy' = Saf); okunamazsa/yoksa 'encode'.
+  videoMode(name) {
+    if (!validInstanceName(name)) return 'encode';
+    try {
+      const config = JSON.parse(fs.readFileSync(this.configFile(name), 'utf8'));
+      return config?.video?.mode === 'copy' ? 'copy' : 'encode';
+    } catch {
+      return 'encode';
+    }
+  }
+
   // 'running' | 'stopped' | 'unknown'
   status(name) {
     const res = this.run('systemctl', ['is-active', `yt-streamer@${name}`]);

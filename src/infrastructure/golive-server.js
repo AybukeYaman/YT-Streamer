@@ -578,6 +578,7 @@ class GoLiveServer {
           privacy: params.get('privacy') ?? '',
           cover: params.get('cover') ?? '',
           albums: params.getAll('albums'),
+          videoMode: params.get('videoMode') ?? '',
           goLiveNow: params.has('goLiveNow'),
         };
         const result = await this.streamManager.create(input);
