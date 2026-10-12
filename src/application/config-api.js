@@ -17,12 +17,16 @@ class ConfigApi {
   // saveCover: (buffer) => Promise<string> — yüklenen görseli işleyip kaydeder, mutlak yolu
   //   döner (infrastructure'dan enjekte: application fs/ffmpeg bilmez). Verilmezse yükleme yok.
   constructor({
-    configService, restartStream = null, streamControl = null, saveCover = null, log,
+    configService, restartStream = null, streamControl = null, saveCover = null, saveAudio = null,
+    audioStatus = () => null, audioAlbums = () => [], log,
   }) {
     this.configService = configService;
     this.restartStream = restartStream;
     this.streamControl = streamControl;
     this.saveCover = saveCover;
+    this.saveAudio = saveAudio;
+    this.audioStatus = audioStatus;
+    this.audioAlbums = audioAlbums;
     this.log = log;
   }
 
@@ -38,6 +42,22 @@ class ConfigApi {
     } catch (err) {
       this.log?.warn?.(`kapak yüklenemedi: ${err.message}`);
       return { ok: false, error: `görsel yüklenemedi: ${err.message}` };
+    }
+  }
+
+  // Albüme ses dosyası ekler (Sesler sekmesi). album yalnızca MEVCUT albüm adlarından biri olabilir
+  // (rastgele yol kabul edilmez). readable: istek akışı; dönüşümü saveAudio (infrastructure) yapar.
+  // @returns {Promise<{ ok: boolean, name?: string, error?: string }>}
+  async uploadAudio({ album, filename, readable }) {
+    if (!this.saveAudio) return { ok: false, error: 'bu sunucu ses yüklemeyi desteklemiyor' };
+    if (!this.audioAlbums().some((a) => a.name === album)) return { ok: false, error: 'albüm bulunamadı' };
+    try {
+      const saved = await this.saveAudio({ album, filename, readable });
+      this.log?.info?.(saved.job ? `zip alındı (${album}), iş ${saved.job}` : `ses eklendi: ${album}/${saved.name}`);
+      return saved.job ? { ok: true, job: saved.job } : { ok: true, name: saved.name };
+    } catch (err) {
+      this.log?.warn?.(`ses eklenemedi (${album}): ${err.message}`);
+      return { ok: false, error: err.message };
     }
   }
 

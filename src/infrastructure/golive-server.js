@@ -19,6 +19,7 @@
 //   GET  /config    → mobil yapılandırma sayfası (configApi verilmişse; Faz N2)
 //   POST /config    → sayfadaki formu uygular (ya da action=start|stop: yayını başlat/durdur)
 //   POST /config/upload → telefon galerisinden kapak yükler (multipart, coverFile alanı)
+//   POST /config/audio?album=&name= → albüme ses ekler (ham gövde; mp3/m4v/... → m4a), JSON döner
 //   POST /config/broadcast → YouTube'daki SEÇİLİ yayına işlem (action=apply|end)
 //   POST /config/new       → yeni (eşzamanlı) yayın kur: YouTube stream + sistemde servis
 //   POST /config/instance  → kurulu ek yayına işlem (start|stop|golive)
@@ -61,6 +62,9 @@ const RATE_LIMITS = Object.freeze({
   '/config/thumb': { windowMs: 60000, max: 120 },
   // Galeriden kapak yükleme: her istek ffmpeg çalıştırır ve 15 MB'a kadar bellek tutar.
   '/config/upload': { windowMs: 60000, max: 6 },
+  // Albüme ses ekleme: dosya başına bir istek (toplu yükleme); dönüştürme sunucuda tek tek kuyruğa girer.
+  '/config/audio': { windowMs: 60000, max: 120 },
+  '/config/audio/status': { windowMs: 60000, max: 120 },
   // YouTube'a yazan işlemler (her biri 50 kota birimi): dar bütçe.
   '/config/broadcast': { windowMs: 60000, max: 10 },
   // Yeni yayın kurma: YouTube'a yazar, sistemde servis kurar. Çok dar bütçe.
@@ -331,6 +335,8 @@ class GoLiveServer {
       selectedId,
       canCreate: Boolean(mgr),
       instances: mgr ? mgr.list() : null,
+      // Sesler sekmesi: albüm adı + parça sayısı (yalnızca disk taraması, ffprobe yok).
+      audioAlbums: mgr && this.configApi.audioAlbums ? this.configApi.audioAlbums().map((a) => ({ name: a.name, trackCount: a.trackCount })) : [],
       // Albüm kataloğu yalnızca "Yeni yayın" formu açıkken okunur (diske her sayfada gitme).
       catalogAlbums: mgr && extra.newMode ? mgr.albums() : [],
       // Sayfa başına rastgele işlem kimliği: formlar bunu action URL'sinde taşır (tekrar önleme).
@@ -615,6 +621,26 @@ class GoLiveServer {
           const outcome = await this.#broadcastAction(params, id);
           return this.#postResult(res, { ...ctx, broadcast: id || ctx.broadcast }, outcome);
         });
+      }
+
+      if (route === '/config/audio/status') {
+        if (!this.configApi || typeof this.configApi.audioStatus !== 'function') return this.#json(res, 404, { error: 'not_found' });
+        const job = this.configApi.audioStatus(url.searchParams.get('job') ?? '');
+        return job ? this.#json(res, 200, job) : this.#json(res, 404, { error: 'not_found' });
+      }
+
+      // Sesler sekmesi: dosya başına bir istek, ham gövde (multipart değil: büyük dosya belleğe alınmaz).
+      if (route === '/config/audio') {
+        if (!this.configApi || typeof this.configApi.uploadAudio !== 'function') return this.#json(res, 404, { error: 'not_found' });
+        if (req.method !== 'POST') return this.#json(res, 405, { error: 'method_not_allowed' });
+        const result = await this.configApi.uploadAudio({
+          album: url.searchParams.get('album') ?? '',
+          filename: url.searchParams.get('name') ?? '',
+          readable: req,
+        });
+        if (result.ok) return this.#json(res, result.job ? 202 : 200, { ok: true, name: result.name ?? null, job: result.job ?? null });
+        req.resume();
+        return this.#json(res, 400, { ok: false, error: result.error }, { Connection: 'close' });
       }
 
       // Telefon galerisinden kapak yükleme (multipart). Ham dosya sınırı CONFIG_UPLOAD_MAX_BYTES;

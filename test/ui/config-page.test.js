@@ -760,3 +760,16 @@ test('ek yayın kartı: Saf modda "Saf" rozeti, Yazılı\'da rozet yok', () => {
   assert.match(card('lofi3'), /Saf/);
   assert.doesNotMatch(card('lofi4'), /Saf/);
 });
+
+test('Sesler sekmesi: albüm verilmişse sekme + panel + betik çıkar, yoksa hiç çıkmaz', () => {
+  const none = renderConfigPage({ plan: new StreamPlan({}), clips: [], token: 't' });
+  assert.doesNotMatch(none, /id="step-audio"|tab-audio/);
+  const html = renderConfigPage({
+    plan: new StreamPlan({}), clips: [], token: 't', audioAlbums: [{ name: 'mimi <1>', trackCount: 234 }],
+  });
+  assert.match(html, /data-step="audio"[^>]*>Sesler</);
+  assert.match(html, /id="step-audio"/);
+  assert.match(html, /<option value="mimi &lt;1&gt;">mimi &lt;1&gt; \(234 parça\)<\/option>/);
+  assert.match(html, /webkitdirectory/);
+  assert.match(html, /\/config\/audio\?token=/);
+});

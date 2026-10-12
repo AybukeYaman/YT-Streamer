@@ -387,6 +387,8 @@ function instancesSection(instances, token, { keep = '', nonce = null } = {}) {
     ${rows}`;
 }
 
+const { audioTabHtml, AUDIO_SCRIPT } = require('./audio-tab');
+
 const STYLE = `
   :root {
     color-scheme: dark;
@@ -638,6 +640,11 @@ const STYLE = `
   .tdot[data-theme=orman] { background: linear-gradient(135deg, #16a34a 50%, #0d1a14 50%); }
   .tdot[data-theme=kagit] { background: linear-gradient(135deg, #db2777 50%, #f7f5f6 50%); }
   /* Adımlar: JS varken tek seferde tek adım görünür; JS yoksa hepsi alt alta (sekme çubuğu gizli) */
+  .alog { list-style: none; margin: 12px 0 0; padding: 0; font-size: 13px; color: var(--muted); }
+  .alog li { padding: 3px 0; overflow-wrap: anywhere; }
+  .alog li.ok { color: var(--ok); }
+  .alog li.warn { color: var(--warn); }
+  .alog li.bad { color: var(--err); }
   .steps { display: none; }
   html.js .steps { display: flex; gap: 4px; margin: 0 0 22px; border-bottom: 1px solid var(--line); }
   .steps button { flex: 1; margin: 0; min-height: 42px; padding: 6px 4px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); font-size: 13px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 6px; }
@@ -941,6 +948,7 @@ function renderConfigPage({
   plan, clips, covers = [], token, notice = null, error = null, streamState = null,
   broadcasts = null, selectedId = null, pendingCover = null, pendingFor = null,
   canCreate = false, newMode = false, draft = {}, catalogAlbums = [], instances = null, nonce = null,
+  audioAlbums = [],
 }) {
   const p = plan.pomodoro;
   // Galeriden yeni yüklenen kapak, yükleme hangi bölümden yapıldıysa yalnızca orada seçili gelir.
@@ -961,7 +969,7 @@ function renderConfigPage({
 </section>` : '';
   const hasBc = Boolean(pickerHtml.trim() || newLink);
   // Adımlar (JS varken sekme): şu an → yayın → sonraki yayın. Boş adım gösterilmez.
-  const steps = [['now', 'Şu an', Boolean(nowSection)], ['bc', 'Yayın', hasBc], ['next', 'Sonraki', true]]
+  const steps = [['now', 'Şu an', Boolean(nowSection)], ['bc', 'Yayın', hasBc], ['next', 'Sonraki', true], ['audio', 'Sesler', audioAlbums.length > 0]]
     .filter(([, , present]) => present).map(([id, name]) => [id, name]);
   // Sonuç belirli bir adımı gerektiriyorsa (yeni yayın formu, yüklenen kapak) o adım zorla açılır.
   const forced = newMode || (pendingCover && pendingFor === 'b') ? 'bc' : (planPending ? 'next' : null);
@@ -1058,7 +1066,8 @@ ${newLink}
   <p class="hint savehint"><strong>Kaydet:</strong> yayına dokunmaz; başlık, açıklama, kapak bir sonraki canlıya almada geçerli olur.<br><strong>Yeniden Başlat:</strong> yayın kısa süre kesilir; Pomodoro ve klip ayarları hemen geçerli olur.</p>
 </form>
 </div>
-<script>${SCRIPT}</script>
+${audioAlbums.length ? audioTabHtml(audioAlbums) : ''}
+<script>${SCRIPT}</script>${audioAlbums.length ? `<script>${AUDIO_SCRIPT}</script>` : ''}
 </body>
 </html>`;
 }

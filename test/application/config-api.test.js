@@ -257,3 +257,20 @@ test('control: stop() notu mesaja eklenir (YouTube yayını bitirildi bilgisi)',
   assert.equal(res.ok, true);
   assert.equal(res.message, 'Yayın durduruldu. YouTube yayını da bitirildi.');
 });
+
+test('uploadAudio: yalnızca mevcut albüme; sonuç ad ya da zip işi', async () => {
+  const saved = [];
+  const api = new ConfigApi({
+    configService: fakeConfigService(),
+    audioAlbums: () => [{ name: 'mimi' }],
+    saveAudio: async (x) => { saved.push(x.album); return x.filename.endsWith('.zip') ? { job: 'j1' } : { name: 'a.m4a' }; },
+    log: {},
+  });
+  assert.deepEqual(await api.uploadAudio({ album: 'mimi', filename: 'a.mp3', readable: null }), { ok: true, name: 'a.m4a' });
+  assert.deepEqual(await api.uploadAudio({ album: 'mimi', filename: 'p.zip', readable: null }), { ok: true, job: 'j1' });
+  const bad = await api.uploadAudio({ album: '../etc', filename: 'a.mp3', readable: null });
+  assert.equal(bad.ok, false);
+  assert.deepEqual(saved, ['mimi', 'mimi'], 'geçersiz albüm saveAudio\'ya hiç gitmemeli');
+  const none = new ConfigApi({ configService: fakeConfigService(), log: {} });
+  assert.equal((await none.uploadAudio({ album: 'mimi', filename: 'a.mp3' })).ok, false);
+});

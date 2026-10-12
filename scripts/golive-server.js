@@ -31,6 +31,7 @@ const { StreamPlanStore } = require('../src/infrastructure/stream-plan-store');
 const { writeFileAtomic } = require('../src/infrastructure/atomic-file');
 const { ensureThumbnail } = require('../src/infrastructure/video-thumbnail');
 const { saveUploadedCover } = require('../src/infrastructure/cover-upload');
+const { createAudioService } = require('../src/infrastructure/audio-upload');
 const { GoLiveServer } = require('../src/infrastructure/golive-server');
 const { HealthMonitor } = require('../src/application/health-monitor');
 const { IngestCheck } = require('../src/application/checks/ingest-check');
@@ -166,10 +167,15 @@ async function main() {
   // etkilemez) ve MediaLibrary bir alt seviyesini tarar, yani yüklenen hemen listede görünür.
   const coverDir = path.join(REPO_ROOT, 'assets', 'covers');
   const coverLog = logger.child('kapak');
+  const audioService = createAudioService({ albumsDir: config.paths.albums, log: logger.child('ses') });
   const configApi = new ConfigApi({
     configService,
     streamControl,
     saveCover: (buffer) => saveUploadedCover({ buffer, dir: coverDir, log: coverLog }),
+    // Sesler sekmesi: albüm adı ConfigApi'de katalogla doğrulanır; dosya music-source/<albüm>/music/'e .m4a olarak girer.
+    saveAudio: audioService.save,
+    audioStatus: audioService.status,
+    audioAlbums: () => catalog.list(),
     restartStream: async () => {
       try {
         await configService.restart();
