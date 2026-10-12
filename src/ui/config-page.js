@@ -129,7 +129,7 @@ function streamControls(streamState, action, title = '') {
   const start = `<form method="post" action="${esc(action)}">
         <button class="${state === 'stopped' ? 'primary' : 'secondary'}" type="submit" name="action" value="start">Başlat</button>
       </form>`;
-  const stop = `<form method="post" action="${esc(action)}" onsubmit="return confirm('Yayın durdurulsun mu? Canlı yayın kesilir.')">
+  const stop = `<form method="post" action="${esc(action)}" onsubmit="return confirm('Yayın durdurulsun mu? Canlı yayın kesilir ve YouTube yayını BİTİRİLİR (geri alınamaz).')">
         <button class="danger" type="submit" name="action" value="stop">Durdur</button>
       </form>`;
   const buttons = { running: stop, stopped: start, unknown: `${start}${stop}` }[state];
@@ -364,7 +364,7 @@ function instancesSection(instances, token, { keep = '', nonce = null } = {}) {
   const t = encodeURIComponent(token);
   const btn = (name, a) => {
     const text = { start: 'Başlat', golive: 'Canlıya Al', stop: 'Durdur' }[a];
-    const confirmAttr = a === 'stop' ? ' onsubmit="return confirm(\'Bu yayın durdurulsun mu?\')"' : '';
+    const confirmAttr = a === 'stop' ? ' onsubmit="return confirm(\'Bu yayın durdurulsun mu? YouTube yayını da BİTİRİLİR (geri alınamaz).\')"' : '';
     const cls = { start: 'primary', golive: 'primary', stop: 'danger' }[a];
     return `<form method="post" action="${esc(withNonce(`/config/instance?token=${t}${keep}`, nonce))}"${confirmAttr}>
           <input type="hidden" name="name" value="${esc(name)}">

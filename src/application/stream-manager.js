@@ -10,10 +10,10 @@ class StreamManager {
   // catalog: { list() } AlbumCatalog; goLive: (name) => Promise<{ action, ... }> — örneğin
   //   kendi GoLiveService'i (config.<ad>.json + .env.<ad>) ile requestGoLive.
   constructor({
-    provisioner, instances, catalog, goLive, log,
+    provisioner, instances, catalog, goLive, endBroadcast = null, log,
   }) {
     Object.assign(this, {
-      provisioner, instances, catalog, goLive, log,
+      provisioner, instances, catalog, goLive, endBroadcast, log,
     });
   }
 
@@ -35,6 +35,18 @@ class StreamManager {
     return this.provisioner.create(input);
   }
 
+  // Durdurulan ek yayının YouTube yayınını bitirir; hata durdurmayı bozmaz, nota yazılır.
+  async #endNote(name) {
+    if (!this.endBroadcast) return '';
+    try {
+      const ended = await this.endBroadcast(name);
+      return ended?.ended ? ' YouTube yayını da bitirildi.' : ` YouTube yayını bitirilmedi: ${ended?.reason ?? 'bilinmiyor'}.`;
+    } catch (err) {
+      this.log?.warn?.(`ek yayın "${name}" YouTube yayını bitirilemedi: ${err.message}`);
+      return ` YouTube yayını bitirilemedi (${err.message}) — Studio'dan bitir.`;
+    }
+  }
+
   // action: start | stop | golive. İşlem yalnızca KURULU ek yayınlara yapılır (rastgele ad olmaz).
   // @returns {Promise<{ ok: boolean, message?: string, error?: string }>}
   async control(name, action) {
@@ -47,7 +59,7 @@ class StreamManager {
       }
       if (action === 'stop') {
         this.instances.stop(name);
-        return { ok: true, message: `"${name}" durduruldu.` };
+        return { ok: true, message: `"${name}" durduruldu.${await this.#endNote(name)}` };
       }
       const result = await this.goLive(name);
       const text = {

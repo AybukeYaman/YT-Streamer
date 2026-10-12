@@ -63,8 +63,9 @@ class ConfigApi {
   async control(action) {
     if (!this.streamControl) return { ok: false, error: 'bu sunucu yayını başlatıp durduramıyor' };
     if (action !== 'start' && action !== 'stop') return { ok: false, error: `bilinmeyen işlem: ${action}` };
+    let result;
     try {
-      await this.streamControl[action]();
+      result = await this.streamControl[action]();
     } catch (err) {
       this.log?.warn?.(`yayın ${action} başarısız: ${err.message}`);
       return { ok: false, error: `yayın ${action === 'start' ? 'başlatılamadı' : 'durdurulamadı'}: ${err.message}` };
@@ -74,7 +75,7 @@ class ConfigApi {
       ok: true,
       message: action === 'start'
         ? 'Yayın başlatıldı. Canlıya almak için 30-60 sn sonra go-live tetikle.'
-        : 'Yayın durduruldu.',
+        : `Yayın durduruldu.${result?.note ? ` ${result.note}` : ''}`,
     };
   }
 

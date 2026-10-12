@@ -953,3 +953,50 @@ test('stale izi silinemezse go-live DURMAZ (yalnızca uyarı)', async () => {
   assert.equal(result.action, 'already-live');
   assert.ok(lines.some((l) => l.level === 'warn' && /stale izi silinemedi/.test(l.m)));
 });
+
+// ─── endBroadcast (Durdur düğmesi) ─────────────────────────────────────────
+
+test('endBroadcast: canlı yayın complete olur, kayıt silinir, VOD gizliliği kuyruğa girip uygulanır', async () => {
+  const stateStore = fakeStateStore({ broadcastId: 'b', streamId: STREAM_ID, status: 'live', title: 't' });
+  const api = fakeApi({ broadcasts: { b: { id: 'b', status: { lifeCycleStatus: 'live' } } } });
+  const pendingVods = fakePendingVods();
+  const { service } = setup({
+    api, stateStore, pendingVods, broadcastConfig: { ...BROADCAST_CONFIG, vodPrivacy: 'unlisted' },
+  });
+
+  const result = await service.endBroadcast();
+  assert.deepEqual(result, { ended: true, broadcastId: 'b' });
+  assert.ok(api.calls.some((c) => c[0] === 'transitionBroadcast' && c[1] === 'b' && c[2] === 'complete'));
+  assert.equal(stateStore.state, null);
+  assert.ok(api.calls.some((c) => c[0] === 'updateVideoPrivacy' && c[1] === 'b' && c[2] === 'unlisted'));
+  assert.deepEqual(pendingVods.pending, []);
+});
+
+test('endBroadcast: kayıtlı yayın yoksa hiçbir API çağrısı yapılmaz', async () => {
+  const api = fakeApi();
+  const { service } = setup({ api });
+  const result = await service.endBroadcast();
+  assert.equal(result.ended, false);
+  assert.deepEqual(api.calls, []);
+});
+
+test('endBroadcast: canlı olmayan (ready) yayına dokunmaz, kayıt korunur', async () => {
+  const stateStore = fakeStateStore({ broadcastId: 'b', streamId: STREAM_ID, status: 'ready', title: 't' });
+  const api = fakeApi({ broadcasts: { b: { id: 'b', status: { lifeCycleStatus: 'ready' } } } });
+  const { service } = setup({ api, stateStore });
+  const result = await service.endBroadcast();
+  assert.equal(result.ended, false);
+  assert.ok(!api.calls.some((c) => c[0] === 'transitionBroadcast'));
+  assert.ok(stateStore.state, 'kayıt silinmemeli (yeniden kullanılacak)');
+});
+
+test('endBroadcast: YouTube hatasında atar ve kayıt silinmez', async () => {
+  const stateStore = fakeStateStore({ broadcastId: 'b', streamId: STREAM_ID, status: 'live', title: 't' });
+  const api = fakeApi({
+    broadcasts: { b: { id: 'b', status: { lifeCycleStatus: 'live' } } },
+    failOn: { transitionBroadcast: new Error('quota') },
+  });
+  const { service } = setup({ api, stateStore });
+  await assert.rejects(() => service.endBroadcast(), /quota/);
+  assert.ok(stateStore.state);
+});

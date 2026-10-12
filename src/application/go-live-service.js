@@ -235,6 +235,32 @@ class GoLiveService {
   // değil): kilit senkron olarak alınabilsin ve iş ister senkron bitsin ister arka planda
   // sürsün aynı şekilde bırakılsın. Hiç reddetmez — bekleyeni olmadığı için işlenmeyen
   // ret riski yok.
+  // Kayıtlı broadcast'i YouTube'da BİTİRİR (complete). "Durdur" düğmesi bunu çağırır: yayın
+  // durunca YouTube'un kendiliğinden bitirmesini beklemeyiz. Yalnızca canlı/test/canlıya geçiyor
+  // durumundaki yayın bitirilir; created/ready (hiç canlıya alınmamış) kayda dokunulmaz — yeniden
+  // kullanılır. complete olunca kayıt silinir ve VOD gizliliği kuyruğa alınır (bkz. #existingBroadcast).
+  // @returns {Promise<{ ended: boolean, broadcastId?: string, reason?: string }>}
+  async endBroadcast() {
+    const state = this.stateStore.load();
+    if (!state?.broadcastId) return { ended: false, reason: 'kayıtlı yayın yok' };
+    const { accessToken } = await this.api.getAccessToken();
+    const broadcast = await this.api.getBroadcast({ accessToken, broadcastId: state.broadcastId });
+    const lifeCycle = broadcast?.status?.lifeCycleStatus ?? null;
+    if (!broadcast) {
+      this.stateStore.clear();
+      return { ended: false, broadcastId: state.broadcastId, reason: 'yayın YouTube\'da yok' };
+    }
+    if (!ACTIVE_STATUSES.has(lifeCycle)) {
+      return { ended: false, broadcastId: state.broadcastId, reason: `yayın canlı değil (${lifeCycle ?? 'bilinmiyor'})` };
+    }
+    await this.api.transitionBroadcast({ accessToken, broadcastId: state.broadcastId, status: 'complete' });
+    this.log.info(`broadcast ${state.broadcastId} bitirildi (durdurma)`);
+    this.#enqueueVodPrivacy({ broadcastId: state.broadcastId, title: state.title ?? broadcast.snippet?.title ?? null });
+    this.stateStore.clear();
+    await this.#drainPendingVods(accessToken);
+    return { ended: true, broadcastId: state.broadcastId };
+  }
+
   #acquireLock() {
     let release;
     const promise = new Promise((resolve) => { release = resolve; });

@@ -141,6 +141,14 @@ async function main() {
       const res = systemctl('stop', STREAM_UNIT);
       if (res.error) throw new Error(`systemctl çalıştırılamadı: ${res.error.message}`);
       if (res.status !== 0) throw new Error(`systemctl stop başarısız (kod ${res.status}): ${(res.stderr || '').trim()}`);
+      // Encoder durdu: YouTube'daki yayını da bitir (kendiliğinden bitmesini bekleme). Hata durdurmayı bozmaz.
+      try {
+        const ended = await service.endBroadcast();
+        return { note: ended.ended ? 'YouTube yayını da bitirildi.' : `YouTube yayını bitirilmedi: ${ended.reason}.` };
+      } catch (err) {
+        log.warn(`YouTube yayını bitirilemedi: ${err.message}`);
+        return { note: `YouTube yayını bitirilemedi (${err.message}) — Studio'dan bitir.` };
+      }
     },
     async status() {
       const res = systemctl('is-active', STREAM_UNIT);
@@ -181,15 +189,16 @@ async function main() {
     repoRoot: REPO_ROOT, runAsync: defaultRunAsync, log: logger.child('ek-yayin'),
   });
   const instanceGoLive = new Map();
-  const goLiveForInstance = (name) => {
+  const serviceForInstance = (name) => {
     if (!instanceGoLive.has(name)) {
       const built = buildGoLive({
         configFile: `config.${name}.json`, envFile: `.env.${name}`, logger: logger.child(`go-live-${name}`), alerter,
       });
       instanceGoLive.set(name, built.service);
     }
-    return instanceGoLive.get(name).requestGoLive();
+    return instanceGoLive.get(name);
   };
+  const goLiveForInstance = (name) => serviceForInstance(name).requestGoLive();
   // CPU tavanı: 720p24 yayın başına ~1.1 çekirdek varsayımı, %80 kullanım (add-stream.sh ile aynı kural).
   // Ölçülen ana yayın (Pomodoro klipli) ~1.4 çekirdek; ek yayınlar klipsiz/hafif açılır.
   const maxStreams = Math.max(1, Math.floor((os.cpus().length * 0.8) / 1.1));
@@ -215,6 +224,7 @@ async function main() {
     instances,
     catalog,
     goLive: goLiveForInstance,
+    endBroadcast: (name) => serviceForInstance(name).endBroadcast(),
     log: logger.child('yeni-yayin'),
   });
 

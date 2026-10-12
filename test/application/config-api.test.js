@@ -249,3 +249,11 @@ test('uploadCover: saveCover hata fırlatırsa mesajla ok:false', async () => {
   assert.equal(r.ok, false);
   assert.match(r.error, /görsel yüklenemedi: desteklenmeyen biçim/);
 });
+
+test('control: stop() notu mesaja eklenir (YouTube yayını bitirildi bilgisi)', async () => {
+  const ctl = { ...fakeStreamControl(), stop: async () => ({ note: 'YouTube yayını da bitirildi.' }) };
+  const api = new ConfigApi({ configService: fakeConfigService(), streamControl: ctl, log: {} });
+  const res = await api.control('stop');
+  assert.equal(res.ok, true);
+  assert.equal(res.message, 'Yayın durduruldu. YouTube yayını da bitirildi.');
+});

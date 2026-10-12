@@ -375,7 +375,7 @@ test('Ek yayınlar: durum + bağlamsal ana düğme; durdur "Diğer işlemler" al
   assert.match(html, /<strong>zen2<\/strong><span class="chip idle"><i aria-hidden="true"><\/i>Durmuş<\/span>/);
   assert.match(html, /action="\/config\/instance\?token=tk"/);
   assert.match(html, /name="name" value="lofi2"/);
-  assert.match(html, /confirm\('Bu yayın durdurulsun mu\?'\)/);
+  assert.match(html, /confirm\('Bu yayın durdurulsun mu\? YouTube yayını da BİTİRİLİR/);
   assert.doesNotMatch(html, /<button[^>]*\bdisabled\b/);
   const card =(name) => {
     const i = html.indexOf(`<strong>${name}</strong>`);
