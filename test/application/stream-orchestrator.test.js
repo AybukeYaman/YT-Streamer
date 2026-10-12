@@ -14,8 +14,10 @@ class FakeEncoder extends Encoder {
     super();
     this.starts = [];
     this.stopCalls = 0;
+    this.killCalls = 0;
   }
   start(options) { this.starts.push(options); }
+  kill() { this.killCalls++; }
   stop() {
     this.stopCalls++;
     setImmediate(() => this.emit('exit', 0, null));
@@ -778,4 +780,94 @@ test('geçersiz videoMode kurulumda reddedilir; varsayılan encode eski yolu kul
   await orch.start();
   assert.equal(encoder.starts[0].loopPath, undefined);
   assert.equal(encoder.starts[0].backgroundPath, BG);
+});
+
+// --- Donma bekçisi (12 Ekim 2026: kare sayacı saatlerce donuk kaldı, kimse müdahale etmedi) ---
+function setupStall(stallMs = 90000, alerter = null) {
+  const clock = { t: 1000000 };
+  const encoder = new FakeEncoder();
+  const { log, lines } = fakeLog();
+  const orch = new StreamOrchestrator({
+    encoder, log, albumRepository: oneAlbum(TRACKS), queue: { mode: 'sequential', batchSize: 2 },
+    playlistPath: 'C:/runtime/playlist.txt', writeFile: () => {}, now: () => clock.t, stallMs, alerter,
+  });
+  return { clock, encoder, orch, lines };
+}
+
+test('donma bekçisi: kare sayacı stallMs boyunca ilerlemezse ffmpeg öldürülür', async () => {
+  const { clock, encoder, orch, lines } = setupStall();
+  await orch.start();
+  encoder.emit('log', { kind: 'progress', frame: 100, fps: 24, bitrateKbps: 2500, speed: 1 });
+  clock.t += 60000;
+  encoder.emit('log', { kind: 'progress', frame: 100, fps: 24, bitrateKbps: 2500, speed: 0.4 }); // aynı kare
+  assert.equal(orch.checkStall(), false); // 60 sn < 90 sn
+  clock.t += 31000;
+  assert.equal(orch.checkStall(), true);
+  assert.equal(encoder.killCalls, 1);
+  assert.ok(lines.some((l) => l.level === 'error' && /ilerlemiyor/.test(l.m)));
+  assert.equal(orch.checkStall(), false); // aynı donma için ikinci öldürme yok
+  assert.equal(encoder.killCalls, 1);
+  await orch.stop();
+});
+
+test('donma bekçisi: yavaş ama ilerleyen yayını (0,4x) öldürmez', async () => {
+  const { clock, encoder, orch } = setupStall();
+  await orch.start();
+  for (let frame = 10; frame <= 400; frame += 10) {
+    clock.t += 5000;
+    encoder.emit('log', { kind: 'progress', frame, fps: 10, bitrateKbps: 3600, speed: 0.4 });
+    assert.equal(orch.checkStall(), false);
+  }
+  assert.equal(encoder.killCalls, 0);
+  await orch.stop();
+});
+
+test('donma bekçisi: hiç ilerleme gelmeyen (ffmpeg sessiz) süreç de öldürülür; stallMs=0 kapatır', async () => {
+  const a = setupStall();
+  await a.orch.start();
+  a.clock.t += 95000;
+  assert.equal(a.orch.checkStall(), true);
+  await a.orch.stop();
+
+  const b = setupStall(0);
+  await b.orch.start();
+  b.clock.t += 10 * 3600 * 1000;
+  assert.equal(b.orch.checkStall(), false);
+  assert.equal(b.encoder.killCalls, 0);
+  await b.orch.stop();
+});
+
+test('donma bekçisi: kapanış istenmişken (stop) öldürme yapmaz', async () => {
+  const { clock, orch, encoder } = setupStall();
+  await orch.start();
+  await orch.stop();
+  clock.t += 200000;
+  assert.equal(orch.checkStall(), false);
+  assert.equal(encoder.killCalls, 0);
+});
+
+test('donma bekçisi: öldürmeden önce bildirim gönderir; bildirim hatası öldürmeyi engellemez', async () => {
+  const sent = [];
+  const alerter = { alert: async (p) => { sent.push(p); } };
+  const a = setupStall(90000, alerter);
+  await a.orch.start();
+  a.clock.t += 100000;
+  assert.equal(a.orch.checkStall(), true);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].level, 'error');
+  assert.match(sent[0].title, /DONDU/);
+  assert.match(sent[0].message, /100 sn/);
+  assert.match(sent[0].message, /BAŞLATILDI/);
+  assert.equal(a.encoder.killCalls, 1);
+  await a.orch.stop();
+
+  const b = setupStall(90000, { alert: async () => { throw new Error('webhook yok'); } });
+  await b.orch.start();
+  b.clock.t += 100000;
+  assert.equal(b.orch.checkStall(), true);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(b.encoder.killCalls, 1);
+  assert.ok(b.lines.some((l) => l.level === 'warn' && /bildirim gönderilemedi/.test(l.m)));
+  await b.orch.stop();
 });

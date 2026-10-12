@@ -212,6 +212,17 @@ test('N/A değerler null olur, ilerleme olmayan satır null döner', () => {
   assert.equal(parseProgressLine('Input #0, mov,mp4,m4a,3gp,3g2,mj2, from \'x.mp4\':'), null);
 });
 
+test('Saf mod satırı (frame= yok, ffmpeg 6.1) time x fps ile kareye çevrilir', () => {
+  const line = 'size=  898345kB time=00:34:55.58 bitrate=3511.8kbits/s speed=   1x';
+  assert.deepEqual(parseProgressLine(line, { fps: 24 }), {
+    frame: Math.round((34 * 60 + 55.58) * 24), fps: 24, bitrateKbps: 3511.8, speed: 1,
+  });
+  // fps bilinmiyorsa türetilemez: ilerleme sayılmaz
+  assert.equal(parseProgressLine(line), null);
+  // başlangıçtaki time=N/A satırı ilerleme değildir
+  assert.equal(parseProgressLine('size=       0kB time=N/A bitrate=N/A speed=N/A', { fps: 24 }), null);
+});
+
 test('FfmpegEncoder bir Encoder', () => {
   assert.ok(new FfmpegEncoder({ profile, backgroundPath: BG, output: LOCAL }) instanceof Encoder);
 });

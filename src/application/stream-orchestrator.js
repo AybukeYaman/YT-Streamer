@@ -27,6 +27,9 @@ const PROGRESS_LOG_INTERVAL_MS = 5000;
 // (ör. RTMP reddi: "Error opening output ... I/O error"). Yayın davranışı değişmez.
 const CRITICAL_FFMPEG_STDERR = /error opening output|i\/o error|not authorized|connection (refused|reset|timed out)|conversion failed|no such file or directory|invalid data found|error in the pull function|end of file|broken pipe|unable to open|could not (write|open)|server (error|returned)/i;
 
+// 90 sn: soğuk başlangıç ve albüm geçişi (~0,5 sn) bunun çok altında; gerçek donma saatlerce sürdü.
+const DEFAULT_STALL_MS = 90000;
+const STALL_CHECK_MS = 10000;
 const minutes = (s) => `${(s / 60).toFixed(1)} dk`;
 
 class StreamOrchestrator extends EventEmitter {
@@ -39,9 +42,19 @@ class StreamOrchestrator extends EventEmitter {
     encoder, log, albumRepository, queue, playlistPath, writeFile,
     nowPlayingWriter = null, speedWindow = null, speedAlarm = null, stateStore = null,
     backgroundPlaylistWriter = null, pomodoroPlanner = null, decoderWatch = null,
-    videoMode = 'encode', now = () => Date.now(), random = Math.random,
+    videoMode = 'encode', stallMs = DEFAULT_STALL_MS, alerter = null, now = () => Date.now(), random = Math.random,
   }) {
     super();
+    // stallMs: ilerleme (kare/zaman) bu kadar ms ilerlemezse ffmpeg donmuş sayılır ve öldürülür;
+    // supervisor yeniden başlatır. 0 = bekçi kapalı. 12 Ekim 2026 olayı: YouTube
+    // bağlantısı kilitlendi, kare sayacı saatlerce aynı kaldı, hiçbir şey müdahale etmedi.
+    this.stallMs = stallMs;
+    // alerter: { alert({ level, title, message }) } — donma bekçisi öldürünce telefona haber verir.
+    // Fire-and-forget: bildirim hatası ya da gecikmesi yeniden başlatmayı bekletmemeli.
+    this.alerter = alerter;
+    this.stallTimer = null;
+    this.lastFrame = -1;
+    this.lastAdvanceAt = null;
     // decoderWatch: DecoderErrorWatch — "Error submitting packet to decoder" satırlarını
     // tek tek WARN yazmak yerine sayar/özetler, sürerse bildirim gönderir. Verilmezse
     // eski davranış (her satır WARN).
@@ -273,6 +286,7 @@ class StreamOrchestrator extends EventEmitter {
     this.playStartedAt = null;
     this.speedWindow?.reset(this.now()); // yeni süreç: ilk 30 sn pencereye girmez
     this.speedState = 'warming';
+    this.#armStallWatch();
     this.log.info(
       `playlist #${this.runNumber}${note}: albüm "${playlist.album.name}", ${playlist.tracks.length} parça, ` +
       `${minutes(playlist.totalDurationSeconds)} — ` +
@@ -340,6 +354,10 @@ class StreamOrchestrator extends EventEmitter {
           this.restartGapsMs.push(gap);
           this.log.info(`restart boşluğu: ${gap} ms (önceki ffmpeg'in kapanışından yeni sürecin ilk frame'ine)`);
         }
+        if (entry.frame > this.lastFrame) {
+          this.lastFrame = entry.frame;
+          this.lastAdvanceAt = this.now();
+        }
         const speed = this.#checkSpeed(entry.frame);
         if (this.now() - this.lastProgressLog < PROGRESS_LOG_INTERVAL_MS) return;
         this.lastProgressLog = this.now();
@@ -382,6 +400,43 @@ class StreamOrchestrator extends EventEmitter {
     return status;
   }
 
+  // Yeni ffmpeg süreci için sayaçları sıfırlar; periyodik kontrol tek zamanlayıcıyla yürür.
+  #armStallWatch() {
+    this.lastFrame = -1;
+    this.lastAdvanceAt = this.now();
+    if (!(this.stallMs > 0) || this.stallTimer) return;
+    this.stallTimer = setInterval(() => this.checkStall(), STALL_CHECK_MS);
+    this.stallTimer.unref?.();
+  }
+
+  #disarmStallWatch() {
+    if (this.stallTimer) clearInterval(this.stallTimer);
+    this.stallTimer = null;
+  }
+
+  // Donma bekçisi: kare/zaman stallMs boyunca ilerlemediyse ffmpeg'i öldürür. Yavaşlık
+  // (0,4x gibi) donma DEĞİLDİR, buna dokunmaz — yalnızca sayaç hiç ilerlemiyorsa devreye girer.
+  // Genel: zamanlayıcı çağırır; testler de doğrudan çağırabilir.
+  checkStall() {
+    if (!this.running || this.stopping || this.stopRequested || !(this.stallMs > 0)) return false;
+    if (this.lastAdvanceAt === null || this.now() - this.lastAdvanceAt < this.stallMs) return false;
+    const sec = Math.round((this.now() - this.lastAdvanceAt) / 1000);
+    this.log.error(`ffmpeg ${sec} sn'dir ilerlemiyor (frame=${this.lastFrame}) — donmuş sayıldı, öldürülüyor`);
+    this.lastAdvanceAt = this.now(); // aynı donma için art arda öldürme denemesi yapma
+    this.#notifyStall(sec);
+    this.encoder.kill();
+    return true;
+  }
+
+  #notifyStall(sec) {
+    if (!this.alerter) return;
+    const message = `ffmpeg ${sec} sn'dir ilerlemiyordu (donmuş: YouTube bağlantısı kilitlenmiş olabilir). `
+      + 'Süreç öldürüldü ve otomatik yeniden başlatma BAŞLATILDI. Yayının toparlandığını Studio ekranından kontrol et.';
+    Promise.resolve()
+      .then(() => this.alerter.alert({ level: 'error', title: 'YAYIN DONDU: otomatik yeniden başlatma başlatıldı', message }))
+      .catch((err) => this.log.warn(`bildirim gönderilemedi (${err.message}) — yayın etkilenmedi`));
+  }
+
   #onEncoderExit(code, signal) {
     const message = `ffmpeg kapandı (code=${code}, signal=${signal})`;
     this.crashedAt = this.now();
@@ -410,6 +465,7 @@ class StreamOrchestrator extends EventEmitter {
   }
 
   #finish(result) {
+    this.#disarmStallWatch();
     this.running = false;
     this.stopping = false;
     this.restartStartedAt = null;

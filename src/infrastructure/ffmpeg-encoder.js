@@ -381,16 +381,32 @@ function maskSecret(text, output) {
 
 // "frame= 2880 fps= 24 q=-1.0 size= 19954KiB time=00:02:00.00 bitrate=1362.2kbits/s speed=1x"
 // speed ffmpeg'in yayın başından beri hesapladığı ORTALAMA — anlık değil. Yorumlamak Faz 5'in işi.
-function parseProgressLine(line) {
-  const frame = line.match(/frame=\s*(\d+)/);
-  if (!frame) return null;
+//
+// Saf mod (-c:v copy), ffmpeg 6.1'de satırı frame=/fps= OLMADAN basar:
+//   "size=  898345kB time=00:34:55.58 bitrate=3511.8kbits/s speed=   1x"
+// Kare sayısı o zaman time x profil fps'ten türetilir (fps verilmişse); aksi halde satır
+// ilerleme sayılmaz. Bunu yapmayınca orkestratör hiç ilerleme görmez: durum/kalp atışı
+// dosyası yazılmaz, hız penceresi beslenmez (Faz 5.4'te VPS'te yakalandı).
+function parseProgressLine(line, { fps = null } = {}) {
   const num = (re) => {
     const m = line.match(re);
     return m ? Number(m[1]) : null; // N/A → null
   };
+  const frame = line.match(/frame=\s*(\d+)/);
+  if (frame) {
+    return {
+      frame: Number(frame[1]),
+      fps: num(/fps=\s*([\d.]+)/),
+      bitrateKbps: num(/bitrate=\s*([\d.]+)kbits\/s/),
+      speed: num(/speed=\s*([\d.]+)x/),
+    };
+  }
+  const time = line.match(/\btime=(\d+):(\d{2}):(\d{2}(?:\.\d+)?)/);
+  if (!time || !(fps > 0)) return null;
+  const seconds = Number(time[1]) * 3600 + Number(time[2]) * 60 + Number(time[3]);
   return {
-    frame: Number(frame[1]),
-    fps: num(/fps=\s*([\d.]+)/),
+    frame: Math.round(seconds * fps),
+    fps,
     bitrateKbps: num(/bitrate=\s*([\d.]+)kbits\/s/),
     speed: num(/speed=\s*([\d.]+)x/),
   };
@@ -472,6 +488,10 @@ class FfmpegEncoder extends Encoder {
     });
   }
 
+  kill() {
+    this.child?.kill('SIGKILL');
+  }
+
   // Kapanış kademeli: 'q' (ffmpeg çıktıyı düzgün kapatır) → SIGTERM → SIGKILL.
   //
   // Neden escalation şart: eskiden son adım tek bir child.kill() (SIGTERM) idi ve
@@ -531,7 +551,7 @@ class FfmpegEncoder extends Encoder {
   #handleLine(rawLine) {
     if (!rawLine.trim()) return;
     const line = maskSecret(rawLine, this.output);
-    const progress = parseProgressLine(line);
+    const progress = parseProgressLine(line, { fps: this.profile?.fps });
     if (progress) this.emit('log', { kind: 'progress', ...progress, raw: line });
     else this.emit('log', { kind: 'stderr', line });
   }

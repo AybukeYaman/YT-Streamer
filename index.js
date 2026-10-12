@@ -191,6 +191,8 @@ async function main() {
     // Hız eşiğinin dışına çıkıp orada KALMAK bildirim üretir. Diğer kontroller bu durumu
     // göremiyor: ffmpeg ilerleme basmaya devam ettiği için kalp atışı ve ingest sağlıklı.
     speedAlarm: new SpeedAlarm({ alerter, log: logger.child('hız') }),
+    // Donma bekçisi (ilerleme durursa ffmpeg'i öldürür): öldürmeden önce telefona bildirim gider.
+    alerter,
     // Bozuk klip/giriş: her bozuk paket ayrı WARN olup logu boğmasın, sürerse bildirim gitsin.
     decoderWatch: new DecoderErrorWatch({ alerter, log: logger.child('decoder') }),
     // Süreç öldürülse bile (kill, elektrik) yeniden başlarken kaldığı parçadan devam.

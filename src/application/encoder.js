@@ -23,6 +23,13 @@ class Encoder extends EventEmitter {
   stop() {
     throw new Error(`${this.constructor.name}.stop() implement edilmemiş`);
   }
+
+  // Kademesiz, anında öldürme (donma bekçisi için): süreç 'q'ya cevap vermiyorsa beklemenin
+  // anlamı yok. 'exit' olayı normal yoldan gelir; orkestratör bunu beklenmeyen kapanış sayar,
+  // yeniden başlatma kararı supervisor'dadır. Çalışan süreç yoksa sessizce hiçbir şey yapmaz.
+  kill() {
+    throw new Error(`${this.constructor.name}.kill() implement edilmemiş`);
+  }
 }
 
 module.exports = { Encoder };

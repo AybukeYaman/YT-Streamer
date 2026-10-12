@@ -123,7 +123,7 @@ const LIFECYCLE_TONE = { live: 'ok', complete: 'done', revoked: 'bad' };
 // ana formun alanlarını (başlık, klipler…) göndermez, yani başlat/durdur ayarları kaydetmez.
 // Tek BAĞLAMSAL düğme: çalışıyorsa yalnızca Durdur (onaylı — canlı yayını keser),
 // durmuşsa yalnızca Başlat; durum bilinmiyorsa ikisi de (hangisinin doğru olduğu belli değil).
-function streamControls(streamState, action) {
+function streamControls(streamState, action, title = '') {
   if (!streamState) return '';
   const state = STATE_LABELS[streamState] ? streamState : 'unknown';
   const start = `<form method="post" action="${esc(action)}">
@@ -950,7 +950,7 @@ function renderConfigPage({
   const keep = selectedId ? `&broadcast=${encodeURIComponent(selectedId)}` : '';
   const action = withNonce(`/config?token=${encodeURIComponent(token)}${keep}`, nonce);
   const uploadAction = withNonce(`/config/upload?token=${encodeURIComponent(token)}${keep}`, nonce);
-  const nowSection = streamControls(streamState, action) + instancesSection(instances, token, { keep, nonce });
+  const nowSection = streamControls(streamState, action, plan.broadcast?.title) + instancesSection(instances, token, { keep, nonce });
   const pickerHtml = broadcastPicker({
     broadcasts, selectedId, token, covers, canCreate, newMode, newFormHtml: newMode ? newStreamForm({
       token, covers, albums: catalogAlbums, draft, keep, nonce,
